@@ -328,23 +328,113 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
     <head>
         <title>Yahoo Finance Daily Losers Analysis</title>
         <style>
-            body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+            :root {
+                --bg-primary: #f5f5f5;
+                --bg-secondary: white;
+                --text-primary: #333;
+                --text-secondary: #666;
+                --border-color: #ddd;
+                --header-bg: #f8f9fa;
+                --positive-color: #28a745;
+                --negative-color: #dc3545;
+                --highlight-bg: #fff3cd;
+                --summary-bg: #e7f3ff;
+                --shadow: rgba(0,0,0,0.1);
+            }
+            
+            [data-theme="dark"] {
+                --bg-primary: #1a1a1a;
+                --bg-secondary: #2d2d2d;
+                --text-primary: #e0e0e0;
+                --text-secondary: #b0b0b0;
+                --border-color: #404040;
+                --header-bg: #3d3d3d;
+                --positive-color: #4ade80;
+                --negative-color: #f87171;
+                --highlight-bg: #4a4a00;
+                --summary-bg: #1e3a8a;
+                --shadow: rgba(0,0,0,0.3);
+            }
+            
+            * { transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease; }
+            
+            body { 
+                font-family: Arial, sans-serif; 
+                margin: 20px; 
+                background-color: var(--bg-primary); 
+                color: var(--text-primary);
+            }
             .container { max-width: 1200px; margin: 0 auto; }
-            h1, h2 { color: #333; text-align: center; }
-            .section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            h1, h2, h3 { color: var(--text-primary); text-align: center; }
+            .section { 
+                background: var(--bg-secondary); 
+                margin: 20px 0; 
+                padding: 20px; 
+                border-radius: 8px; 
+                box-shadow: 0 2px 4px var(--shadow); 
+            }
             table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-            th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-            th { background-color: #f8f9fa; font-weight: bold; }
-            .positive { color: #28a745; }
-            .negative { color: #dc3545; }
-            .highlight { background-color: #fff3cd; }
-            .timestamp { text-align: center; color: #666; font-size: 14px; }
-            .summary { background-color: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
-            .status-live { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
-            .status-sample { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 5px; margin: 10px 0; }
-            .status-error { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
-            .status-cached { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            th, td { 
+                padding: 8px 12px; 
+                text-align: left; 
+                border-bottom: 1px solid var(--border-color); 
+                color: var(--text-primary);
+            }
+            th { background-color: var(--header-bg); font-weight: bold; }
+            .positive { color: var(--positive-color); }
+            .negative { color: var(--negative-color); }
+            .highlight { background-color: var(--highlight-bg); }
+            .timestamp { text-align: center; color: var(--text-secondary); font-size: 14px; }
+            .summary { background-color: var(--summary-bg); padding: 15px; border-radius: 5px; margin: 15px 0; }
+            .status-live { background-color: var(--positive-color); color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
+            .status-sample { background-color: #f59e0b; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
+            .status-error { background-color: var(--negative-color); color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
+            .status-cached { background-color: #3b82f6; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
             .status-icon { font-weight: bold; margin-right: 8px; }
+            
+            .theme-toggle { 
+                position: fixed; 
+                top: 20px; 
+                right: 20px; 
+                z-index: 1000; 
+                background: var(--bg-secondary); 
+                border: 2px solid var(--border-color); 
+                border-radius: 50px; 
+                padding: 10px 15px; 
+                cursor: pointer; 
+                font-size: 16px; 
+                box-shadow: 0 2px 10px var(--shadow);
+                color: var(--text-primary);
+            }
+            .theme-toggle:hover { transform: scale(1.05); }
+            
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.7; }
+                100% { opacity: 1; }
+            }
+            
+            .chart-container {
+                margin: 10px 0;
+                text-align: center;
+                background: var(--bg-secondary);
+                border-radius: 5px;
+                padding: 10px;
+                box-shadow: 0 1px 3px var(--shadow);
+            }
+            
+            .stock-symbol {
+                cursor: pointer;
+                color: #007bff;
+                text-decoration: underline;
+                font-weight: bold;
+            }
+            .stock-symbol:hover {
+                color: #0056b3;
+                background-color: rgba(0, 123, 255, 0.1);
+                padding: 2px 4px;
+                border-radius: 3px;
+            }
             .sortable { cursor: pointer; user-select: none; position: relative; }
             .sortable:hover { background-color: #e9ecef; }
             .sortable::after { content: ' ↕️'; font-size: 12px; opacity: 0.5; }
@@ -403,14 +493,167 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             });
         }
         
-        // Initialize sorting when page loads
-        document.addEventListener('DOMContentLoaded', makeTablesSortable);
+        // Dark mode functionality
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.documentElement.setAttribute('data-theme', savedTheme);
+            updateThemeToggle(savedTheme);
+        }
+        
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeToggle(newTheme);
+        }
+        
+        function updateThemeToggle(theme) {
+            const toggle = document.getElementById('theme-toggle');
+            if (toggle) {
+                toggle.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
+            }
+        }
+        
+        // Auto-refresh functionality
+        let autoRefreshInterval;
+        let lastUpdateTime = Date.now();
+        
+        function startAutoRefresh() {
+            if (autoRefreshInterval) return; // Already running
+            
+            autoRefreshInterval = setInterval(() => {
+                // Only refresh during market hours
+                const now = new Date();
+                const day = now.getDay(); // 0 = Sunday, 6 = Saturday
+                const hour = now.getHours();
+                
+                // Skip weekends and non-market hours (9:30 AM - 4:00 PM EST)
+                if (day === 0 || day === 6 || hour < 9 || hour > 16) {
+                    return;
+                }
+                
+                // Refresh every 5 minutes during market hours
+                if (Date.now() - lastUpdateTime > 300000) { // 5 minutes
+                    updateLastRefreshTime();
+                    showRefreshIndicator();
+                    setTimeout(() => location.reload(), 1000);
+                }
+            }, 60000); // Check every minute
+        }
+        
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+        }
+        
+        function updateLastRefreshTime() {
+            lastUpdateTime = Date.now();
+            const indicator = document.getElementById('live-indicator');
+            if (indicator) {
+                indicator.textContent = '🔴 Refreshing...';
+            }
+        }
+        
+        function showRefreshIndicator() {
+            const indicator = document.getElementById('live-indicator');
+            if (indicator) {
+                indicator.innerHTML = '🟢 Live Updates Active';
+                indicator.style.animation = 'pulse 1s infinite';
+            }
+        }
+        
+        // TradingView chart functionality
+        function showTradingViewChart(symbol) {
+            const existingChart = document.getElementById('chart-modal');
+            if (existingChart) {
+                existingChart.remove();
+            }
+            
+            const modal = document.createElement('div');
+            modal.id = 'chart-modal';
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                background: rgba(0,0,0,0.8); z-index: 10000; 
+                display: flex; justify-content: center; align-items: center;
+            `;
+            
+            const chartContainer = document.createElement('div');
+            chartContainer.style.cssText = `
+                background: white; border-radius: 10px; padding: 20px; 
+                width: 90%; max-width: 900px; height: 80%; position: relative;
+            `;
+            
+            chartContainer.innerHTML = `
+                <button onclick="document.getElementById('chart-modal').remove()" 
+                        style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
+                <h3 style="margin-top: 0; text-align: center; color: #333;">${symbol} - Live Chart</h3>
+                <div style="height: calc(100% - 60px);">
+                    <!-- TradingView Widget BEGIN -->
+                    <div class="tradingview-widget-container" style="height:100%;width:100%">
+                        <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
+                        <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js">
+                        {
+                            "autosize": true,
+                            "symbol": "NASDAQ:${symbol}",
+                            "interval": "D",
+                            "timezone": "Etc/UTC",
+                            "theme": "${document.documentElement.getAttribute('data-theme') || 'light'}",
+                            "style": "1",
+                            "locale": "en",
+                            "toolbar_bg": "#f1f3f6",
+                            "enable_publishing": false,
+                            "allow_symbol_change": true,
+                            "details": true,
+                            "hotlist": true,
+                            "calendar": true,
+                            "studies": ["STD;RSI"]
+                        }
+                        </script>
+                    </div>
+                    <!-- TradingView Widget END -->
+                </div>
+            `;
+            
+            modal.appendChild(chartContainer);
+            document.body.appendChild(modal);
+        }
+        
+        function makeSymbolsClickable() {
+            document.querySelectorAll('.stock-symbol').forEach(symbol => {
+                symbol.addEventListener('click', function() {
+                    const ticker = this.textContent.trim();
+                    showTradingViewChart(ticker);
+                });
+            });
+        }
+        
+        // Initialize everything when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            initTheme();
+            makeTablesSortable();
+            makeSymbolsClickable();
+            startAutoRefresh();
+        });
         </script>
     </head>
     <body>
+        <!-- Theme Toggle Button -->
+        <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
+        
         <div class="container">
             <h1>📉 Yahoo Finance Daily Losers Analysis</h1>
             <div class="timestamp">Generated on: {{ timestamp }}</div>
+            
+            <!-- Live Updates Indicator -->
+            <div style="text-align: center; margin: 10px 0;">
+                <span id="live-indicator" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">
+                    ⚡ Auto-refresh during market hours
+                </span>
+            </div>
             
             <!-- Market Status -->
             <div class="section" style="text-align: center;">
@@ -453,6 +696,16 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <li><strong>Complete Investment Analysis:</strong> {{ all_analysis_count }}</li>
                     <li><strong>High Potential Investments (>65% return):</strong> {{ recommendations_count }}</li>
                 </ul>
+                
+                <div style="margin-top: 15px; padding: 10px; background: rgba(0, 123, 255, 0.1); border-radius: 5px; border-left: 4px solid #007bff;">
+                    <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Interactive Features:</h4>
+                    <ul style="margin: 5px 0; font-size: 14px;">
+                        <li><strong>📈 Live Charts:</strong> Click any stock symbol to view TradingView charts</li>
+                        <li><strong>🔄 Auto-Refresh:</strong> Data updates every 5 minutes during market hours</li>
+                        <li><strong>🌙 Dark Mode:</strong> Toggle theme with button in top-right corner</li>
+                        <li><strong>📊 Sortable Tables:</strong> Click column headers to sort data</li>
+                    </ul>
+                </div>
             </div>
 
             <div class="section">
@@ -473,7 +726,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <tbody>
                             {% for stock in recommendations %}
                             <tr class="highlight">
-                                <td><strong>{{ stock.Symbol }}</strong></td>
+                                <td><span class="stock-symbol">{{ stock.Symbol }}</span></td>
                                 <td>{{ stock.Name }}</td>
                                 <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
                                 <td>${{ "%.2f"|format(stock['Target Price']) }}</td>
@@ -509,7 +762,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <tbody>
                             {% for stock in all_analysis %}
                             <tr {% if stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] > 65 %}class="highlight"{% endif %}>
-                                <td><strong>{{ stock.Symbol }}</strong></td>
+                                <td><span class="stock-symbol">{{ stock.Symbol }}</span></td>
                                 <td>{{ stock.Name }}</td>
                                 <td>
                                     {% if stock['Current Price'] == 'N/A' %}
@@ -562,7 +815,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <tbody>
                         {% for stock in details_data %}
                         <tr>
-                            <td><strong>{{ stock.Symbol }}</strong></td>
+                            <td><span class="stock-symbol">{{ stock.Symbol }}</span></td>
                             <td>{{ stock['Current Price'] }}</td>
                             <td>{{ stock['Previous Close'] }}</td>
                             <td>{{ stock['Price Target'] }}</td>
@@ -589,7 +842,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <tbody>
                         {% for stock in losers_data %}
                         <tr>
-                            <td><strong>{{ stock.Symbol }}</strong></td>
+                            <td><span class="stock-symbol">{{ stock.Symbol }}</span></td>
                             <td>{{ stock.Name }}</td>
                             <td>{{ stock.Price }}</td>
                             <td class="negative">{{ stock.Change }}</td>
