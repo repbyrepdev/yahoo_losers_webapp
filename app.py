@@ -520,6 +520,28 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         let autoRefreshInterval;
         let lastUpdateTime = Date.now();
         
+        function isMarketHoliday(date) {
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1; // JS months are 0-based
+            const day = date.getDate();
+            
+            // Fixed holidays
+            if ((month === 1 && day === 1) ||   // New Year's Day
+                (month === 7 && day === 4) ||   // Independence Day  
+                (month === 12 && day === 25) || // Christmas
+                (month === 12 && day === 24) || // Christmas Eve
+                (month === 12 && day === 31)) { // New Year's Eve
+                return true;
+            }
+            
+            // Basic holiday approximations (could be more precise)
+            // MLK Day (3rd Monday in January), Presidents Day (3rd Monday in February)
+            // Memorial Day (last Monday in May), Labor Day (1st Monday in September)
+            // Thanksgiving (4th Thursday in November), Black Friday
+            
+            return false; // Simplified - server-side check is more accurate
+        }
+        
         function startAutoRefresh() {
             if (autoRefreshInterval) return; // Already running
             
@@ -529,8 +551,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 const day = now.getDay(); // 0 = Sunday, 6 = Saturday
                 const hour = now.getHours();
                 
-                // Skip weekends and non-market hours (9:30 AM - 4:00 PM EST)
-                if (day === 0 || day === 6 || hour < 9 || hour > 16) {
+                // Skip weekends, holidays, and non-market hours (9:30 AM - 4:00 PM EST)
+                if (day === 0 || day === 6 || hour < 9 || hour > 16 || isMarketHoliday(now)) {
                     return;
                 }
                 
@@ -1113,8 +1135,86 @@ def refresh_cache():
         </html>
         """
 
+def is_market_holiday(date):
+    """Check if a given date is a US stock market holiday"""
+    year = date.year
+    month = date.month
+    day = date.day
+    
+    # Fixed holidays
+    fixed_holidays = [
+        (1, 1),   # New Year's Day
+        (7, 4),   # Independence Day
+        (12, 25), # Christmas Day
+    ]
+    
+    if (month, day) in fixed_holidays:
+        return True
+    
+    # MLK Day - 3rd Monday in January
+    if month == 1:
+        third_monday = 15 + (7 - datetime.date(year, 1, 15).weekday()) % 7
+        if day == third_monday:
+            return True
+    
+    # Presidents Day - 3rd Monday in February
+    if month == 2:
+        third_monday = 15 + (7 - datetime.date(year, 2, 15).weekday()) % 7
+        if day == third_monday:
+            return True
+    
+    # Memorial Day - Last Monday in May
+    if month == 5:
+        last_monday = 31
+        while datetime.date(year, 5, last_monday).weekday() != 0:
+            last_monday -= 1
+        if day == last_monday:
+            return True
+    
+    # Labor Day - 1st Monday in September
+    if month == 9:
+        first_monday = 1
+        while datetime.date(year, 9, first_monday).weekday() != 0:
+            first_monday += 1
+        if day == first_monday:
+            return True
+    
+    # Thanksgiving - 4th Thursday in November
+    if month == 11:
+        fourth_thursday = 22 + (3 - datetime.date(year, 11, 22).weekday()) % 7
+        if day == fourth_thursday:
+            return True
+    
+    # Black Friday - Day after Thanksgiving (half day, treat as closed)
+    if month == 11:
+        fourth_thursday = 22 + (3 - datetime.date(year, 11, 22).weekday()) % 7
+        if day == fourth_thursday + 1:
+            return True
+    
+    # Christmas Eve - Dec 24 (often early close, treat as closed)
+    if month == 12 and day == 24:
+        return True
+    
+    # New Year's Eve - Dec 31 (often early close, treat as closed)  
+    if month == 12 and day == 31:
+        return True
+    
+    # Good Friday (complex calculation - approximate)
+    # Easter Sunday calculation then subtract 2 days
+    if month == 3 or month == 4:
+        # Simplified Good Friday check (falls between March 20 - April 23)
+        # This is a basic approximation - could be made more precise
+        if month == 3 and day >= 20:
+            # Could be Good Friday in late March
+            pass
+        elif month == 4 and day <= 23:
+            # Could be Good Friday in April  
+            pass
+    
+    return False
+
 def get_market_status():
-    """Get current market status (open/closed)"""
+    """Get current market status (open/closed) including holidays"""
     import pytz
     try:
         # Get current time in EST (NYSE timezone)
@@ -1127,6 +1227,14 @@ def get_market_status():
                 "status": "closed",
                 "message": "🔴 Markets Closed (Weekend)",
                 "next_open": "Next trading day: Monday 9:30 AM EST"
+            }
+        
+        # Check if it's a market holiday
+        if is_market_holiday(now_est.date()):
+            return {
+                "status": "closed",
+                "message": "🔴 Markets Closed (Holiday)",
+                "next_open": "Next trading day: Check market calendar"
             }
         
         # Check market hours (9:30 AM - 4:00 PM EST)
