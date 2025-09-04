@@ -98,28 +98,33 @@ def get_cache_status():
         return {"exists": False, "message": f"Cache error: {str(e)}"}
 
 def scrape_yahoo_losers():
-    """Step 1: Get real stock data using Yahoo Finance API and trending stocks"""
+    """Step 1: Get DAILY LOSERS - stocks with biggest drops today"""
     status = {"success": False, "data_source": "unknown", "message": ""}
     try:
-        # Get trending/active stocks from Yahoo Finance API
-        trending_url = "https://query1.finance.yahoo.com/v1/finance/trending/US"
+        # Use a broader set of popular stocks and filter for actual losers
+        # Get S&P 500 and popular stocks, then filter for biggest losers
+        popular_symbols = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'CRM', 'BABA',
+            'PYPL', 'ADBE', 'INTC', 'CSCO', 'PEP', 'CMCSA', 'VZ', 'T', 'WMT', 'DIS',
+            'MA', 'V', 'JPM', 'JNJ', 'PG', 'UNH', 'HD', 'BAC', 'XOM', 'CVX',
+            'ABBV', 'PFE', 'KO', 'MRK', 'AVGO', 'LLY', 'TMO', 'COST', 'DHR', 'ACN',
+            'TXN', 'NEE', 'ABT', 'LOW', 'BMY', 'PM', 'HON', 'QCOM', 'UNP', 'IBM',
+            'PLTR', 'WISH', 'HOOD', 'UPST', 'CLOV', 'SOFI', 'RBLX', 'COIN', 'ZM', 'PTON',
+            'AMC', 'GME', 'BB', 'NOK', 'SNDL', 'SENS', 'NAKD', 'SIRI', 'F', 'GE'
+        ]
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         
         session = requests.Session()
-        response = session.get(trending_url, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        trending_data = response.json()
-        symbols = [quote['symbol'] for quote in trending_data['finance']['result'][0]['quotes'][:25]]
-        
-        # Get detailed quote data for these symbols
         stocks_data = []
-        for symbol in symbols:
+        
+        # Get quote data and filter for LOSERS only
+        for symbol in popular_symbols:
             try:
                 quote_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-                quote_response = session.get(quote_url, headers=headers, timeout=10)
+                quote_response = session.get(quote_url, headers=headers, timeout=8)
                 quote_response.raise_for_status()
                 quote_data = quote_response.json()
                 
@@ -130,42 +135,45 @@ def scrape_yahoo_losers():
                     current_price = meta.get('regularMarketPrice', 0)
                     prev_close = meta.get('previousClose', 0)
                     
+                    # ONLY include stocks that are DOWN (losers)
                     if current_price and prev_close and current_price < prev_close:
                         change = current_price - prev_close
                         percent_change = (change / prev_close) * 100
                         
-                        stocks_data.append({
-                            'Symbol': symbol,
-                            'Name': meta.get('longName', symbol),
-                            'Price': f"${current_price:.2f}",
-                            'Change': f"${change:.2f}",
-                            'Percent Change': f"{percent_change:.2f}%",
-                            'Market Cap': format_market_cap(meta.get('marketCap', 0))
-                        })
+                        # Only add if it's actually losing (negative percent change)
+                        if percent_change < -1.0:  # At least 1% drop
+                            stocks_data.append({
+                                'Symbol': symbol,
+                                'Name': meta.get('longName', symbol),
+                                'Price': f"${current_price:.2f}",
+                                'Change': f"${change:.2f}",
+                                'Percent Change': f"{percent_change:.2f}%",
+                                'Market Cap': format_market_cap(meta.get('marketCap', 0))
+                            })
                         
             except Exception as e:
                 logger.warning(f"Failed to get data for {symbol}: {str(e)}")
                 continue
         
         if stocks_data:
-            # Sort by percent change (most negative first - biggest losers)
+            # Sort by percent change (most negative first - BIGGEST LOSERS)
             stocks_data.sort(key=lambda x: float(x['Percent Change'].replace('%', '')))
             status["data_source"] = "live"
-            status["message"] = f"Successfully scraped {len(stocks_data)} real stocks from Yahoo Finance API"
+            status["message"] = f"Successfully found {len(stocks_data)} DAILY LOSERS from Yahoo Finance"
             status["success"] = True
             logger.info(status["message"])
             return stocks_data, status
         else:
-            raise Exception("No stock data found")
+            raise Exception("No losing stocks found today")
             
     except Exception as e:
-        logger.error(f"Error getting Yahoo Finance data: {str(e)}")
+        logger.error(f"Error getting Yahoo Finance losers: {str(e)}")
         status["data_source"] = "error" 
-        status["message"] = f"API scraping failed: {str(e)}"
+        status["message"] = f"Losers scraping failed: {str(e)}"
         
-        # Fallback to a few real stocks as backup
+        # Fallback 
         return [
-            {'Symbol': 'ERROR', 'Name': 'Scraping Failed', 'Price': '$0.00', 'Change': '$0.00', 'Percent Change': '0.00%', 'Market Cap': 'N/A'}
+            {'Symbol': 'ERROR', 'Name': 'Could not fetch losers today', 'Price': '$0.00', 'Change': '$0.00', 'Percent Change': '0.00%', 'Market Cap': 'N/A'}
         ], status
 
 def format_market_cap(market_cap):
