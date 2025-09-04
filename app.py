@@ -540,7 +540,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     showRefreshIndicator();
                     setTimeout(() => location.reload(), 1000);
                 }
-            }, 300000); // Check every 5 minutes
+            }, 3600000); // Check every hour
         }
         
         function stopAutoRefresh() {
