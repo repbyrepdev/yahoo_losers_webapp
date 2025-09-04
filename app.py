@@ -98,82 +98,69 @@ def get_cache_status():
         return {"exists": False, "message": f"Cache error: {str(e)}"}
 
 def scrape_yahoo_losers():
-    """Step 1: Get DAILY LOSERS - stocks with biggest drops today"""
+    """Step 1: Get DAILY LOSERS from Yahoo Finance screener API - same as original website"""
     status = {"success": False, "data_source": "unknown", "message": ""}
     try:
-        # Use a broader set of popular stocks and filter for actual losers
-        # Get S&P 500 and popular stocks, then filter for biggest losers
-        popular_symbols = [
-            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'CRM', 'BABA',
-            'PYPL', 'ADBE', 'INTC', 'CSCO', 'PEP', 'CMCSA', 'VZ', 'T', 'WMT', 'DIS',
-            'MA', 'V', 'JPM', 'JNJ', 'PG', 'UNH', 'HD', 'BAC', 'XOM', 'CVX',
-            'ABBV', 'PFE', 'KO', 'MRK', 'AVGO', 'LLY', 'TMO', 'COST', 'DHR', 'ACN',
-            'TXN', 'NEE', 'ABT', 'LOW', 'BMY', 'PM', 'HON', 'QCOM', 'UNP', 'IBM',
-            'PLTR', 'WISH', 'HOOD', 'UPST', 'CLOV', 'SOFI', 'RBLX', 'COIN', 'ZM', 'PTON',
-            'AMC', 'GME', 'BB', 'NOK', 'SNDL', 'SENS', 'NAKD', 'SIRI', 'F', 'GE'
-        ]
+        # Use the ACTUAL Yahoo Finance day losers screener API
+        losers_url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=true&lang=en-US&region=US&scrIds=day_losers"
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         
         session = requests.Session()
-        stocks_data = []
+        response = session.get(losers_url, headers=headers, timeout=15)
+        response.raise_for_status()
         
-        # Get quote data and filter for LOSERS only
-        for symbol in popular_symbols:
-            try:
-                quote_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-                quote_response = session.get(quote_url, headers=headers, timeout=8)
-                quote_response.raise_for_status()
-                quote_data = quote_response.json()
-                
-                if 'chart' in quote_data and quote_data['chart']['result']:
-                    result = quote_data['chart']['result'][0]
-                    meta = result['meta']
-                    
-                    current_price = meta.get('regularMarketPrice', 0)
-                    prev_close = meta.get('previousClose', 0)
-                    
-                    # ONLY include stocks that are DOWN (losers)
-                    if current_price and prev_close and current_price < prev_close:
-                        change = current_price - prev_close
-                        percent_change = (change / prev_close) * 100
-                        
-                        # Only add if it's actually losing (negative percent change)
-                        if percent_change < -1.0:  # At least 1% drop
-                            stocks_data.append({
-                                'Symbol': symbol,
-                                'Name': meta.get('longName', symbol),
-                                'Price': f"${current_price:.2f}",
-                                'Change': f"${change:.2f}",
-                                'Percent Change': f"{percent_change:.2f}%",
-                                'Market Cap': format_market_cap(meta.get('marketCap', 0))
-                            })
-                        
-            except Exception as e:
-                logger.warning(f"Failed to get data for {symbol}: {str(e)}")
-                continue
+        data = response.json()
         
-        if stocks_data:
-            # Sort by percent change (most negative first - BIGGEST LOSERS)
-            stocks_data.sort(key=lambda x: float(x['Percent Change'].replace('%', '')))
-            status["data_source"] = "live"
-            status["message"] = f"Successfully found {len(stocks_data)} DAILY LOSERS from Yahoo Finance"
-            status["success"] = True
-            logger.info(status["message"])
-            return stocks_data, status
+        if 'finance' in data and 'result' in data['finance'] and data['finance']['result']:
+            result = data['finance']['result'][0]
+            quotes = result.get('quotes', [])
+            
+            stocks_data = []
+            
+            for quote in quotes:
+                try:
+                    symbol = quote.get('symbol', 'N/A')
+                    long_name = quote.get('longName', quote.get('shortName', symbol))
+                    current_price = quote.get('regularMarketPrice', {}).get('raw', 0)
+                    change = quote.get('regularMarketChange', {}).get('raw', 0) 
+                    percent_change = quote.get('regularMarketChangePercent', {}).get('raw', 0)
+                    market_cap = quote.get('marketCap', {}).get('raw', 0)
+                    
+                    stocks_data.append({
+                        'Symbol': symbol,
+                        'Name': long_name,
+                        'Price': f"${current_price:.2f}" if current_price else 'N/A',
+                        'Change': f"${change:.2f}" if change else 'N/A',
+                        'Percent Change': f"{percent_change:.2f}%" if percent_change else 'N/A',
+                        'Market Cap': format_market_cap(market_cap)
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing quote: {str(e)}")
+                    continue
+            
+            if stocks_data:
+                status["data_source"] = "live"
+                status["message"] = f"Successfully scraped {len(stocks_data)} DAILY LOSERS from Yahoo Finance screener"
+                status["success"] = True
+                logger.info(status["message"])
+                return stocks_data, status
+            else:
+                raise Exception("No quotes found in screener response")
         else:
-            raise Exception("No losing stocks found today")
+            raise Exception("Invalid screener API response")
             
     except Exception as e:
-        logger.error(f"Error getting Yahoo Finance losers: {str(e)}")
+        logger.error(f"Error getting Yahoo Finance daily losers: {str(e)}")
         status["data_source"] = "error" 
-        status["message"] = f"Losers scraping failed: {str(e)}"
+        status["message"] = f"Daily losers API failed: {str(e)}"
         
         # Fallback 
         return [
-            {'Symbol': 'ERROR', 'Name': 'Could not fetch losers today', 'Price': '$0.00', 'Change': '$0.00', 'Percent Change': '0.00%', 'Market Cap': 'N/A'}
+            {'Symbol': 'ERROR', 'Name': 'Could not fetch daily losers', 'Price': '$0.00', 'Change': '$0.00', 'Percent Change': '0.00%', 'Market Cap': 'N/A'}
         ], status
 
 def format_market_cap(market_cap):
