@@ -9,6 +9,8 @@ import json
 import ssl
 from io import StringIO
 import logging
+import pickle
+from pathlib import Path
 
 app = Flask(__name__)
 
@@ -18,6 +20,82 @@ logger = logging.getLogger(__name__)
 
 # Create SSL context to handle certificate issues
 ssl._create_default_https_context = ssl._create_unverified_context
+
+# Cache configuration
+CACHE_FILE = '/tmp/yahoo_finance_cache.pkl'  # Use /tmp for Render compatibility
+CACHE_DURATION_HOURS = 24
+
+def save_cache(data):
+    """Save analysis results to cache with timestamp"""
+    try:
+        cache_data = {
+            'timestamp': datetime.datetime.now(),
+            'data': data
+        }
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump(cache_data, f)
+        logger.info(f"Cache saved successfully at {cache_data['timestamp']}")
+    except Exception as e:
+        logger.error(f"Failed to save cache: {str(e)}")
+
+def load_cache():
+    """Load cached results if within 24 hours"""
+    try:
+        if not os.path.exists(CACHE_FILE):
+            logger.info("No cache file found")
+            return None
+        
+        with open(CACHE_FILE, 'rb') as f:
+            cache_data = pickle.load(f)
+        
+        # Check if cache is still valid (within 24 hours)
+        cache_time = cache_data['timestamp']
+        current_time = datetime.datetime.now()
+        time_diff = current_time - cache_time
+        
+        if time_diff.total_seconds() / 3600 < CACHE_DURATION_HOURS:
+            logger.info(f"Valid cache found from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
+            return cache_data
+        else:
+            logger.info(f"Cache expired ({time_diff.total_seconds()/3600:.1f} hours old), will refresh")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Failed to load cache: {str(e)}")
+        return None
+
+def get_cache_status():
+    """Get cache status for display in UI"""
+    try:
+        if not os.path.exists(CACHE_FILE):
+            return {"exists": False, "message": "No cache available"}
+        
+        with open(CACHE_FILE, 'rb') as f:
+            cache_data = pickle.load(f)
+        
+        cache_time = cache_data['timestamp']
+        current_time = datetime.datetime.now()
+        time_diff = current_time - cache_time
+        hours_old = time_diff.total_seconds() / 3600
+        
+        if hours_old < CACHE_DURATION_HOURS:
+            return {
+                "exists": True,
+                "valid": True,
+                "hours_old": round(hours_old, 1),
+                "cache_time": cache_time,
+                "message": f"Using cached data from {hours_old:.1f} hours ago"
+            }
+        else:
+            return {
+                "exists": True,
+                "valid": False,
+                "hours_old": round(hours_old, 1),
+                "cache_time": cache_time,
+                "message": f"Cache expired ({hours_old:.1f} hours old)"
+            }
+    except Exception as e:
+        return {"exists": False, "message": f"Cache error: {str(e)}"}}
 
 def scrape_yahoo_losers():
     """Step 1: Scrape day losers from Yahoo Finance"""
@@ -312,6 +390,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             .status-live { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
             .status-sample { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 5px; margin: 10px 0; }
             .status-error { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .status-cached { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 10px; border-radius: 5px; margin: 10px 0; }
             .status-icon { font-weight: bold; margin-right: 8px; }
         </style>
     </head>
@@ -321,7 +400,11 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             <div class="timestamp">Generated on: {{ timestamp }}</div>
             
             <!-- Data Source Status -->
-            {% if status.data_source == 'live' %}
+            {% if status.data_source == 'cached' %}
+                <div class="status-cached">
+                    <span class="status-icon">📁 CACHED DATA:</span> {{ status.message }}
+                </div>
+            {% elif status.data_source == 'live' %}
                 <div class="status-live">
                     <span class="status-icon">✅ LIVE DATA:</span> {{ status.message }}
                 </div>
@@ -495,7 +578,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <h3>🔧 Technical Status</h3>
                 <ul>
                     <li><strong>Data Source:</strong> 
-                        {% if status.data_source == 'live' %}
+                        {% if status.data_source == 'cached' %}
+                            <span style="color: blue;">📁 Cached Data (Fast Loading)</span>
+                        {% elif status.data_source == 'live' %}
                             <span style="color: green;">✅ Live Yahoo Finance Data</span>
                         {% elif status.data_source == 'sample' %}
                             <span style="color: orange;">⚠️ Sample/Demo Data</span>
@@ -503,19 +588,30 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <span style="color: red;">❌ Error/Fallback Data</span>
                         {% endif %}
                     </li>
-                    <li><strong>Scraping Status:</strong> {{ status.message }}</li>
+                    <li><strong>Status:</strong> {{ status.message }}</li>
+                    <li><strong>Cache Info:</strong>
+                        {% if status.data_source == 'cached' %}
+                            Using cached results for faster loading (updates every 24 hours)
+                        {% else %}
+                            Fresh analysis performed - results cached for 24 hours
+                        {% endif %}
+                    </li>
                     <li><strong>Analysis Method:</strong> 
-                        {% if status.data_source == 'live' %}
+                        {% if status.data_source == 'cached' %}
+                            Cached results from previous scraping session
+                        {% elif status.data_source == 'live' %}
                             Real-time web scraping from Yahoo Finance
                         {% else %}
                             Using demonstration data (Yahoo Finance may be blocking requests)
                         {% endif %}
                     </li>
                     <li><strong>Next Steps:</strong> 
-                        {% if status.data_source != 'live' %}
+                        {% if status.data_source == 'cached' %}
+                            Cache will auto-refresh after 24 hours, or you can wait and refresh manually
+                        {% elif status.data_source != 'live' %}
                             Try refreshing in a few minutes - Yahoo Finance temporarily blocks automated requests
                         {% else %}
-                            Data is live and current as of the timestamp above
+                            Data is live and current - cached for faster future loading
                         {% endif %}
                     </li>
                 </ul>
@@ -538,6 +634,37 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 def index():
     """Main route that runs the Yahoo Finance losers analysis"""
     try:
+        # Check cache first
+        logger.info("Checking cache...")
+        cache_data = load_cache()
+        cache_status = get_cache_status()
+        
+        if cache_data:
+            # Use cached data
+            logger.info("Using cached data")
+            cached_results = cache_data['data']
+            
+            # Add cache information to status
+            cached_results['status']['message'] = f"📁 CACHED: {cache_status['message']}"
+            cached_results['status']['data_source'] = 'cached'
+            cached_results['cache_info'] = cache_status
+            
+            # Update timestamp to show cache time
+            cached_results['timestamp'] = f"{cache_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S UTC')} (cached)"
+            
+            html_template = format_results_as_html(
+                cached_results['losers_data'], 
+                cached_results['details_data'], 
+                cached_results['all_analysis'], 
+                cached_results['recommendations'], 
+                cached_results['status']
+            )
+            
+            return render_template_string(html_template, **cached_results)
+        
+        # No valid cache, perform fresh analysis
+        logger.info("No valid cache, performing fresh analysis...")
+        
         # Step 1: Scrape today's losers
         logger.info("Step 1: Scraping Yahoo Finance losers...")
         losers_data, losers_status = scrape_yahoo_losers()
@@ -555,10 +682,6 @@ def index():
         logger.info("Step 4: Filtering high-potential investments...")
         recommendations = calculate_investment_potential(all_analysis)
         
-        # Step 5: Format as HTML
-        logger.info("Step 5: Formatting results...")
-        html_template = format_results_as_html(losers_data, details_data, all_analysis, recommendations, losers_status)
-        
         # Prepare template variables
         template_vars = {
             'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
@@ -570,8 +693,17 @@ def index():
             'details_data': details_data,
             'all_analysis': all_analysis,
             'recommendations': recommendations,
-            'status': losers_status
+            'status': losers_status,
+            'cache_info': cache_status
         }
+        
+        # Save results to cache
+        logger.info("Saving results to cache...")
+        save_cache(template_vars)
+        
+        # Step 5: Format as HTML
+        logger.info("Step 5: Formatting results...")
+        html_template = format_results_as_html(losers_data, details_data, all_analysis, recommendations, losers_status)
         
         return render_template_string(html_template, **template_vars)
         
@@ -583,6 +715,20 @@ def index():
 def health_check():
     """Health check endpoint for monitoring"""
     return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
+
+@app.route('/refresh-cache')
+def refresh_cache():
+    """Manual cache refresh endpoint"""
+    try:
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
+            logger.info("Cache manually cleared")
+            return "<h1>✅ Cache Cleared!</h1><p><a href='/'>← Go back to get fresh data</a></p>"
+        else:
+            return "<h1>ℹ️ No Cache Found</h1><p><a href='/'>← Go back to homepage</a></p>"
+    except Exception as e:
+        logger.error(f"Error clearing cache: {str(e)}")
+        return f"<h1>❌ Error clearing cache: {str(e)}</h1><p><a href='/'>← Go back to homepage</a></p>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
