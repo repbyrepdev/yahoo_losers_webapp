@@ -613,12 +613,39 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             title.textContent = symbol + ' - Live Chart';
             title.style.cssText = 'margin-top: 0; text-align: center; color: #333;';
             
-            // Create chart iframe (simpler approach)
+            // Create chart with fallback options
             const chartFrame = document.createElement('iframe');
-            chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en&utm_source=&utm_medium=widget&utm_campaign=chart&utm_term=NASDAQ:' + symbol;
             chartFrame.style.cssText = 'width: 100%; height: calc(100% - 60px); border: none; border-radius: 5px;';
             
+            // Start with Yahoo Finance chart (more reliable for symbol matching)
+            chartFrame.src = 'https://finance.yahoo.com/chart/' + symbol + '?embed=true';
+            
+            // Add a button to try TradingView as alternative
+            const switchBtn = document.createElement('button');
+            switchBtn.textContent = 'Switch to TradingView';
+            switchBtn.style.cssText = 'position: absolute; top: 50px; right: 15px; background: #007bff; color: white; border: none; border-radius: 3px; padding: 5px 10px; cursor: pointer; font-size: 12px;';
+            switchBtn.onclick = function() {
+                if (this.textContent === 'Switch to TradingView') {
+                    // Try TradingView without exchange prefix first
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    this.textContent = 'Try NASDAQ:' + symbol;
+                } else if (this.textContent.startsWith('Try NASDAQ:')) {
+                    // Try with NASDAQ prefix
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    this.textContent = 'Try NYSE:' + symbol;
+                } else {
+                    // Try with NYSE prefix
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NYSE:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    this.textContent = 'Back to Yahoo';
+                }
+                if (this.textContent === 'Back to Yahoo') {
+                    chartFrame.src = 'https://finance.yahoo.com/chart/' + symbol + '?embed=true';
+                    this.textContent = 'Switch to TradingView';
+                }
+            };
+            
             chartContainer.appendChild(closeBtn);
+            chartContainer.appendChild(switchBtn);
             chartContainer.appendChild(title);
             chartContainer.appendChild(chartFrame);
             modal.appendChild(chartContainer);
