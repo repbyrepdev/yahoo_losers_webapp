@@ -222,9 +222,9 @@ def get_stock_details(symbols):
     logger.info(f"Successfully fetched details for {len(stock_details)} stocks")
     return stock_details
 
-def calculate_investment_potential(losers_data, details_data):
-    """Step 3: Calculate investment potential"""
-    investment_recommendations = []
+def calculate_all_investment_analysis(losers_data, details_data):
+    """Calculate investment analysis for ALL stocks (no filtering)"""
+    all_analysis = []
     
     # Create lookup dictionary for details
     details_dict = {item['Symbol']: item for item in details_data}
@@ -236,34 +236,59 @@ def calculate_investment_potential(losers_data, details_data):
             
             try:
                 # Clean and convert prices
-                current_price_str = details['Current Price'].replace('$', '').replace(',', '')
-                target_price_str = details['Price Target'].replace('$', '').replace(',', '')
+                current_price_str = details['Current Price'].replace('$', '').replace(',', '') if details['Current Price'] != 'N/A' else '0'
+                target_price_str = details['Price Target'].replace('$', '').replace(',', '') if details['Price Target'] != 'N/A' else '0'
                 
-                if current_price_str != 'N/A' and target_price_str != 'N/A':
-                    current_price = float(current_price_str)
-                    target_price = float(target_price_str)
-                    
-                    if current_price > 0:
-                        potential_return = ((target_price - current_price) / current_price) * 100
-                        
-                        if potential_return > 65:  # Filter for >65% potential return
-                            investment_recommendations.append({
-                                'Symbol': symbol,
-                                'Name': stock['Name'],
-                                'Current Price': current_price,
-                                'Target Price': target_price,
-                                'Potential Return %': round(potential_return, 2),
-                                'Volume': details['Volume'],
-                                'Change Today': stock['Change'],
-                                'Percent Change Today': stock['Percent Change']
-                            })
+                current_price = float(current_price_str) if current_price_str != '0' else 0
+                target_price = float(target_price_str) if target_price_str != '0' else 0
+                
+                potential_return = 0
+                if current_price > 0 and target_price > 0:
+                    potential_return = ((target_price - current_price) / current_price) * 100
+                
+                all_analysis.append({
+                    'Symbol': symbol,
+                    'Name': stock['Name'],
+                    'Current Price': current_price if current_price > 0 else 'N/A',
+                    'Target Price': target_price if target_price > 0 else 'N/A',
+                    'Potential Return %': round(potential_return, 2) if potential_return != 0 else 'N/A',
+                    'Volume': details['Volume'],
+                    'Change Today': stock['Change'],
+                    'Percent Change Today': stock['Percent Change'],
+                    'Market Cap': stock.get('Market Cap', 'N/A')
+                })
+                
             except (ValueError, TypeError) as e:
                 logger.error(f"Error calculating potential for {symbol}: {str(e)}")
+                # Still add the stock with available data
+                all_analysis.append({
+                    'Symbol': symbol,
+                    'Name': stock['Name'],
+                    'Current Price': 'N/A',
+                    'Target Price': 'N/A',
+                    'Potential Return %': 'N/A',
+                    'Volume': details.get('Volume', 'N/A'),
+                    'Change Today': stock['Change'],
+                    'Percent Change Today': stock['Percent Change'],
+                    'Market Cap': stock.get('Market Cap', 'N/A')
+                })
                 continue
     
-    return investment_recommendations
+    return all_analysis
 
-def format_results_as_html(losers_data, details_data, recommendations, status):
+def calculate_investment_potential(all_analysis):
+    """Step 3: Filter high-potential investments from all analysis"""
+    high_potential = []
+    
+    for analysis in all_analysis:
+        if (analysis['Potential Return %'] != 'N/A' and 
+            isinstance(analysis['Potential Return %'], (int, float)) and 
+            analysis['Potential Return %'] > 65):
+            high_potential.append(analysis)
+    
+    return high_potential
+
+def format_results_as_html(losers_data, details_data, all_analysis, recommendations, status):
     """Format all results as HTML"""
     
     html_template = """
@@ -315,7 +340,8 @@ def format_results_as_html(losers_data, details_data, recommendations, status):
                 <ul>
                     <li><strong>Total Losers Analyzed:</strong> {{ total_losers }}</li>
                     <li><strong>Detailed Analysis:</strong> {{ detailed_count }}</li>
-                    <li><strong>High Potential Investments:</strong> {{ recommendations_count }}</li>
+                    <li><strong>Complete Investment Analysis:</strong> {{ all_analysis_count }}</li>
+                    <li><strong>High Potential Investments (>65% return):</strong> {{ recommendations_count }}</li>
                 </ul>
             </div>
 
@@ -350,6 +376,64 @@ def format_results_as_html(losers_data, details_data, recommendations, status):
                     </table>
                 {% else %}
                     <p>No stocks found with >65% potential return today.</p>
+                {% endif %}
+            </div>
+
+            <div class="section">
+                <h2>💼 Complete Investment Analysis (All Stocks)</h2>
+                <p><em>This shows investment potential analysis for ALL analyzed stocks, regardless of return percentage.</em></p>
+                {% if all_analysis %}
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Company Name</th>
+                                <th>Current Price</th>
+                                <th>Target Price</th>
+                                <th>Potential Return</th>
+                                <th>Today's Change</th>
+                                <th>Volume</th>
+                                <th>Market Cap</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stock in all_analysis %}
+                            <tr {% if stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] > 65 %}class="highlight"{% endif %}>
+                                <td><strong>{{ stock.Symbol }}</strong></td>
+                                <td>{{ stock.Name }}</td>
+                                <td>
+                                    {% if stock['Current Price'] == 'N/A' %}
+                                        {{ stock['Current Price'] }}
+                                    {% else %}
+                                        ${{ "%.2f"|format(stock['Current Price']) }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if stock['Target Price'] == 'N/A' %}
+                                        {{ stock['Target Price'] }}
+                                    {% else %}
+                                        ${{ "%.2f"|format(stock['Target Price']) }}
+                                    {% endif %}
+                                </td>
+                                <td class="{% if stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] > 0 %}positive{% elif stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] < 0 %}negative{% endif %}">
+                                    {% if stock['Potential Return %'] == 'N/A' %}
+                                        N/A
+                                    {% else %}
+                                        {{ stock['Potential Return %'] }}%
+                                        {% if stock['Potential Return %'] > 65 %}
+                                            <strong>🎯 HIGH POTENTIAL</strong>
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+                                <td class="negative">{{ stock['Change Today'] }}</td>
+                                <td>{{ stock.Volume }}</td>
+                                <td>{{ stock['Market Cap'] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                {% else %}
+                    <p>No investment analysis data available.</p>
                 {% endif %}
             </div>
 
@@ -463,22 +547,28 @@ def index():
         symbols = [stock['Symbol'] for stock in losers_data]
         details_data = get_stock_details(symbols)
         
-        # Step 3: Calculate investment potential
-        logger.info("Step 3: Calculating investment potential...")
-        recommendations = calculate_investment_potential(losers_data, details_data)
+        # Step 3: Calculate complete investment analysis for ALL stocks
+        logger.info("Step 3: Calculating complete investment analysis...")
+        all_analysis = calculate_all_investment_analysis(losers_data, details_data)
         
-        # Step 4: Format as HTML
-        logger.info("Step 4: Formatting results...")
-        html_template = format_results_as_html(losers_data, details_data, recommendations, losers_status)
+        # Step 4: Filter high-potential investments (>65% return)
+        logger.info("Step 4: Filtering high-potential investments...")
+        recommendations = calculate_investment_potential(all_analysis)
+        
+        # Step 5: Format as HTML
+        logger.info("Step 5: Formatting results...")
+        html_template = format_results_as_html(losers_data, details_data, all_analysis, recommendations, losers_status)
         
         # Prepare template variables
         template_vars = {
             'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
             'total_losers': len(losers_data),
             'detailed_count': len(details_data),
+            'all_analysis_count': len(all_analysis),
             'recommendations_count': len(recommendations),
             'losers_data': losers_data,
             'details_data': details_data,
+            'all_analysis': all_analysis,
             'recommendations': recommendations,
             'status': losers_status
         }
