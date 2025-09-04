@@ -345,12 +345,86 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             .status-error { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
             .status-cached { background-color: #d1ecf1; border: 1px solid #bee5eb; padding: 10px; border-radius: 5px; margin: 10px 0; }
             .status-icon { font-weight: bold; margin-right: 8px; }
+            .sortable { cursor: pointer; user-select: none; position: relative; }
+            .sortable:hover { background-color: #e9ecef; }
+            .sortable::after { content: ' ↕️'; font-size: 12px; opacity: 0.5; }
+            .sort-asc::after { content: ' ↑'; opacity: 1; }
+            .sort-desc::after { content: ' ↓'; opacity: 1; }
         </style>
+        <script>
+        function sortTable(table, column, direction) {
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            
+            const sortedRows = rows.sort((a, b) => {
+                const aVal = a.children[column].textContent.trim();
+                const bVal = b.children[column].textContent.trim();
+                
+                // Try to parse as numbers (remove $ and % signs)
+                const aNum = parseFloat(aVal.replace(/[$%,]/g, ''));
+                const bNum = parseFloat(bVal.replace(/[$%,]/g, ''));
+                
+                if (!isNaN(aNum) && !isNaN(bNum)) {
+                    return direction === 'asc' ? aNum - bNum : bNum - aNum;
+                }
+                
+                // String comparison
+                return direction === 'asc' ? 
+                    aVal.localeCompare(bVal) : 
+                    bVal.localeCompare(aVal);
+            });
+            
+            // Clear tbody and append sorted rows
+            tbody.innerHTML = '';
+            sortedRows.forEach(row => tbody.appendChild(row));
+        }
+        
+        function makeTablesSortable() {
+            document.querySelectorAll('table').forEach(table => {
+                const headers = table.querySelectorAll('th');
+                headers.forEach((header, index) => {
+                    header.classList.add('sortable');
+                    header.addEventListener('click', () => {
+                        // Reset other headers
+                        headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+                        
+                        // Determine sort direction
+                        const currentSort = header.getAttribute('data-sort') || 'none';
+                        const newSort = currentSort === 'asc' ? 'desc' : 'asc';
+                        
+                        // Update header
+                        header.setAttribute('data-sort', newSort);
+                        header.classList.add(newSort === 'asc' ? 'sort-asc' : 'sort-desc');
+                        
+                        // Sort table
+                        sortTable(table, index, newSort);
+                    });
+                });
+            });
+        }
+        
+        // Initialize sorting when page loads
+        document.addEventListener('DOMContentLoaded', makeTablesSortable);
+        </script>
     </head>
     <body>
         <div class="container">
             <h1>📉 Yahoo Finance Daily Losers Analysis</h1>
             <div class="timestamp">Generated on: {{ timestamp }}</div>
+            
+            <!-- Market Status -->
+            <div class="section" style="text-align: center;">
+                <h3>🕐 Market Status</h3>
+                <div style="font-size: 18px; font-weight: bold; margin: 10px 0;">
+                    {{ market_status.message }}
+                </div>
+                {% if market_status.time_to_close %}
+                    <div style="color: #28a745;">{{ market_status.time_to_close }}</div>
+                {% endif %}
+                {% if market_status.next_open %}
+                    <div style="color: #6c757d; font-size: 14px;">{{ market_status.next_open }}</div>
+                {% endif %}
+            </div>
             
             <!-- Data Source Status -->
             {% if status.data_source == 'cached' %}
@@ -570,12 +644,69 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </ul>
             </div>
 
+            <!-- Refresh Button -->
+            <div class="section">
+                <h3>🔄 Data Controls</h3>
+                <div style="text-align: center; margin: 20px 0;">
+                    <a href="/refresh" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 10px;">
+                        🔄 Force Refresh Data
+                    </a>
+                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 10px;">
+                        📊 Export to CSV
+                    </a>
+                    <p style="margin-top: 15px; font-size: 14px; color: #666;">
+                        <strong>Refresh:</strong> Fetch fresh data from Yahoo Finance (bypasses 24-hour cache)<br>
+                        <strong>Export:</strong> Download all data as CSV for spreadsheet analysis
+                    </p>
+                </div>
+            </div>
+
             <div class="section">
                 <h3>⚠️ Disclaimer</h3>
                 <p><em>This analysis is for informational purposes only and should not be considered as financial advice. 
                 Stock investments carry risk, and past performance does not guarantee future results. 
                 Always consult with a qualified financial advisor before making investment decisions.</em></p>
             </div>
+
+            <!-- Footer -->
+            <footer style="background-color: #343a40; color: white; padding: 30px 20px; margin-top: 40px; text-align: center; border-radius: 8px;">
+                <div style="max-width: 800px; margin: 0 auto;">
+                    <h4 style="margin-bottom: 15px; color: #fff;">📊 Yahoo Finance Daily Losers Analyzer</h4>
+                    <p style="margin-bottom: 20px; line-height: 1.6;">
+                        A real-time web scraper that analyzes Yahoo Finance daily losers and identifies high-potential investment opportunities based on analyst price targets.
+                    </p>
+                    
+                    <div style="display: flex; justify-content: center; gap: 30px; flex-wrap: wrap; margin-bottom: 20px;">
+                        <div>
+                            <strong>👨‍💻 Created by:</strong><br>
+                            <span style="color: #17a2b8;">Damien Adams</span>
+                        </div>
+                        <div>
+                            <strong>🔧 Tech Stack:</strong><br>
+                            Python • Flask • BeautifulSoup • Pandas
+                        </div>
+                        <div>
+                            <strong>☁️ Deployed on:</strong><br>
+                            <span style="color: #28a745;">Render Cloud</span>
+                        </div>
+                    </div>
+                    
+                    <div style="border-top: 1px solid #495057; padding-top: 20px;">
+                        <a href="https://github.com/repbyrepdev/yahoo_losers_webapp" 
+                           style="background-color: #6c757d; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block; margin: 0 10px;">
+                            📂 View Source Code
+                        </a>
+                        <a href="https://github.com/repbyrepdev" 
+                           style="background-color: #17a2b8; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block; margin: 0 10px;">
+                            🔗 My GitHub Profile
+                        </a>
+                    </div>
+                    
+                    <p style="margin-top: 15px; font-size: 12px; color: #adb5bd;">
+                        © 2024 Damien Adams. Open source project. Data provided by Yahoo Finance.
+                    </p>
+                </div>
+            </footer>
         </div>
     </body>
     </html>
@@ -604,6 +735,9 @@ def index():
             
             # Update timestamp to show cache time
             cached_results['timestamp'] = f"{cache_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S UTC')} (cached)"
+            
+            # Add current market status (always fresh)
+            cached_results['market_status'] = get_market_status()
             
             html_template = format_results_as_html(
                 cached_results['losers_data'], 
@@ -635,6 +769,9 @@ def index():
         logger.info("Step 4: Filtering high-potential investments...")
         recommendations = calculate_investment_potential(all_analysis)
         
+        # Get market status
+        market_status = get_market_status()
+        
         # Prepare template variables
         template_vars = {
             'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
@@ -647,7 +784,8 @@ def index():
             'all_analysis': all_analysis,
             'recommendations': recommendations,
             'status': losers_status,
-            'cache_info': cache_status
+            'cache_info': cache_status,
+            'market_status': market_status
         }
         
         # Save results to cache
@@ -669,19 +807,177 @@ def health_check():
     """Health check endpoint for monitoring"""
     return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
 
-@app.route('/refresh-cache')
+@app.route('/refresh')
 def refresh_cache():
     """Manual cache refresh endpoint"""
     try:
         if os.path.exists(CACHE_FILE):
             os.remove(CACHE_FILE)
             logger.info("Cache manually cleared")
-            return "<h1>✅ Cache Cleared!</h1><p><a href='/'>← Go back to get fresh data</a></p>"
+            return """
+            <html>
+                <head><title>Cache Cleared</title></head>
+                <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
+                    <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
+                        <h1 style="color: #28a745;">✅ Cache Cleared Successfully!</h1>
+                        <p>Fresh data will be fetched from Yahoo Finance on your next visit.</p>
+                        <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
+                            🔄 Get Fresh Data Now
+                        </a>
+                    </div>
+                </body>
+            </html>
+            """
         else:
-            return "<h1>ℹ️ No Cache Found</h1><p><a href='/'>← Go back to homepage</a></p>"
+            return """
+            <html>
+                <head><title>No Cache Found</title></head>
+                <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
+                    <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
+                        <h1 style="color: #17a2b8;">ℹ️ No Cache Found</h1>
+                        <p>There was no cached data to clear. Data is already fresh!</p>
+                        <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
+                            📊 View Current Data
+                        </a>
+                    </div>
+                </body>
+            </html>
+            """
     except Exception as e:
         logger.error(f"Error clearing cache: {str(e)}")
-        return f"<h1>❌ Error clearing cache: {str(e)}</h1><p><a href='/'>← Go back to homepage</a></p>"
+        return f"""
+        <html>
+            <head><title>Error</title></head>
+            <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
+                <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
+                    <h1 style="color: #dc3545;">❌ Error</h1>
+                    <p>Error clearing cache: {str(e)}</p>
+                    <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
+                        🏠 Go Back Home
+                    </a>
+                </div>
+            </body>
+        </html>
+        """
+
+def get_market_status():
+    """Get current market status (open/closed)"""
+    import pytz
+    try:
+        # Get current time in EST (NYSE timezone)
+        est = pytz.timezone('America/New_York')
+        now_est = datetime.datetime.now(est)
+        
+        # Check if it's a weekday (Monday = 0, Sunday = 6)
+        if now_est.weekday() >= 5:  # Weekend
+            return {
+                "status": "closed",
+                "message": "🔴 Markets Closed (Weekend)",
+                "next_open": "Next trading day: Monday 9:30 AM EST"
+            }
+        
+        # Check market hours (9:30 AM - 4:00 PM EST)
+        market_open = now_est.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        if now_est < market_open:
+            return {
+                "status": "closed", 
+                "message": "🔴 Markets Closed (Pre-Market)",
+                "next_open": f"Opens today at 9:30 AM EST"
+            }
+        elif now_est > market_close:
+            return {
+                "status": "closed",
+                "message": "🔴 Markets Closed (After-Hours)", 
+                "next_open": "Opens tomorrow at 9:30 AM EST"
+            }
+        else:
+            minutes_to_close = int((market_close - now_est).total_seconds() / 60)
+            return {
+                "status": "open",
+                "message": f"🟢 Markets Open",
+                "time_to_close": f"Closes in {minutes_to_close} minutes"
+            }
+    except:
+        return {
+            "status": "unknown",
+            "message": "❓ Market Status Unknown", 
+            "next_open": "Check market hours manually"
+        }
+
+@app.route('/export/csv')
+def export_csv():
+    """Export current data to CSV format"""
+    try:
+        # Try to get data from cache first
+        cache_data = load_cache()
+        if cache_data:
+            data = cache_data['data']
+            losers_data = data['losers_data']
+            all_analysis = data['all_analysis']
+        else:
+            # If no cache, get fresh data
+            losers_data, _ = scrape_yahoo_losers()
+            symbols = [stock['Symbol'] for stock in losers_data]
+            details_data = get_stock_details(symbols)
+            all_analysis = calculate_all_investment_analysis(losers_data, details_data)
+        
+        # Create CSV data
+        import io
+        from flask import Response
+        
+        output = io.StringIO()
+        
+        # Write header
+        output.write("Symbol,Company Name,Current Price,Price Target,Potential Return %,Change Today,Percent Change Today,Volume,Market Cap,Previous Close\n")
+        
+        # Write data rows
+        for analysis in all_analysis:
+            row = [
+                analysis.get('Symbol', ''),
+                analysis.get('Company Name', '').replace(',', ';'),  # Replace commas to avoid CSV issues
+                analysis.get('Current Price', '').replace('$', ''),
+                analysis.get('Price Target', '').replace('$', ''),
+                str(analysis.get('Potential Return %', '')).replace('%', ''),
+                analysis.get('Change Today', '').replace('$', ''),
+                analysis.get('Percent Change Today', '').replace('%', ''),
+                analysis.get('Volume', ''),
+                analysis.get('Market Cap', ''),
+                analysis.get('Previous Close', '').replace('$', '')
+            ]
+            output.write(','.join(row) + '\n')
+        
+        # Prepare response
+        csv_data = output.getvalue()
+        output.close()
+        
+        # Generate filename with timestamp
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'yahoo_losers_{timestamp}.csv'
+        
+        return Response(
+            csv_data,
+            mimetype='text/csv',
+            headers={'Content-Disposition': f'attachment; filename={filename}'}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting CSV: {str(e)}")
+        return f"""
+        <html>
+            <head><title>Export Error</title></head>
+            <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
+                <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
+                    <h1 style="color: #dc3545;">❌ Export Error</h1>
+                    <p>Error exporting data: {str(e)}</p>
+                    <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
+                        🏠 Go Back Home
+                    </a>
+                </div>
+            </body>
+        </html>
+        """
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
