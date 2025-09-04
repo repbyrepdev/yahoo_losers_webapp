@@ -95,7 +95,7 @@ def get_cache_status():
                 "message": f"Cache expired ({hours_old:.1f} hours old)"
             }
     except Exception as e:
-        return {"exists": False, "message": f"Cache error: {str(e)}"}}
+        return {"exists": False, "message": f"Cache error: {str(e)}"}
 
 def scrape_yahoo_losers():
     """Step 1: Scrape day losers from Yahoo Finance"""
