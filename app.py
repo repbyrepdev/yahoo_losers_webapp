@@ -534,13 +534,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     return;
                 }
                 
-                // Refresh every 5 minutes during market hours
-                if (Date.now() - lastUpdateTime > 300000) { // 5 minutes
+                // Refresh every 3 hours during market hours
+                if (Date.now() - lastUpdateTime > 10800000) { // 3 hours in milliseconds
                     updateLastRefreshTime();
                     showRefreshIndicator();
                     setTimeout(() => location.reload(), 1000);
                 }
-            }, 60000); // Check every minute
+            }, 300000); // Check every 5 minutes
         }
         
         function stopAutoRefresh() {
@@ -651,7 +651,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             <!-- Live Updates Indicator -->
             <div style="text-align: center; margin: 10px 0;">
                 <span id="live-indicator" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">
-                    ⚡ Auto-refresh during market hours
+                    ⚡ Auto-refresh every 3 hours during market hours
                 </span>
             </div>
             
@@ -701,7 +701,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Interactive Features:</h4>
                     <ul style="margin: 5px 0; font-size: 14px;">
                         <li><strong>📈 Live Charts:</strong> Click any stock symbol to view TradingView charts</li>
-                        <li><strong>🔄 Auto-Refresh:</strong> Data updates every 5 minutes during market hours</li>
+                        <li><strong>🔄 Auto-Refresh:</strong> Data updates every 3 hours during market hours</li>
                         <li><strong>🌙 Dark Mode:</strong> Toggle theme with button in top-right corner</li>
                         <li><strong>📊 Sortable Tables:</strong> Click column headers to sort data</li>
                     </ul>
