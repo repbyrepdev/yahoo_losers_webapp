@@ -608,39 +608,48 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             closeBtn.style.cssText = 'position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;';
             closeBtn.onclick = () => modal.remove();
             
-            // Create title
+            // Create title with exchange indicator
             const title = document.createElement('h3');
-            title.textContent = symbol + ' - Live Chart';
+            title.textContent = symbol + ' - Live Chart (NASDAQ)';
             title.style.cssText = 'margin-top: 0; text-align: center; color: #333;';
+            
+            // Update title when switching exchanges
+            const updateTitle = (exchange) => {
+                title.textContent = symbol + ' - Live Chart (' + exchange + ')';
+            };
             
             // Create chart with fallback options
             const chartFrame = document.createElement('iframe');
             chartFrame.style.cssText = 'width: 100%; height: calc(100% - 60px); border: none; border-radius: 5px;';
             
-            // Start with Yahoo Finance chart (more reliable for symbol matching)
-            chartFrame.src = 'https://finance.yahoo.com/chart/' + symbol + '?embed=true';
+            // Start with NASDAQ TradingView (most reliable for embeds)
+            chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
             
-            // Add a button to try TradingView as alternative
+            // Add a button to try different exchanges
             const switchBtn = document.createElement('button');
-            switchBtn.textContent = 'Switch to TradingView';
+            switchBtn.textContent = 'Try NYSE';
             switchBtn.style.cssText = 'position: absolute; top: 50px; right: 15px; background: #007bff; color: white; border: none; border-radius: 3px; padding: 5px 10px; cursor: pointer; font-size: 12px;';
             switchBtn.onclick = function() {
-                if (this.textContent === 'Switch to TradingView') {
-                    // Try TradingView without exchange prefix first
-                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
-                    this.textContent = 'Try NASDAQ:' + symbol;
-                } else if (this.textContent.startsWith('Try NASDAQ:')) {
-                    // Try with NASDAQ prefix
-                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
-                    this.textContent = 'Try NYSE:' + symbol;
-                } else {
-                    // Try with NYSE prefix
+                if (this.textContent === 'Try NYSE') {
+                    // Try NYSE prefix
                     chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NYSE:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
-                    this.textContent = 'Back to Yahoo';
-                }
-                if (this.textContent === 'Back to Yahoo') {
-                    chartFrame.src = 'https://finance.yahoo.com/chart/' + symbol + '?embed=true';
-                    this.textContent = 'Switch to TradingView';
+                    updateTitle('NYSE');
+                    this.textContent = 'Try without prefix';
+                } else if (this.textContent === 'Try without prefix') {
+                    // Try without exchange prefix
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    updateTitle('Auto-detect');
+                    this.textContent = 'Try AMEX';
+                } else if (this.textContent === 'Try AMEX') {
+                    // Try AMEX prefix
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=AMEX:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    updateTitle('AMEX');
+                    this.textContent = 'Back to NASDAQ';
+                } else {
+                    // Back to NASDAQ (default)
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    updateTitle('NASDAQ');
+                    this.textContent = 'Try NYSE';
                 }
             };
             
