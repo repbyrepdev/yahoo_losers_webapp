@@ -597,49 +597,30 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             const modal = document.createElement('div');
             modal.id = 'chart-modal';
-            modal.style.cssText = `
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                background: rgba(0,0,0,0.8); z-index: 10000; 
-                display: flex; justify-content: center; align-items: center;
-            `;
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 10000; display: flex; justify-content: center; align-items: center;';
             
             const chartContainer = document.createElement('div');
-            chartContainer.style.cssText = `
-                background: white; border-radius: 10px; padding: 20px; 
-                width: 90%; max-width: 900px; height: 80%; position: relative;
-            `;
+            chartContainer.style.cssText = 'background: white; border-radius: 10px; padding: 20px; width: 90%; max-width: 900px; height: 80%; position: relative;';
             
-            chartContainer.innerHTML = `
-                <button onclick="document.getElementById('chart-modal').remove()" 
-                        style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="margin-top: 0; text-align: center; color: #333;">${symbol} - Live Chart</h3>
-                <div style="height: calc(100% - 60px);">
-                    <!-- TradingView Widget BEGIN -->
-                    <div class="tradingview-widget-container" style="height:100%;width:100%">
-                        <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
-                        <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js">
-                        {
-                            "autosize": true,
-                            "symbol": "NASDAQ:${symbol}",
-                            "interval": "D",
-                            "timezone": "Etc/UTC",
-                            "theme": "${document.documentElement.getAttribute('data-theme') || 'light'}",
-                            "style": "1",
-                            "locale": "en",
-                            "toolbar_bg": "#f1f3f6",
-                            "enable_publishing": false,
-                            "allow_symbol_change": true,
-                            "details": true,
-                            "hotlist": true,
-                            "calendar": true,
-                            "studies": ["STD;RSI"]
-                        }
-                        </script>
-                    </div>
-                    <!-- TradingView Widget END -->
-                </div>
-            `;
+            // Create close button
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '×';
+            closeBtn.style.cssText = 'position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;';
+            closeBtn.onclick = () => modal.remove();
             
+            // Create title
+            const title = document.createElement('h3');
+            title.textContent = symbol + ' - Live Chart';
+            title.style.cssText = 'margin-top: 0; text-align: center; color: #333;';
+            
+            // Create chart iframe (simpler approach)
+            const chartFrame = document.createElement('iframe');
+            chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en&utm_source=&utm_medium=widget&utm_campaign=chart&utm_term=NASDAQ:' + symbol;
+            chartFrame.style.cssText = 'width: 100%; height: calc(100% - 60px); border: none; border-radius: 5px;';
+            
+            chartContainer.appendChild(closeBtn);
+            chartContainer.appendChild(title);
+            chartContainer.appendChild(chartFrame);
             modal.appendChild(chartContainer);
             document.body.appendChild(modal);
         }
