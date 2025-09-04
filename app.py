@@ -21,6 +21,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 def scrape_yahoo_losers():
     """Step 1: Scrape day losers from Yahoo Finance"""
+    status = {"success": False, "data_source": "unknown", "message": ""}
     try:
         # Updated URL for Yahoo Finance losers
         url = "https://finance.yahoo.com/research-hub/screener/day_losers"
@@ -77,10 +78,12 @@ def scrape_yahoo_losers():
         # If we didn't find any data, create some sample data for demonstration
         if not stocks_data:
             logger.warning("No data found from Yahoo Finance, using sample data")
+            status["data_source"] = "sample"
+            status["message"] = "Yahoo Finance blocked scraping - using sample data for demo"
             stocks_data = [
                 {
                     'Symbol': 'AAPL',
-                    'Name': 'Apple Inc.',
+                    'Name': 'Apple Inc. (SAMPLE)',
                     'Price': '$150.25',
                     'Change': '-$2.15',
                     'Percent Change': '-1.41%',
@@ -88,7 +91,7 @@ def scrape_yahoo_losers():
                 },
                 {
                     'Symbol': 'TSLA',
-                    'Name': 'Tesla, Inc.',
+                    'Name': 'Tesla, Inc. (SAMPLE)',
                     'Price': '$245.67',
                     'Change': '-$8.33',
                     'Percent Change': '-3.28%',
@@ -96,30 +99,36 @@ def scrape_yahoo_losers():
                 },
                 {
                     'Symbol': 'NVDA',
-                    'Name': 'NVIDIA Corporation',
+                    'Name': 'NVIDIA Corporation (SAMPLE)',
                     'Price': '$721.33',
                     'Change': '-$15.42',
                     'Percent Change': '-2.09%',
                     'Market Cap': '1.78T'
                 }
             ]
+        else:
+            status["data_source"] = "live"
+            status["message"] = f"Successfully scraped {len(stocks_data)} stocks from Yahoo Finance"
         
-        logger.info(f"Successfully scraped {len(stocks_data)} stocks")
-        return stocks_data
+        status["success"] = True
+        logger.info(status["message"])
+        return stocks_data, status
         
     except Exception as e:
         logger.error(f"Error scraping Yahoo Finance losers: {str(e)}")
+        status["data_source"] = "error"
+        status["message"] = f"Scraping failed: {str(e)[:100]}... - using fallback data"
         # Return sample data as fallback
         return [
             {
                 'Symbol': 'DEMO',
-                'Name': 'Demo Stock (Yahoo Finance Unavailable)',
+                'Name': 'Demo Stock (SCRAPING ERROR)',
                 'Price': '$100.00',
                 'Change': '-$5.00',
                 'Percent Change': '-4.76%',
                 'Market Cap': '10.0B'
             }
-        ]
+        ], status
 
 def get_stock_details(symbols):
     """Step 2: Get additional stock details"""
@@ -254,7 +263,7 @@ def calculate_investment_potential(losers_data, details_data):
     
     return investment_recommendations
 
-def format_results_as_html(losers_data, details_data, recommendations):
+def format_results_as_html(losers_data, details_data, recommendations, status):
     """Format all results as HTML"""
     
     html_template = """
@@ -275,12 +284,31 @@ def format_results_as_html(losers_data, details_data, recommendations):
             .highlight { background-color: #fff3cd; }
             .timestamp { text-align: center; color: #666; font-size: 14px; }
             .summary { background-color: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
+            .status-live { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .status-sample { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .status-error { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .status-icon { font-weight: bold; margin-right: 8px; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>📉 Yahoo Finance Daily Losers Analysis</h1>
             <div class="timestamp">Generated on: {{ timestamp }}</div>
+            
+            <!-- Data Source Status -->
+            {% if status.data_source == 'live' %}
+                <div class="status-live">
+                    <span class="status-icon">✅ LIVE DATA:</span> {{ status.message }}
+                </div>
+            {% elif status.data_source == 'sample' %}
+                <div class="status-sample">
+                    <span class="status-icon">⚠️ SAMPLE DATA:</span> {{ status.message }}
+                </div>
+            {% elif status.data_source == 'error' %}
+                <div class="status-error">
+                    <span class="status-icon">❌ ERROR:</span> {{ status.message }}
+                </div>
+            {% endif %}
             
             <div class="summary">
                 <h3>📊 Summary</h3>
@@ -380,6 +408,36 @@ def format_results_as_html(losers_data, details_data, recommendations):
             </div>
 
             <div class="section">
+                <h3>🔧 Technical Status</h3>
+                <ul>
+                    <li><strong>Data Source:</strong> 
+                        {% if status.data_source == 'live' %}
+                            <span style="color: green;">✅ Live Yahoo Finance Data</span>
+                        {% elif status.data_source == 'sample' %}
+                            <span style="color: orange;">⚠️ Sample/Demo Data</span>
+                        {% elif status.data_source == 'error' %}
+                            <span style="color: red;">❌ Error/Fallback Data</span>
+                        {% endif %}
+                    </li>
+                    <li><strong>Scraping Status:</strong> {{ status.message }}</li>
+                    <li><strong>Analysis Method:</strong> 
+                        {% if status.data_source == 'live' %}
+                            Real-time web scraping from Yahoo Finance
+                        {% else %}
+                            Using demonstration data (Yahoo Finance may be blocking requests)
+                        {% endif %}
+                    </li>
+                    <li><strong>Next Steps:</strong> 
+                        {% if status.data_source != 'live' %}
+                            Try refreshing in a few minutes - Yahoo Finance temporarily blocks automated requests
+                        {% else %}
+                            Data is live and current as of the timestamp above
+                        {% endif %}
+                    </li>
+                </ul>
+            </div>
+
+            <div class="section">
                 <h3>⚠️ Disclaimer</h3>
                 <p><em>This analysis is for informational purposes only and should not be considered as financial advice. 
                 Stock investments carry risk, and past performance does not guarantee future results. 
@@ -398,10 +456,7 @@ def index():
     try:
         # Step 1: Scrape today's losers
         logger.info("Step 1: Scraping Yahoo Finance losers...")
-        losers_data = scrape_yahoo_losers()
-        
-        if not losers_data:
-            return "<h1>Error: Could not fetch Yahoo Finance data. Please try again later.</h1>"
+        losers_data, losers_status = scrape_yahoo_losers()
         
         # Step 2: Get detailed information for top stocks
         logger.info("Step 2: Getting detailed stock information...")
@@ -414,7 +469,7 @@ def index():
         
         # Step 4: Format as HTML
         logger.info("Step 4: Formatting results...")
-        html_template = format_results_as_html(losers_data, details_data, recommendations)
+        html_template = format_results_as_html(losers_data, details_data, recommendations, losers_status)
         
         # Prepare template variables
         template_vars = {
@@ -424,7 +479,8 @@ def index():
             'recommendations_count': len(recommendations),
             'losers_data': losers_data,
             'details_data': details_data,
-            'recommendations': recommendations
+            'recommendations': recommendations,
+            'status': losers_status
         }
         
         return render_template_string(html_template, **template_vars)
