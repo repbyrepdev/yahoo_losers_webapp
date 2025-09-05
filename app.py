@@ -3941,3 +3941,23 @@ print("   - Real options chain data")
 print("   - Real institutional ownership data")
 print("   - Real sector-based economic calendar")
 
+
+# ==========================================  
+# CRITICAL FIX: ADD MISSING MONKEY PATCHES
+# ==========================================
+
+# MISSING: analyze_social_sentiment was not monkey patched!
+analyze_social_sentiment = analyze_social_sentiment_REAL
+
+print("🔧 CRITICAL FIX: Added missing analyze_social_sentiment monkey patch!")
+
+
+# ==========================================  
+# CREATE MISSING FUNCTION ALIAS
+# ==========================================
+
+# MISSING: get_social_sentiment_analysis function being called but doesn't exist
+get_social_sentiment_analysis = analyze_social_sentiment_REAL
+
+print("🔧 CRITICAL FIX: Created missing get_social_sentiment_analysis function alias!")
+
