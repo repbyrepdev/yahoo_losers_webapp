@@ -1402,7 +1402,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <li><strong>Total Losers Analyzed:</strong> {{ total_losers }}</li>
                     <li><strong>Detailed Analysis:</strong> {{ detailed_count }}</li>
                     <li><strong>Complete Investment Analysis:</strong> {{ all_analysis_count }}</li>
-                    <li><strong>High Potential Investments (>65% return):</strong> {{ recommendations_count }}</li>
+                    <li><strong>AI Recovery Recommendations:</strong> {{ recommendations_count }}</li>
                 </ul>
                 
                 <div style="margin-top: 15px; padding: 10px; background: rgba(0, 123, 255, 0.1); border-radius: 5px; border-left: 4px solid #007bff;">
@@ -1418,7 +1418,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
 
             <div class="section">
-                <h2>🔍 Investment Recommendations (>65% Potential Return)</h2>
+                <h2>🔍 AI Recovery Recommendations</h2>
                 {% if recommendations %}
                     <table>
                         <thead>
@@ -1452,7 +1452,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         </tbody>
                     </table>
                 {% else %}
-                    <p>No stocks found with >65% potential return today.</p>
+                    <p>No AI recovery recommendations found today.</p>
                 {% endif %}
             </div>
 
