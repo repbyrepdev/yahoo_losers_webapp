@@ -3045,20 +3045,34 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             
             # KEEP all original analysis fields AND add AI fields
             enhanced_stock = stock_analysis.copy()  # Preserve everything from original
+            
+            # Extract AI data with debug logging
+            ai_score = recovery_data.get('recovery_score', 0)
+            ai_recommendation = recovery_data.get('recommendation', 'AVOID')
+            is_buy_signal = ai_recommendation.upper().find('BUY') != -1
+            
+            # Debug logging for problematic stocks
+            if symbol in ['HOOD', 'LULU', 'LPLA', 'TPG']:
+                print(f"DEBUG AI DATA for {symbol}:")
+                print(f"  - Recovery Score: {ai_score}")
+                print(f"  - Recommendation: '{ai_recommendation}'") 
+                print(f"  - Is Buy Signal: {is_buy_signal}")
+                print(f"  - Full recovery_data: {recovery_data}")
+            
             enhanced_stock.update({
                 # AI Enhancement - ADD to existing data using correct field mapping
-                'AI Score': recovery_data.get('recovery_score', 0),
+                'AI Score': ai_score,
                 'AI Target': stock_analysis.get('Current Price', 0),  # Use current price as fallback
-                'AI Potential %': recovery_data.get('recovery_score', 0) * 0.8,  # Approximate potential
-                'AI Recommendation': recovery_data.get('recommendation', 'AVOID'),
-                'AI Emoji': '🟢' if recovery_data.get('recovery_score', 0) >= 60 else '🔴',
-                'AI Color': 'green' if recovery_data.get('recovery_score', 0) >= 60 else 'red',
-                'Is Buy Signal': recovery_data.get('recommendation', '').upper().find('BUY') != -1,
+                'AI Potential %': ai_score * 0.8,  # Approximate potential
+                'AI Recommendation': ai_recommendation,
+                'AI Emoji': '🟢' if ai_score >= 60 else '🔴',
+                'AI Color': 'green' if ai_score >= 60 else 'red',
+                'Is Buy Signal': is_buy_signal,
                 'AI Confidence': recovery_data.get('confidence', 'low'),
                 'Time Horizon': recovery_data.get('timeframe', 'unknown'),
                 'Key Factors': recovery_data.get('factors', {}).get('technical', []),
                 'Risk Factors': [recovery_data.get('risk_level', 'unknown')],
-                'AI Summary': f"AI Recovery Score: {recovery_data.get('recovery_score', 0)}/100"
+                'AI Summary': f"AI Recovery Score: {ai_score}/100"
             })
             
             enhanced_analysis.append(enhanced_stock)
@@ -3083,21 +3097,41 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
     return enhanced_analysis
 
 def filter_ai_recovery_potential(enhanced_analysis):
-    """Filter stocks to show AI recovery potential (replaces 65% analyst threshold)"""
+    """Filter stocks to show AI recovery potential - VERY STRICT CRITERIA ONLY"""
     ai_recovery_picks = []
     
     for stock in enhanced_analysis:
-        # Include any positive AI recovery signal (BUY, STRONG BUY, or promising HOLD)
+        symbol = stock.get('Symbol', 'UNKNOWN')
         ai_recommendation = stock.get('AI Recommendation', 'AVOID')
         ai_score = stock.get('AI Score', 0)
         ai_potential = stock.get('AI Potential %', 0)
+        is_buy_signal = stock.get('Is Buy Signal', False)
         
-        # Show ONLY if AI suggests POSITIVE recovery potential:
-        # - Any BUY signal (STRONG BUY, BUY) - explicitly calls for buying
-        # - OR strong AI score (≥70) with non-negative recommendation (not AVOID)
-        if (stock.get('Is Buy Signal', False) or 
-            (ai_score >= 70 and 'AVOID' not in ai_recommendation.upper())):
+        # STRICT FILTERING: Show ONLY if meets BOTH criteria:
+        # 1. Must be a genuine BUY signal (contains "BUY" in recommendation)
+        # 2. OR high AI score (≥75) AND NOT negative recommendations
+        
+        # Check for explicit BUY signals
+        has_buy_signal = (
+            is_buy_signal and 
+            ai_recommendation and
+            ('BUY' in ai_recommendation.upper() or 'STRONG BUY' in ai_recommendation.upper())
+        )
+        
+        # Check for high AI score with positive recommendation 
+        has_high_score = (
+            ai_score >= 75 and
+            ai_recommendation and
+            'AVOID' not in ai_recommendation.upper() and
+            'WAIT' not in ai_recommendation.upper() and
+            'WATCH' not in ai_recommendation.upper()
+        )
+        
+        if has_buy_signal or has_high_score:
+            print(f"DEBUG: Including {symbol} - BuySignal={has_buy_signal}, HighScore={has_high_score}, Score={ai_score}, Rec='{ai_recommendation}'")
             ai_recovery_picks.append(stock)
+        else:
+            print(f"DEBUG: Excluding {symbol} - BuySignal={has_buy_signal}, HighScore={has_high_score}, Score={ai_score}, Rec='{ai_recommendation}'")
     
     # Sort by AI Score (highest first), then by AI Potential % (highest first)
     ai_recovery_picks.sort(key=lambda x: (x.get('AI Score', 0), x.get('AI Potential %', 0)), reverse=True)
