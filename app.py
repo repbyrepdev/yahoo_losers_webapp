@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request, jsonify, g
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -11,6 +11,11 @@ from io import StringIO
 import logging
 import pickle
 from pathlib import Path
+import time
+from functools import wraps
+import gc
+import psutil
+import threading
 
 app = Flask(__name__)
 
@@ -18,12 +23,71 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Request tracking for rate limiting
+request_counts = {}
+request_lock = threading.Lock()
+
 # Create SSL context to handle certificate issues
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # Cache configuration
 CACHE_FILE = '/tmp/yahoo_finance_cache.pkl'  # Use /tmp for Render compatibility
 CACHE_DURATION_HOURS = 24
+
+# Rate limiting configuration
+MAX_REQUESTS_PER_MINUTE = 30
+MAX_AI_REQUESTS_PER_MINUTE = 10
+
+def rate_limit(max_per_minute=MAX_REQUESTS_PER_MINUTE):
+    """Rate limiting decorator"""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            client_ip = request.remote_addr
+            current_time = time.time()
+            
+            with request_lock:
+                # Clean old entries
+                cutoff_time = current_time - 60  # 1 minute ago
+                request_counts[client_ip] = [req_time for req_time in request_counts.get(client_ip, []) if req_time > cutoff_time]
+                
+                # Check rate limit
+                if len(request_counts.get(client_ip, [])) >= max_per_minute:
+                    return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                
+                # Add current request
+                request_counts.setdefault(client_ip, []).append(current_time)
+            
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+def get_memory_usage():
+    """Get current memory usage"""
+    try:
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        return {
+            'rss': memory_info.rss / 1024 / 1024,  # MB
+            'vms': memory_info.vms / 1024 / 1024,  # MB
+            'percent': process.memory_percent()
+        }
+    except:
+        return {'rss': 0, 'vms': 0, 'percent': 0}
+
+def cleanup_resources():
+    """Clean up resources to prevent memory leaks"""
+    gc.collect()
+    
+def log_performance(func_name, start_time, memory_before):
+    """Log performance metrics"""
+    end_time = time.time()
+    memory_after = get_memory_usage()
+    
+    logger.info(f"{func_name} - Duration: {(end_time - start_time):.2f}s, "
+                f"Memory: {memory_before['rss']:.1f}MB -> {memory_after['rss']:.1f}MB "
+                f"({memory_after['rss'] - memory_before['rss']:+.1f}MB)")
+    return memory_after
 
 def save_cache(data):
     """Save analysis results to cache with timestamp"""
@@ -99,6 +163,9 @@ def get_cache_status():
 
 def scrape_yahoo_losers():
     """Step 1: Get DAILY LOSERS from Yahoo Finance screener API - same as original website"""
+    start_time = time.time()
+    memory_before = get_memory_usage()
+    
     status = {"success": False, "data_source": "unknown", "message": ""}
     try:
         # Use the ACTUAL Yahoo Finance day losers screener API
@@ -147,6 +214,8 @@ def scrape_yahoo_losers():
                 status["message"] = f"Successfully scraped {len(stocks_data)} DAILY LOSERS from Yahoo Finance screener"
                 status["success"] = True
                 logger.info(status["message"])
+                log_performance("scrape_yahoo_losers", start_time, memory_before)
+                cleanup_resources()
                 return stocks_data, status
             else:
                 raise Exception("No quotes found in screener response")
@@ -1427,6 +1496,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
     return html_template
 
 @app.route('/')
+@rate_limit(MAX_REQUESTS_PER_MINUTE)
 def index():
     """Main route that runs the Yahoo Finance losers analysis"""
     try:
@@ -1518,6 +1588,32 @@ def index():
 def health_check():
     """Health check endpoint for monitoring"""
     return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
+
+@app.route('/metrics')
+@rate_limit(MAX_REQUESTS_PER_MINUTE)
+def metrics():
+    """Resource monitoring endpoint"""
+    memory = get_memory_usage()
+    cache_info = get_cache_status()
+    
+    return jsonify({
+        "memory": {
+            "rss_mb": round(memory['rss'], 1),
+            "vms_mb": round(memory['vms'], 1), 
+            "percent": round(memory['percent'], 1)
+        },
+        "cache": {
+            "exists": cache_info.get("exists", False),
+            "age_hours": cache_info.get("age_hours", 0) if cache_info.get("exists") else None,
+            "size_mb": cache_info.get("size_mb", 0) if cache_info.get("exists") else None
+        },
+        "rate_limiting": {
+            "active_ips": len(request_counts),
+            "max_per_minute": MAX_REQUESTS_PER_MINUTE,
+            "ai_max_per_minute": MAX_AI_REQUESTS_PER_MINUTE
+        },
+        "timestamp": datetime.datetime.now().isoformat()
+    })
 
 @app.route('/refresh')
 def refresh_cache():
@@ -1778,6 +1874,7 @@ def export_csv():
         """
 
 @app.route('/api/recovery-prediction/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
 def get_recovery_prediction(symbol):
     """AI-powered recovery prediction for a stock"""
     try:
@@ -1808,6 +1905,7 @@ def get_recovery_prediction(symbol):
         })
 
 @app.route('/api/social-sentiment/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
 def get_social_sentiment(symbol):
     """Get social media sentiment for a stock"""
     try:
@@ -1837,6 +1935,7 @@ def get_social_sentiment(symbol):
         })
 
 @app.route('/api/news-analysis/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
 def get_news_analysis(symbol):
     """AI-powered news analysis for a specific stock symbol"""
     try:
