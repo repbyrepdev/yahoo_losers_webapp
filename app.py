@@ -3111,11 +3111,11 @@ def filter_ai_recovery_potential(enhanced_analysis):
         # 1. Must be a genuine BUY signal (contains "BUY" in recommendation)
         # 2. OR high AI score (≥75) AND NOT negative recommendations
         
-        # Check for explicit BUY signals
+        # Check for explicit STRONG BUY signals only (not moderate buy)
         has_buy_signal = (
             is_buy_signal and 
             ai_recommendation and
-            ('BUY' in ai_recommendation.upper() or 'STRONG BUY' in ai_recommendation.upper())
+            'STRONG BUY' in ai_recommendation.upper()
         )
         
         # Check for high AI score with positive recommendation 
