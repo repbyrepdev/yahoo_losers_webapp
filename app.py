@@ -6,7 +6,6 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import csv
 import os
-import datetime
 import json
 import ssl
 from io import StringIO
@@ -21,7 +20,7 @@ import threading
 import random
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import redis
 import structlog
 from celery import Celery
@@ -251,7 +250,7 @@ def save_cache(data):
     """Save analysis results to cache with timestamp (Redis + file fallback)"""
     try:
         cache_data = {
-            'timestamp': datetime.datetime.now(),
+            'timestamp': datetime.now(),
             'data': data
         }
         
@@ -281,8 +280,8 @@ def load_cache():
             redis_data = redis_client.get('yahoo_losers_cache')
             if redis_data:
                 cache_data = json.loads(redis_data)
-                cache_time = datetime.datetime.fromisoformat(cache_data['timestamp'])
-                current_time = datetime.datetime.now()
+                cache_time = datetime.fromisoformat(cache_data['timestamp'])
+                current_time = datetime.now()
                 time_diff = current_time - cache_time
                 
                 cache_data_formatted = {
@@ -304,7 +303,7 @@ def load_cache():
         
         # Check if cache is still valid (within 24 hours)
         cache_time = cache_data['timestamp']
-        current_time = datetime.datetime.now()
+        current_time = datetime.now()
         time_diff = current_time - cache_time
         
         if time_diff.total_seconds() / 3600 < CACHE_DURATION_HOURS:
@@ -343,7 +342,7 @@ def get_cache_status():
             cache_data = pickle.load(f)
         
         cache_time = cache_data['timestamp']
-        current_time = datetime.datetime.now()
+        current_time = datetime.now()
         time_diff = current_time - cache_time
         hours_old = time_diff.total_seconds() / 3600
         
@@ -1772,7 +1771,7 @@ def index():
         
         # Prepare template variables
         template_vars = {
-            'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
             'total_losers': len(losers_data),
             'detailed_count': len(details_data),
             'all_analysis_count': len(all_analysis),
@@ -1818,7 +1817,7 @@ def health_check():
         # Basic health checks
         health_status = {
             "status": "healthy",
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),
             "version": "1.0.0",
             "instance_id": os.environ.get('HOSTNAME', 'unknown')
         }
@@ -1854,7 +1853,7 @@ def health_check():
         return {
             "status": "unhealthy", 
             "error": str(e),
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }, 503
 
 @app.route('/metrics')
@@ -1880,7 +1879,7 @@ def metrics():
             "max_per_minute": MAX_REQUESTS_PER_MINUTE,
             "ai_max_per_minute": MAX_AI_REQUESTS_PER_MINUTE
         },
-        "timestamp": datetime.datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat()
     })
 
 @app.route('/refresh')
@@ -1954,20 +1953,20 @@ def is_market_holiday(date):
     
     # MLK Day - 3rd Monday in January
     if month == 1:
-        third_monday = 15 + (7 - datetime.date(year, 1, 15).weekday()) % 7
+        third_monday = 15 + (7 - date(year, 1, 15).weekday()) % 7
         if day == third_monday:
             return True
     
     # Presidents Day - 3rd Monday in February
     if month == 2:
-        third_monday = 15 + (7 - datetime.date(year, 2, 15).weekday()) % 7
+        third_monday = 15 + (7 - date(year, 2, 15).weekday()) % 7
         if day == third_monday:
             return True
     
     # Memorial Day - Last Monday in May
     if month == 5:
         last_monday = 31
-        while datetime.date(year, 5, last_monday).weekday() != 0:
+        while date(year, 5, last_monday).weekday() != 0:
             last_monday -= 1
         if day == last_monday:
             return True
@@ -1975,20 +1974,20 @@ def is_market_holiday(date):
     # Labor Day - 1st Monday in September
     if month == 9:
         first_monday = 1
-        while datetime.date(year, 9, first_monday).weekday() != 0:
+        while date(year, 9, first_monday).weekday() != 0:
             first_monday += 1
         if day == first_monday:
             return True
     
     # Thanksgiving - 4th Thursday in November
     if month == 11:
-        fourth_thursday = 22 + (3 - datetime.date(year, 11, 22).weekday()) % 7
+        fourth_thursday = 22 + (3 - date(year, 11, 22).weekday()) % 7
         if day == fourth_thursday:
             return True
     
     # Black Friday - Day after Thanksgiving (half day, treat as closed)
     if month == 11:
-        fourth_thursday = 22 + (3 - datetime.date(year, 11, 22).weekday()) % 7
+        fourth_thursday = 22 + (3 - date(year, 11, 22).weekday()) % 7
         if day == fourth_thursday + 1:
             return True
     
@@ -2020,7 +2019,7 @@ def get_market_status():
     try:
         # Get current time in EST (NYSE timezone)
         est = pytz.timezone('America/New_York')
-        now_est = datetime.datetime.now(est)
+        now_est = datetimetime.now(est)
         
         # Check if it's a weekday (Monday = 0, Sunday = 6)
         if now_est.weekday() >= 5:  # Weekend
@@ -2115,7 +2114,7 @@ def export_csv():
         output.close()
         
         # Generate filename with timestamp
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'yahoo_losers_{timestamp}.csv'
         
         return Response(
@@ -3344,7 +3343,7 @@ def get_professional_analysis(symbol):
         # Combine into comprehensive analysis
         professional_analysis = {
             "symbol": symbol.upper(),
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": datetime.now().isoformat(),
             "options_flow": options_data,
             "institutional_flow": institutional_data,
             "economic_calendar": calendar_data,
