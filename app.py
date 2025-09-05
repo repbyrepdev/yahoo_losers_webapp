@@ -1288,40 +1288,75 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const modal = createModal('sentiment-modal');
             const container = createModalContainer();
             
+            // Handle both new real data format and old simulated format
+            const isNewFormat = sentiment.sentiment_label !== undefined;
+            
+            // Get color based on panic level or format
+            const getColorByPanic = (level) => {
+                if (level <= 3) return '#28a745'; // Green for low panic
+                if (level <= 6) return '#ffc107'; // Yellow for medium panic  
+                return '#dc3545'; // Red for high panic
+            };
+            
+            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const panicLevel = sentiment.panic_level || 5;
+            
+            // Get display values based on format
+            const sentimentDisplay = isNewFormat ? 
+                (sentiment.sentiment_label || '😐 Neutral') : 
+                (sentiment.panic_description || '📊 Standard');
+            const volumeDisplay = isNewFormat ? 
+                (sentiment.volume_interest || '📊 Standard interest') : 
+                (sentiment.social_volume || 'Standard');
+            
             container.innerHTML = `
                 <button onclick="document.getElementById('sentiment-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
                 <h3 style="text-align: center; color: #333; margin-top: 0;">📱 Social Sentiment: ${symbol}</h3>
                 
-                <div style="text-align: center; padding: 25px; background: ${sentiment.panic_color}; color: white; border-radius: 10px; margin: 15px 0;">
+                <div style="text-align: center; padding: 25px; background: ${panicColor}; color: white; border-radius: 10px; margin: 15px 0;">
                     <div style="font-size: 36px; font-weight: bold; margin-bottom: 10px;">
-                        ${sentiment.panic_description}
+                        ${sentimentDisplay}
                     </div>
                     <div style="font-size: 18px; opacity: 0.9;">
-                        Panic Level: ${sentiment.panic_level}/10
+                        Panic Level: ${panicLevel}/10
                     </div>
+                    ${isNewFormat ? `<div style="font-size: 16px; margin-top: 10px;">
+                        ${volumeDisplay}
+                    </div>` : ''}
                 </div>
                 
-                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin: 20px 0; text-align: center;">
+                ${!isNewFormat ? `<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin: 20px 0; text-align: center;">
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #ff4757;">${sentiment.reddit_mentions}</div>
+                        <div style="font-size: 24px; font-weight: bold; color: #ff4757;">${sentiment.reddit_mentions || 0}</div>
                         <div style="font-size: 12px; color: #666;">Reddit Mentions</div>
                     </div>
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #1da1f2;">${sentiment.twitter_mentions}</div>
+                        <div style="font-size: 24px; font-weight: bold; color: #1da1f2;">${sentiment.twitter_mentions || 0}</div>
                         <div style="font-size: 12px; color: #666;">Twitter Mentions</div>
                     </div>
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #2ecc71;">${sentiment.stocktwits_mentions}</div>
+                        <div style="font-size: 24px; font-weight: bold; color: #2ecc71;">${sentiment.stocktwits_mentions || 0}</div>
                         <div style="font-size: 12px; color: #666;">StockTwits Posts</div>
                     </div>
-                </div>
+                </div>` : `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; text-align: center;">
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div style="font-size: 24px; font-weight: bold; color: #ff4757;">📈</div>
+                        <div style="font-size: 14px; color: #666;">Market Sentiment</div>
+                        <div style="font-size: 16px; font-weight: bold; color: #333;">${sentimentDisplay}</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
+                        <div style="font-size: 24px; font-weight: bold; color: #1da1f2;">🔥</div>
+                        <div style="font-size: 14px; color: #666;">Interest Level</div>
+                        <div style="font-size: 16px; font-weight: bold; color: #333;">${volumeDisplay}</div>
+                    </div>
+                </div>`}
                 
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                    <h5 style="margin: 0 0 10px 0;">🔥 Trending Phrases:</h5>
+                    <h5 style="margin: 0 0 10px 0;">🔥 ${isNewFormat ? 'Key Indicators:' : 'Trending Phrases:'}</h5>
                     <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${sentiment.trending_phrases.map(phrase => 
-                            `<span style="background: ${sentiment.panic_color}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                        ${(sentiment.trending_phrases || ['Standard sentiment', 'Market tracking']).map(phrase => 
+                            `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
                         ).join('')}
                     </div>
                 </div>
