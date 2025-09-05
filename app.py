@@ -1586,8 +1586,49 @@ def index():
 
 @app.route('/health')
 def health_check():
-    """Health check endpoint for monitoring"""
-    return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
+    """Enhanced health check endpoint for auto-scaling"""
+    try:
+        # Basic health checks
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "version": "1.0.0",
+            "instance_id": os.environ.get('HOSTNAME', 'unknown')
+        }
+        
+        # Check cache availability
+        cache_info = get_cache_status()
+        health_status["cache"] = {
+            "status": "available" if cache_info.get("exists") else "unavailable",
+            "age_hours": cache_info.get("age_hours", 0)
+        }
+        
+        # Check memory usage for scaling decisions
+        memory = get_memory_usage()
+        health_status["resources"] = {
+            "memory_mb": round(memory['rss'], 1),
+            "memory_percent": round(memory['percent'], 1),
+            "healthy": memory['percent'] < 90  # Unhealthy if using >90% memory
+        }
+        
+        # Overall health determination
+        overall_healthy = (
+            health_status["cache"]["status"] == "available" and
+            health_status["resources"]["healthy"]
+        )
+        
+        status_code = 200 if overall_healthy else 503
+        if not overall_healthy:
+            health_status["status"] = "unhealthy"
+            
+        return health_status, status_code
+        
+    except Exception as e:
+        return {
+            "status": "unhealthy", 
+            "error": str(e),
+            "timestamp": datetime.datetime.now().isoformat()
+        }, 503
 
 @app.route('/metrics')
 @rate_limit(MAX_REQUESTS_PER_MINUTE)

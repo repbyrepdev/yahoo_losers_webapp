@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # Redis for shared caching across app instances
+  redis:
+    image: redis:7-alpine
+    container_name: yahoo-losers-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Application instances (we'll scale these)
+  app:
+    build: .
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PORT=8080
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Don't expose ports directly - let load balancer handle it
+    expose:
+      - "8080"
+
+  # NGINX Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: yahoo-losers-lb
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # For HTTPS certificates
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus for metrics collection (optional but recommended)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: yahoo-losers-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+
+volumes:
+  redis_data:
+  prometheus_data:
+
+networks:
+  default:
+    driver: bridge
