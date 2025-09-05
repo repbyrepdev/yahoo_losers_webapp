@@ -1759,9 +1759,9 @@ def index():
         logger.info("Step 3: Calculating AI-enhanced investment analysis...")
         all_analysis = calculate_enhanced_investment_analysis(losers_data, details_data)
         
-        # Step 4: Filter AI buy recommendations (replaces 65% analyst filter)
-        logger.info("Step 4: Filtering AI buy recommendations...")
-        recommendations = filter_ai_buy_recommendations(all_analysis)
+        # Step 4: Filter AI recovery potential (replaces 65% analyst filter)
+        logger.info("Step 4: Filtering AI recovery potential...")
+        recommendations = filter_ai_recovery_potential(all_analysis)
         
         # Get market status
         market_status = get_market_status()
@@ -3092,18 +3092,29 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
     
     return enhanced_analysis
 
-def filter_ai_buy_recommendations(enhanced_analysis):
-    """Filter stocks to show only AI buy recommendations instead of 65% threshold"""
-    ai_buy_picks = []
+def filter_ai_recovery_potential(enhanced_analysis):
+    """Filter stocks to show AI recovery potential (replaces 65% analyst threshold)"""
+    ai_recovery_picks = []
     
     for stock in enhanced_analysis:
-        if stock.get('Is Buy Signal', False):
-            ai_buy_picks.append(stock)
+        # Include any positive AI recovery signal (BUY, STRONG BUY, or promising HOLD)
+        ai_recommendation = stock.get('AI Recommendation', 'AVOID')
+        ai_score = stock.get('AI Score', 0)
+        ai_potential = stock.get('AI Potential %', 0)
+        
+        # Show if AI suggests recovery potential:
+        # - Any BUY signal (STRONG BUY, BUY)
+        # - OR HOLD with decent AI score (≥50) and positive potential (≥5%)
+        # - OR any AI score ≥60 (shows promise even if conservative)
+        if (stock.get('Is Buy Signal', False) or 
+            (ai_recommendation == 'HOLD' and ai_score >= 50 and ai_potential >= 5) or
+            ai_score >= 60):
+            ai_recovery_picks.append(stock)
     
     # Sort by AI Score (highest first), then by AI Potential % (highest first)
-    ai_buy_picks.sort(key=lambda x: (x.get('AI Score', 0), x.get('AI Potential %', 0)), reverse=True)
+    ai_recovery_picks.sort(key=lambda x: (x.get('AI Score', 0), x.get('AI Potential %', 0)), reverse=True)
     
-    return ai_buy_picks
+    return ai_recovery_picks
 
 # #7 Background Task API Endpoints
 @app.route('/api/tasks/start/<symbol>')
