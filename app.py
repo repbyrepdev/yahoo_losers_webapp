@@ -3092,13 +3092,11 @@ def filter_ai_recovery_potential(enhanced_analysis):
         ai_score = stock.get('AI Score', 0)
         ai_potential = stock.get('AI Potential %', 0)
         
-        # Show if AI suggests recovery potential:
-        # - Any BUY signal (STRONG BUY, BUY)
-        # - OR HOLD with decent AI score (≥50) and positive potential (≥5%)
-        # - OR any AI score ≥60 (shows promise even if conservative)
+        # Show ONLY if AI suggests POSITIVE recovery potential:
+        # - Any BUY signal (STRONG BUY, BUY) - explicitly calls for buying
+        # - OR strong AI score (≥70) with non-negative recommendation (not AVOID)
         if (stock.get('Is Buy Signal', False) or 
-            (ai_recommendation == 'HOLD' and ai_score >= 50 and ai_potential >= 5) or
-            ai_score >= 60):
+            (ai_score >= 70 and 'AVOID' not in ai_recommendation.upper())):
             ai_recovery_picks.append(stock)
     
     # Sort by AI Score (highest first), then by AI Potential % (highest first)
