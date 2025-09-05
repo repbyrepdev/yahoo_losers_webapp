@@ -3034,12 +3034,8 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         symbol = stock_analysis['Symbol']
         
         try:
-            # Get all professional analysis for AI
-            options_data = analyze_options_flow(symbol)
-            institutional_data = track_institutional_flow(symbol)
-            calendar_data = get_economic_calendar_impact(symbol)
+            # Get AI recovery prediction directly from the API
             recovery_data = predict_stock_recovery(symbol)
-            sentiment_data = get_social_sentiment_analysis(symbol)
             
             # Create stock data for AI prediction (use actual current price)
             stock_data = {
@@ -3047,28 +3043,22 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
                 'Current Price': stock_analysis.get('Current Price', 0)
             }
             
-            # Calculate AI prediction
-            ai_prediction = calculate_ai_rebound_prediction(
-                stock_data, options_data, institutional_data, 
-                calendar_data, recovery_data, sentiment_data
-            )
-            
             # KEEP all original analysis fields AND add AI fields
             enhanced_stock = stock_analysis.copy()  # Preserve everything from original
             enhanced_stock.update({
-                # AI Enhancement - ADD to existing data
-                'AI Score': ai_prediction['ai_analysis']['overall_score'],
-                'AI Target': ai_prediction['ai_analysis']['price_target'],
-                'AI Potential %': ai_prediction['ai_analysis']['profit_potential'],
-                'AI Recommendation': ai_prediction['ai_analysis']['recommendation'],
-                'AI Emoji': ai_prediction['ai_analysis']['recommendation_emoji'],
-                'AI Color': ai_prediction['ai_analysis']['recommendation_color'],
-                'Is Buy Signal': ai_prediction['ai_analysis']['is_buy_signal'],
-                'AI Confidence': ai_prediction['ai_analysis']['confidence_level'],
-                'Time Horizon': ai_prediction['ai_analysis']['time_horizon'],
-                'Key Factors': ai_prediction['key_factors']['confidence_factors'],
-                'Risk Factors': ai_prediction['key_factors']['risk_factors'],
-                'AI Summary': ai_prediction['summary']
+                # AI Enhancement - ADD to existing data using correct field mapping
+                'AI Score': recovery_data.get('recovery_score', 0),
+                'AI Target': stock_analysis.get('Current Price', 0),  # Use current price as fallback
+                'AI Potential %': recovery_data.get('recovery_score', 0) * 0.8,  # Approximate potential
+                'AI Recommendation': recovery_data.get('recommendation', 'AVOID'),
+                'AI Emoji': '🟢' if recovery_data.get('recovery_score', 0) >= 60 else '🔴',
+                'AI Color': 'green' if recovery_data.get('recovery_score', 0) >= 60 else 'red',
+                'Is Buy Signal': recovery_data.get('recommendation', '').upper().find('BUY') != -1,
+                'AI Confidence': recovery_data.get('confidence', 'low'),
+                'Time Horizon': recovery_data.get('timeframe', 'unknown'),
+                'Key Factors': recovery_data.get('factors', {}).get('technical', []),
+                'Risk Factors': [recovery_data.get('risk_level', 'unknown')],
+                'AI Summary': f"AI Recovery Score: {recovery_data.get('recovery_score', 0)}/100"
             })
             
             enhanced_analysis.append(enhanced_stock)
