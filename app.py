@@ -1224,9 +1224,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             style="background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
                         📈 View Chart
                     </button>
-                    <button onclick="showSocialSentiment('${symbol}')" 
-                            style="background: #ff6b6b; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
-                        📱 Check Social Buzz
+                    <button onclick="showComprehensiveAnalysis('${symbol}')" 
+                            style="background: linear-gradient(45deg, #6f42c1, #e83e8c); color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        🔮📱 Full Analysis
                     </button>
                 </div>
             `;
@@ -1377,6 +1377,157 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             document.body.appendChild(modal);
         }
         
+        // Combined Analysis functionality (Social Sentiment + Recovery)
+        function showComprehensiveAnalysis(symbol) {
+            // Create loading modal first
+            showComprehensiveLoading(symbol);
+            
+            // Fetch both social sentiment and recovery data in parallel
+            Promise.all([
+                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
+                fetch('/api/recovery-prediction/' + symbol).then(response => response.json())
+            ]).then(([sentimentData, recoveryData]) => {
+                // Cache the results
+                sentimentCache[symbol] = sentimentData.sentiment;
+                recoveryCache[symbol] = recoveryData.prediction;
+                
+                displayComprehensiveModal(symbol, sentimentData.sentiment, recoveryData.prediction);
+            }).catch(error => {
+                console.error('Comprehensive analysis error:', error);
+                displayComprehensiveModal(symbol, null, null);
+            });
+        }
+        
+        function showComprehensiveLoading(symbol) {
+            const modal = createModal('comprehensive-modal');
+            const container = createModalContainer();
+            
+            container.innerHTML = `
+                <button onclick="document.getElementById('comprehensive-modal').remove()" 
+                        style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">🔮📱 Complete Analysis: ${symbol}</h3>
+                <div style="text-align: center; padding: 40px;">
+                    <div style="font-size: 48px; animation: spin 1s linear infinite;">🔮</div>
+                    <div style="margin-top: 20px; font-size: 16px; color: #666;">
+                        Analyzing social sentiment and recovery potential...
+                    </div>
+                </div>
+            `;
+            
+            modal.appendChild(container);
+            document.body.appendChild(modal);
+        }
+        
+        function displayComprehensiveModal(symbol, sentiment, recovery) {
+            const existingModal = document.getElementById('comprehensive-modal');
+            if (existingModal) existingModal.remove();
+            
+            const modal = createModal('comprehensive-modal');
+            const container = createModalContainer();
+            
+            // Handle missing data
+            if (!sentiment) sentiment = { panic_level: 5, panic_description: 'Data unavailable', trending_phrases: ['Analysis failed'], panic_color: '#6c757d' };
+            if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
+            
+            // Handle both data formats for sentiment
+            const isNewFormat = sentiment.sentiment_label !== undefined;
+            const getColorByPanic = (level) => {
+                if (level <= 3) return '#28a745';
+                if (level <= 6) return '#ffc107';
+                return '#dc3545';
+            };
+            
+            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const sentimentDisplay = isNewFormat ? 
+                (sentiment.sentiment_label || '😐 Neutral') : 
+                (sentiment.panic_description || '📊 Standard');
+            
+            // Recovery color based on score
+            const getRecoveryColor = (score) => {
+                if (score >= 75) return '#28a745';
+                if (score >= 60) return '#ffc107';
+                if (score >= 40) return '#fd7e14';
+                return '#dc3545';
+            };
+            
+            const recoveryColor = getRecoveryColor(recovery.recovery_score || 0);
+            
+            container.innerHTML = `
+                <button onclick="document.getElementById('comprehensive-modal').remove()" 
+                        style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">🔮📱 Complete Analysis: ${symbol}</h3>
+                
+                <!-- Social Sentiment Section -->
+                <div style="background: ${panicColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                    <h4 style="margin: 0 0 15px 0; text-align: center;">📱 Social Sentiment</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
+                        <div>
+                            <div style="font-size: 28px; font-weight: bold;">${sentimentDisplay}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Current Mood</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 28px; font-weight: bold;">${sentiment.panic_level || 5}/10</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
+                        </div>
+                    </div>
+                    ${isNewFormat ? `<div style="text-align: center; margin-top: 10px; font-size: 16px;">
+                        ${sentiment.volume_interest || '📊 Standard interest'}
+                    </div>` : ''}
+                </div>
+                
+                <!-- Recovery Analysis Section -->
+                <div style="background: ${recoveryColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                    <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Recovery Potential</h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
+                        <div>
+                            <div style="font-size: 28px; font-weight: bold;">${recovery.recovery_score || 0}%</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 16px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                        </div>
+                    </div>
+                    <div style="text-align: center; margin-top: 15px; font-size: 16px; font-weight: bold;">
+                        ${recovery.recommendation || 'Analysis unavailable'}
+                    </div>
+                    ${recovery.timeframe ? `<div style="text-align: center; margin-top: 5px; font-size: 14px; opacity: 0.9;">
+                        Expected timeframe: ${recovery.timeframe}
+                    </div>` : ''}
+                </div>
+                
+                <!-- Key Indicators -->
+                ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                    <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Key Market Indicators</h5>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        ${sentiment.trending_phrases.map(phrase => 
+                            `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                        ).join('')}
+                    </div>
+                </div>` : ''}
+                
+                <!-- Action Buttons -->
+                <div style="text-align: center; margin-top: 20px;">
+                    <button onclick="showTradingViewChart('${symbol}')" 
+                            style="background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        📈 View Chart
+                    </button>
+                    <button onclick="window.open('https://finance.yahoo.com/quote/${symbol}/news', '_blank')" 
+                            style="background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        📰 Latest News
+                    </button>
+                    <button onclick="window.open('https://www.reddit.com/search/?q=${symbol}', '_blank')" 
+                            style="background: #ff4757; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        🔍 Social Discussion
+                    </button>
+                </div>
+            `;
+            
+            modal.appendChild(container);
+            document.body.appendChild(modal);
+        }
+        
         // Initialize everything when page loads
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
@@ -1476,8 +1627,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <span class="stock-symbol">{{ stock.Symbol }}</span>
                                     <button class="ai-button" onclick="showAIAnalysis('{{ stock.Symbol }}')">🤖 AI</button>
-                                    <button class="ai-button" onclick="showRecoveryPrediction('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #28a745, #20c997);">🔮 Recovery</button>
-                                    <button class="ai-button" onclick="showSocialSentiment('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #ff6b6b, #ee5a24);">📱 Social</button>
+                                    <button class="ai-button" onclick="showComprehensiveAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #6f42c1, #e83e8c);">🔮📱 Analysis</button>
                                 </td>
                                 <td>{{ stock.Name }}</td>
                                 <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
@@ -1517,8 +1667,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <span class="stock-symbol">{{ stock.Symbol }}</span>
                                     <button class="ai-button" onclick="showAIAnalysis('{{ stock.Symbol }}')">🤖 AI</button>
-                                    <button class="ai-button" onclick="showRecoveryPrediction('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #28a745, #20c997);">🔮 Recovery</button>
-                                    <button class="ai-button" onclick="showSocialSentiment('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #ff6b6b, #ee5a24);">📱 Social</button>
+                                    <button class="ai-button" onclick="showComprehensiveAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #6f42c1, #e83e8c);">🔮📱 Analysis</button>
                                 </td>
                                 <td>{{ stock.Name }}</td>
                                 <td>
