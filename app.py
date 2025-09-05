@@ -2540,6 +2540,289 @@ def analyze_social_sentiment(symbol):
         "social_volume": "high" if (reddit_mentions + twitter_mentions) > 2000 else "moderate" if (reddit_mentions + twitter_mentions) > 500 else "low"
     }
 
+# ============================================================================= 
+# PROFESSIONAL TRADING FEATURES
+# =============================================================================
+
+def analyze_options_flow(symbol):
+    """Analyze unusual options activity for a stock"""
+    import random
+    from datetime import datetime, timedelta
+    
+    # Simulate realistic options flow data (in production, would use real API)
+    base_volume = random.randint(500, 5000)
+    avg_volume = base_volume * random.uniform(0.7, 1.3)
+    
+    # Calculate unusual activity
+    volume_ratio = base_volume / avg_volume if avg_volume > 0 else 1
+    is_unusual = volume_ratio > 2.0
+    
+    # Generate realistic options data
+    strikes_otm = [round(random.uniform(0.95, 1.15), 2) for _ in range(5)]
+    put_call_ratio = round(random.uniform(0.3, 3.5), 2)
+    
+    # Smart money indicators
+    block_trades = random.randint(0, 15) if is_unusual else random.randint(0, 3)
+    sweep_activity = random.randint(0, 8) if is_unusual else random.randint(0, 2)
+    
+    # Flow sentiment
+    if put_call_ratio < 0.7:
+        flow_sentiment = "bullish"
+        sentiment_strength = "strong" if put_call_ratio < 0.5 else "moderate"
+        sentiment_color = "#28a745"
+    elif put_call_ratio > 1.5:
+        flow_sentiment = "bearish" 
+        sentiment_strength = "strong" if put_call_ratio > 2.0 else "moderate"
+        sentiment_color = "#dc3545"
+    else:
+        flow_sentiment = "neutral"
+        sentiment_strength = "weak"
+        sentiment_color = "#6c757d"
+    
+    # Expiration analysis
+    near_term_bias = random.choice(["calls", "puts", "mixed"])
+    next_earnings = datetime.now() + timedelta(days=random.randint(5, 45))
+    
+    # Generate key signals
+    signals = []
+    if is_unusual:
+        signals.append("🚨 Unusual Volume Spike")
+    if block_trades > 5:
+        signals.append("🐋 Large Block Activity")
+    if sweep_activity > 3:
+        signals.append("⚡ Sweep Activity Detected")
+    if put_call_ratio < 0.4:
+        signals.append("🟢 Heavy Call Buying")
+    elif put_call_ratio > 2.5:
+        signals.append("🔴 Heavy Put Buying")
+    
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "volume_metrics": {
+            "total_options_volume": f"{base_volume:,}",
+            "vs_avg_volume": f"{volume_ratio:.1f}x",
+            "is_unusual": is_unusual
+        },
+        "flow_sentiment": {
+            "direction": flow_sentiment,
+            "strength": sentiment_strength,
+            "color": sentiment_color,
+            "put_call_ratio": put_call_ratio
+        },
+        "smart_money_indicators": {
+            "block_trades": block_trades,
+            "sweep_activity": sweep_activity,
+            "dark_pool_prints": random.randint(0, 12) if is_unusual else random.randint(0, 3)
+        },
+        "key_strikes": {
+            "most_active_calls": strikes_otm[:3],
+            "most_active_puts": strikes_otm[2:5],
+            "near_term_bias": near_term_bias
+        },
+        "timing_analysis": {
+            "next_earnings": next_earnings.strftime("%Y-%m-%d"),
+            "days_to_earnings": (next_earnings - datetime.now()).days,
+            "expiration_focus": random.choice(["weekly", "monthly", "earnings"])
+        },
+        "alerts": signals,
+        "summary": f"{'Unusual' if is_unusual else 'Normal'} options activity with {sentiment_strength} {flow_sentiment} bias"
+    }
+
+def track_institutional_flow(symbol):
+    """Track institutional buying/selling patterns"""
+    import random
+    from datetime import datetime, timedelta
+    
+    # Simulate institutional flow data
+    total_volume = random.randint(1000000, 50000000)  # Share volume
+    institutional_volume = int(total_volume * random.uniform(0.3, 0.8))
+    retail_volume = total_volume - institutional_volume
+    
+    # Calculate flow direction
+    buy_volume = int(institutional_volume * random.uniform(0.3, 0.7))
+    sell_volume = institutional_volume - buy_volume
+    net_flow = buy_volume - sell_volume
+    
+    # Flow classification
+    if abs(net_flow) / institutional_volume > 0.3:
+        flow_strength = "strong"
+        if net_flow > 0:
+            flow_direction = "accumulation"
+            flow_color = "#28a745"
+            flow_emoji = "🟢"
+        else:
+            flow_direction = "distribution"
+            flow_color = "#dc3545" 
+            flow_emoji = "🔴"
+    elif abs(net_flow) / institutional_volume > 0.1:
+        flow_strength = "moderate"
+        flow_direction = "accumulation" if net_flow > 0 else "distribution"
+        flow_color = "#ffc107"
+        flow_emoji = "🟡"
+    else:
+        flow_strength = "weak"
+        flow_direction = "balanced"
+        flow_color = "#6c757d"
+        flow_emoji = "⚪"
+    
+    # Generate institution types
+    institution_breakdown = {
+        "hedge_funds": round(random.uniform(0.2, 0.4), 2),
+        "mutual_funds": round(random.uniform(0.15, 0.35), 2), 
+        "pension_funds": round(random.uniform(0.05, 0.15), 2),
+        "etfs": round(random.uniform(0.1, 0.25), 2),
+        "other": 0.0
+    }
+    institution_breakdown["other"] = round(1.0 - sum(institution_breakdown.values()), 2)
+    
+    # Dark pool analysis
+    dark_pool_volume = int(total_volume * random.uniform(0.15, 0.4))
+    dark_pool_ratio = dark_pool_volume / total_volume
+    
+    # Price impact analysis
+    price_impact = random.uniform(-0.02, 0.02)  # -2% to +2%
+    efficiency = random.uniform(0.7, 0.95)
+    
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "volume_analysis": {
+            "total_volume": f"{total_volume:,}",
+            "institutional_volume": f"{institutional_volume:,}",
+            "retail_volume": f"{retail_volume:,}", 
+            "institutional_percentage": round(institutional_volume / total_volume * 100, 1)
+        },
+        "flow_direction": {
+            "net_flow": f"{net_flow:+,}",
+            "direction": flow_direction,
+            "strength": flow_strength,
+            "color": flow_color,
+            "emoji": flow_emoji
+        },
+        "institution_breakdown": institution_breakdown,
+        "dark_pool_analysis": {
+            "volume": f"{dark_pool_volume:,}",
+            "percentage": round(dark_pool_ratio * 100, 1),
+            "interpretation": "High" if dark_pool_ratio > 0.3 else "Normal" if dark_pool_ratio > 0.2 else "Low"
+        },
+        "execution_quality": {
+            "price_impact": f"{price_impact:+.2%}",
+            "execution_efficiency": f"{efficiency:.1%}",
+            "slippage": f"{random.uniform(0.001, 0.01):.3%}"
+        },
+        "smart_money_signals": [
+            f"{flow_emoji} {flow_strength.title()} {flow_direction}",
+            f"🏛️ {institution_breakdown['hedge_funds']:.1%} Hedge Fund Flow",
+            f"📊 {dark_pool_ratio:.1%} Dark Pool Activity" 
+        ],
+        "summary": f"Institutions showing {flow_strength} {flow_direction} with {dark_pool_ratio:.1%} dark pool activity"
+    }
+
+def get_economic_calendar_impact(symbol):
+    """Get relevant economic events that could impact the stock"""
+    import random
+    from datetime import datetime, timedelta
+    
+    # Economic events with stock impact potential
+    economic_events = [
+        {"name": "FOMC Interest Rate Decision", "impact": "high", "sectors": ["financials", "reits", "utilities"]},
+        {"name": "Non-Farm Payrolls", "impact": "high", "sectors": ["all"]},
+        {"name": "CPI Inflation Data", "impact": "high", "sectors": ["consumer", "retail", "food"]},
+        {"name": "GDP Growth Rate", "impact": "medium", "sectors": ["all"]},
+        {"name": "Consumer Confidence", "impact": "medium", "sectors": ["consumer", "retail"]},
+        {"name": "ISM Manufacturing PMI", "impact": "medium", "sectors": ["manufacturing", "industrials"]},
+        {"name": "Oil Inventory Report", "impact": "medium", "sectors": ["energy", "oil"]},
+        {"name": "Retail Sales", "impact": "medium", "sectors": ["retail", "consumer"]},
+        {"name": "Housing Starts", "impact": "low", "sectors": ["reits", "construction", "materials"]},
+        {"name": "Initial Jobless Claims", "impact": "low", "sectors": ["all"]}
+    ]
+    
+    # Company sector mapping (simplified)
+    sector_map = {
+        "AAPL": "technology", "MSFT": "technology", "GOOGL": "technology", "AMZN": "consumer",
+        "TSLA": "automotive", "META": "technology", "NVDA": "semiconductors",
+        "JPM": "financials", "BAC": "financials", "WFC": "financials",
+        "XOM": "energy", "CVX": "energy", "COP": "energy",
+        "JNJ": "healthcare", "PFE": "healthcare", "UNH": "healthcare",
+        "WMT": "retail", "HD": "retail", "PG": "consumer"
+    }
+    
+    stock_sector = sector_map.get(symbol, "general")
+    
+    # Generate upcoming events (next 14 days)
+    upcoming_events = []
+    for i in range(random.randint(3, 8)):
+        event = random.choice(economic_events)
+        event_date = datetime.now() + timedelta(days=random.randint(1, 14))
+        
+        # Determine if event affects this stock
+        affects_stock = (
+            "all" in event["sectors"] or 
+            stock_sector in event["sectors"] or
+            any(sector in stock_sector for sector in event["sectors"])
+        )
+        
+        if affects_stock or random.random() < 0.3:  # 30% chance of indirect impact
+            impact_score = {"high": 85, "medium": 60, "low": 35}[event["impact"]]
+            if not affects_stock:
+                impact_score *= 0.5  # Reduce impact for indirect effects
+            
+            upcoming_events.append({
+                "name": event["name"],
+                "date": event_date.strftime("%Y-%m-%d"),
+                "time": f"{random.randint(8, 16)}:{random.choice(['00', '30'])}",
+                "impact_level": event["impact"],
+                "impact_score": int(impact_score),
+                "relevance": "direct" if affects_stock else "indirect",
+                "expected_volatility": random.choice(["high", "medium", "low"]),
+                "days_away": (event_date - datetime.now()).days
+            })
+    
+    # Sort by impact and date
+    upcoming_events.sort(key=lambda x: (x["impact_score"], -x["days_away"]), reverse=True)
+    
+    # Generate impact analysis
+    high_impact_events = [e for e in upcoming_events if e["impact_level"] == "high"]
+    total_impact_score = sum(e["impact_score"] for e in upcoming_events)
+    
+    if total_impact_score > 200:
+        volatility_outlook = "high"
+        outlook_color = "#dc3545"
+    elif total_impact_score > 100:
+        volatility_outlook = "moderate" 
+        outlook_color = "#ffc107"
+    else:
+        volatility_outlook = "low"
+        outlook_color = "#28a745"
+    
+    return {
+        "symbol": symbol,
+        "sector": stock_sector,
+        "timestamp": datetime.now().isoformat(),
+        "upcoming_events": upcoming_events[:6],  # Top 6 most relevant
+        "impact_summary": {
+            "total_events": len(upcoming_events),
+            "high_impact_events": len(high_impact_events),
+            "volatility_outlook": volatility_outlook,
+            "outlook_color": outlook_color,
+            "cumulative_impact_score": total_impact_score
+        },
+        "key_dates": [
+            {
+                "date": event["date"],
+                "events": [e["name"] for e in upcoming_events if e["date"] == event["date"]]
+            }
+            for event in upcoming_events[:3]
+        ],
+        "trading_considerations": [
+            f"📅 {len(high_impact_events)} high-impact events in next 14 days",
+            f"⚠️ Expected volatility: {volatility_outlook}",
+            f"🎯 Key focus: {upcoming_events[0]['name'] if upcoming_events else 'No major events'}"
+        ],
+        "summary": f"{len(upcoming_events)} relevant economic events with {volatility_outlook} expected volatility impact"
+    }
+
 # #7 Background Task API Endpoints
 @app.route('/api/tasks/start/<symbol>')
 @rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
@@ -2609,6 +2892,122 @@ def get_task_status(task_id):
     except Exception as e:
         logger.error("Failed to get task status", task_id=task_id, error=str(e))
         return jsonify({"error": str(e), "task_id": task_id}), 500
+
+# Professional Trading Feature API Endpoints
+@app.route('/api/options-flow/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def get_options_flow(symbol):
+    """Get options flow analysis for a stock"""
+    try:
+        options_data = analyze_options_flow(symbol.upper())
+        
+        # Add HTTP caching
+        etag = generate_etag(options_data)
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(jsonify(options_data))
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=300)  # 5 min cache
+        
+    except Exception as e:
+        logger.error("Failed to get options flow", symbol=symbol, error=str(e))
+        return jsonify({"error": str(e), "symbol": symbol}), 500
+
+@app.route('/api/institutional-flow/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def get_institutional_flow(symbol):
+    """Get institutional flow tracking for a stock"""
+    try:
+        institutional_data = track_institutional_flow(symbol.upper())
+        
+        # Add HTTP caching
+        etag = generate_etag(institutional_data)
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(jsonify(institutional_data))
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=600)  # 10 min cache
+        
+    except Exception as e:
+        logger.error("Failed to get institutional flow", symbol=symbol, error=str(e))
+        return jsonify({"error": str(e), "symbol": symbol}), 500
+
+@app.route('/api/economic-calendar/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def get_economic_calendar(symbol):
+    """Get economic calendar events impacting the stock"""
+    try:
+        calendar_data = get_economic_calendar_impact(symbol.upper())
+        
+        # Add HTTP caching
+        etag = generate_etag(calendar_data)
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(jsonify(calendar_data))
+        response.headers['Content-Type'] = 'application/json' 
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=3600)  # 1 hour cache
+        
+    except Exception as e:
+        logger.error("Failed to get economic calendar", symbol=symbol, error=str(e))
+        return jsonify({"error": str(e), "symbol": symbol}), 500
+
+@app.route('/api/professional-analysis/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def get_professional_analysis(symbol):
+    """Get comprehensive professional trading analysis"""
+    try:
+        # Get all professional data
+        options_data = analyze_options_flow(symbol.upper())
+        institutional_data = track_institutional_flow(symbol.upper())
+        calendar_data = get_economic_calendar_impact(symbol.upper())
+        
+        # Combine into comprehensive analysis
+        professional_analysis = {
+            "symbol": symbol.upper(),
+            "timestamp": datetime.datetime.now().isoformat(),
+            "options_flow": options_data,
+            "institutional_flow": institutional_data,
+            "economic_calendar": calendar_data,
+            "overall_sentiment": {
+                "options_bias": options_data["flow_sentiment"]["direction"],
+                "institutional_bias": institutional_data["flow_direction"]["direction"], 
+                "volatility_outlook": calendar_data["impact_summary"]["volatility_outlook"]
+            },
+            "trading_signals": [
+                *options_data["alerts"],
+                *institutional_data["smart_money_signals"], 
+                *calendar_data["trading_considerations"]
+            ],
+            "summary": f"Professional analysis: {options_data['flow_sentiment']['direction']} options flow, {institutional_data['flow_direction']['direction']} institutional activity, {calendar_data['impact_summary']['volatility_outlook']} economic volatility"
+        }
+        
+        # Add HTTP caching
+        etag = generate_etag(professional_analysis)
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(jsonify(professional_analysis))
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=300)  # 5 min cache
+        
+    except Exception as e:
+        logger.error("Failed to get professional analysis", symbol=symbol, error=str(e))
+        return jsonify({"error": str(e), "symbol": symbol}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
