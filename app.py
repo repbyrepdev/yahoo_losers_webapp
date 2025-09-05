@@ -1755,13 +1755,13 @@ def index():
         symbols = [stock['Symbol'] for stock in losers_data]
         details_data = get_stock_details(symbols)
         
-        # Step 3: Calculate complete investment analysis for ALL stocks
-        logger.info("Step 3: Calculating complete investment analysis...")
-        all_analysis = calculate_all_investment_analysis(losers_data, details_data)
+        # Step 3: Calculate AI-enhanced investment analysis for ALL stocks
+        logger.info("Step 3: Calculating AI-enhanced investment analysis...")
+        all_analysis = calculate_enhanced_investment_analysis(losers_data, details_data)
         
-        # Step 4: Filter high-potential investments (>65% return)
-        logger.info("Step 4: Filtering high-potential investments...")
-        recommendations = calculate_investment_potential(all_analysis)
+        # Step 4: Filter AI buy recommendations (replaces 65% analyst filter)
+        logger.info("Step 4: Filtering AI buy recommendations...")
+        recommendations = filter_ai_buy_recommendations(all_analysis)
         
         # Get market status
         market_status = get_market_status()
@@ -2079,7 +2079,7 @@ def export_csv():
             losers_data, _ = scrape_yahoo_losers()
             symbols = [stock['Symbol'] for stock in losers_data]
             details_data = get_stock_details(symbols)
-            all_analysis = calculate_all_investment_analysis(losers_data, details_data)
+            all_analysis = calculate_enhanced_investment_analysis(losers_data, details_data)
         
         # Create CSV data
         import io
@@ -2823,6 +2823,303 @@ def get_economic_calendar_impact(symbol):
         "summary": f"{len(upcoming_events)} relevant economic events with {volatility_outlook} expected volatility impact"
     }
 
+def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data, calendar_data, recovery_data, sentiment_data):
+    """AI-powered rebound prediction combining ALL professional analysis"""
+    import random
+    from datetime import datetime, timedelta
+    
+    symbol = stock_data['Symbol']
+    current_price = float(stock_data.get('Current Price', 0)) if isinstance(stock_data.get('Current Price'), str) and stock_data.get('Current Price').replace('$', '').replace(',', '').replace('.', '').isdigit() else 0
+    
+    # Initialize scoring system (0-100)
+    ai_score = 0
+    confidence_factors = []
+    risk_factors = []
+    
+    # 1. OPTIONS FLOW ANALYSIS (25% weight)
+    options_weight = 25
+    if options_data['flow_sentiment']['direction'] == 'bullish':
+        if options_data['flow_sentiment']['strength'] == 'strong':
+            options_score = 85
+            confidence_factors.append("🟢 Strong Bullish Options Flow")
+        else:
+            options_score = 65
+            confidence_factors.append("🟡 Moderate Bullish Options Flow")
+    elif options_data['flow_sentiment']['direction'] == 'bearish':
+        if options_data['flow_sentiment']['strength'] == 'strong':
+            options_score = 15
+            risk_factors.append("🔴 Strong Bearish Options Flow")
+        else:
+            options_score = 35
+            risk_factors.append("🟡 Moderate Bearish Options Flow")
+    else:
+        options_score = 50
+        confidence_factors.append("⚪ Neutral Options Flow")
+    
+    # Unusual activity boost
+    if options_data['volume_metrics']['is_unusual']:
+        options_score += 10
+        confidence_factors.append("🚨 Unusual Options Volume")
+    
+    if len(options_data['alerts']) > 2:
+        options_score += 5
+        
+    ai_score += (options_score * options_weight / 100)
+    
+    # 2. INSTITUTIONAL FLOW ANALYSIS (30% weight) 
+    institutional_weight = 30
+    if institutional_data['flow_direction']['direction'] == 'accumulation':
+        if institutional_data['flow_direction']['strength'] == 'strong':
+            institutional_score = 90
+            confidence_factors.append("🟢 Strong Institutional Accumulation")
+        else:
+            institutional_score = 70
+            confidence_factors.append("🟡 Moderate Institutional Accumulation")
+    elif institutional_data['flow_direction']['direction'] == 'distribution':
+        if institutional_data['flow_direction']['strength'] == 'strong':
+            institutional_score = 10
+            risk_factors.append("🔴 Strong Institutional Distribution")
+        else:
+            institutional_score = 30
+            risk_factors.append("🟡 Moderate Institutional Distribution")
+    else:
+        institutional_score = 50
+        confidence_factors.append("⚪ Balanced Institutional Flow")
+    
+    # Dark pool consideration
+    dark_pool_pct = institutional_data['dark_pool_analysis']['percentage']
+    if dark_pool_pct > 30:
+        institutional_score += 5
+        confidence_factors.append("📊 High Dark Pool Activity")
+        
+    ai_score += (institutional_score * institutional_weight / 100)
+    
+    # 3. ECONOMIC CALENDAR IMPACT (20% weight)
+    calendar_weight = 20
+    volatility_outlook = calendar_data['impact_summary']['volatility_outlook']
+    if volatility_outlook == 'low':
+        calendar_score = 75  # Low volatility = good for recovery
+        confidence_factors.append("📅 Low Economic Volatility")
+    elif volatility_outlook == 'moderate':
+        calendar_score = 50
+        confidence_factors.append("📅 Moderate Economic Risk")
+    else:
+        calendar_score = 25
+        risk_factors.append("📅 High Economic Volatility")
+        
+    ai_score += (calendar_score * calendar_weight / 100)
+    
+    # 4. RECOVERY PREDICTION ANALYSIS (15% weight)
+    recovery_weight = 15
+    recovery_score_raw = recovery_data.get('recovery_score', 50)
+    ai_score += (recovery_score_raw * recovery_weight / 100)
+    
+    if recovery_data.get('confidence') == 'very_high':
+        confidence_factors.append("⭐ Very High Recovery Confidence")
+    elif recovery_data.get('confidence') == 'high':
+        confidence_factors.append("⭐ High Recovery Confidence")
+    
+    # 5. SOCIAL SENTIMENT ANALYSIS (10% weight)
+    sentiment_weight = 10
+    overall_sentiment = sentiment_data.get('overall_sentiment', 'neutral')
+    if overall_sentiment == 'bullish':
+        sentiment_score = 75
+        confidence_factors.append("📱 Bullish Social Sentiment")
+    elif overall_sentiment == 'bearish':
+        sentiment_score = 25
+        risk_factors.append("📱 Bearish Social Sentiment")
+    else:
+        sentiment_score = 50
+        
+    ai_score += (sentiment_score * sentiment_weight / 100)
+    
+    # Calculate AI Price Target based on weighted analysis
+    if current_price > 0:
+        # Base multiplier from AI score
+        base_multiplier = 1.0 + ((ai_score - 50) / 100)  # 50 score = no change, 100 score = +50% target
+        
+        # Additional factors
+        momentum_factor = 1.0
+        if len(confidence_factors) > len(risk_factors):
+            momentum_factor = 1.05 + (len(confidence_factors) * 0.02)
+        elif len(risk_factors) > len(confidence_factors):
+            momentum_factor = 0.95 - (len(risk_factors) * 0.02)
+            
+        ai_price_target = current_price * base_multiplier * momentum_factor
+        ai_profit_potential = ((ai_price_target - current_price) / current_price) * 100
+    else:
+        ai_price_target = 0
+        ai_profit_potential = 0
+    
+    # Determine AI recommendation
+    if ai_score >= 75 and ai_profit_potential >= 20:
+        ai_recommendation = "STRONG BUY"
+        recommendation_color = "#28a745"
+        recommendation_emoji = "🚀"
+        buy_signal = True
+    elif ai_score >= 60 and ai_profit_potential >= 10:
+        ai_recommendation = "BUY"
+        recommendation_color = "#28a745" 
+        recommendation_emoji = "🟢"
+        buy_signal = True
+    elif ai_score >= 45 and ai_profit_potential >= 5:
+        ai_recommendation = "HOLD"
+        recommendation_color = "#ffc107"
+        recommendation_emoji = "🟡"
+        buy_signal = False
+    else:
+        ai_recommendation = "AVOID"
+        recommendation_color = "#dc3545"
+        recommendation_emoji = "🔴"
+        buy_signal = False
+    
+    # Calculate confidence level
+    total_signals = len(confidence_factors) + len(risk_factors)
+    if total_signals >= 6 and len(confidence_factors) > len(risk_factors):
+        confidence_level = "Very High"
+    elif total_signals >= 4 and len(confidence_factors) >= len(risk_factors):
+        confidence_level = "High"
+    elif total_signals >= 2:
+        confidence_level = "Moderate" 
+    else:
+        confidence_level = "Low"
+    
+    # Time horizon based on analysis
+    if ai_score >= 75:
+        time_horizon = "2-7 days"
+    elif ai_score >= 60:
+        time_horizon = "1-2 weeks"
+    elif ai_score >= 45:
+        time_horizon = "2-4 weeks"
+    else:
+        time_horizon = "1+ months"
+    
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "ai_analysis": {
+            "overall_score": round(ai_score, 1),
+            "price_target": round(ai_price_target, 2) if ai_price_target > 0 else "N/A",
+            "current_price": current_price,
+            "profit_potential": round(ai_profit_potential, 1) if ai_profit_potential != 0 else 0,
+            "recommendation": ai_recommendation,
+            "recommendation_color": recommendation_color,
+            "recommendation_emoji": recommendation_emoji,
+            "is_buy_signal": buy_signal,
+            "confidence_level": confidence_level,
+            "time_horizon": time_horizon
+        },
+        "analysis_breakdown": {
+            "options_flow_score": round(options_score, 1),
+            "institutional_flow_score": round(institutional_score, 1), 
+            "economic_calendar_score": round(calendar_score, 1),
+            "recovery_prediction_score": round(recovery_score_raw, 1),
+            "sentiment_score": round(sentiment_score, 1)
+        },
+        "key_factors": {
+            "confidence_factors": confidence_factors,
+            "risk_factors": risk_factors,
+            "total_signals": total_signals
+        },
+        "summary": f"AI Score: {ai_score:.1f}/100 → {ai_recommendation} with {confidence_level} confidence targeting {ai_profit_potential:+.1f}% return"
+    }
+
+def calculate_enhanced_investment_analysis(losers_data, details_data):
+    """Enhanced analysis with AI predictions for ALL stocks"""
+    enhanced_analysis = []
+    
+    for stock in losers_data:
+        symbol = stock['Symbol']
+        if symbol in [item['Symbol'] for item in details_data]:
+            details = next(item for item in details_data if item['Symbol'] == symbol)
+            
+            try:
+                # Get all professional analysis
+                options_data = analyze_options_flow(symbol)
+                institutional_data = track_institutional_flow(symbol)
+                calendar_data = get_economic_calendar_impact(symbol)
+                recovery_data = predict_stock_recovery(symbol)
+                sentiment_data = get_social_sentiment_analysis(symbol)
+                
+                # Calculate AI prediction
+                ai_prediction = calculate_ai_rebound_prediction(
+                    stock, options_data, institutional_data, 
+                    calendar_data, recovery_data, sentiment_data
+                )
+                
+                # Extract traditional analyst data
+                current_price_str = details['Current Price'].replace('$', '').replace(',', '') if details['Current Price'] != 'N/A' else '0'
+                target_price_str = details['Price Target'].replace('$', '').replace(',', '') if details['Price Target'] != 'N/A' else '0'
+                
+                current_price = float(current_price_str) if current_price_str != '0' else 0
+                target_price = float(target_price_str) if target_price_str != '0' else 0
+                
+                analyst_potential_return = 0
+                if current_price > 0 and target_price > 0:
+                    analyst_potential_return = ((target_price - current_price) / current_price) * 100
+                
+                enhanced_analysis.append({
+                    'Symbol': symbol,
+                    'Name': stock['Name'],
+                    'Current Price': current_price if current_price > 0 else 'N/A',
+                    'Analyst Target': target_price if target_price > 0 else 'N/A',
+                    'Analyst Potential %': round(analyst_potential_return, 2) if analyst_potential_return != 0 else 'N/A',
+                    'Change Today': stock.get('Change', 'N/A'),
+                    'Percent Change Today': stock.get('% Change', 'N/A'),
+                    'Volume': details.get('Volume', 'N/A'),
+                    'Market Cap': details.get('Market Cap', 'N/A'),
+                    'Previous Close': details.get('Previous Close', 'N/A'),
+                    
+                    # AI Enhancement
+                    'AI Score': ai_prediction['ai_analysis']['overall_score'],
+                    'AI Target': ai_prediction['ai_analysis']['price_target'],
+                    'AI Potential %': ai_prediction['ai_analysis']['profit_potential'],
+                    'AI Recommendation': ai_prediction['ai_analysis']['recommendation'],
+                    'AI Emoji': ai_prediction['ai_analysis']['recommendation_emoji'],
+                    'AI Color': ai_prediction['ai_analysis']['recommendation_color'],
+                    'Is Buy Signal': ai_prediction['ai_analysis']['is_buy_signal'],
+                    'AI Confidence': ai_prediction['ai_analysis']['confidence_level'],
+                    'Time Horizon': ai_prediction['ai_analysis']['time_horizon'],
+                    'Key Factors': ai_prediction['key_factors']['confidence_factors'],
+                    'Risk Factors': ai_prediction['key_factors']['risk_factors'],
+                    'AI Summary': ai_prediction['summary']
+                })
+                
+            except Exception as e:
+                logger.warning(f"Failed to get AI analysis for {symbol}: {str(e)}")
+                # Fallback to basic analysis
+                enhanced_analysis.append({
+                    'Symbol': symbol,
+                    'Name': stock['Name'],
+                    'Current Price': 'N/A',
+                    'Analyst Target': 'N/A', 
+                    'Analyst Potential %': 'N/A',
+                    'AI Score': 0,
+                    'AI Target': 'N/A',
+                    'AI Potential %': 0,
+                    'AI Recommendation': 'AVOID',
+                    'AI Emoji': '⚠️',
+                    'AI Color': '#6c757d',
+                    'Is Buy Signal': False,
+                    'AI Confidence': 'Low',
+                    'AI Summary': 'Insufficient data for analysis'
+                })
+    
+    return enhanced_analysis
+
+def filter_ai_buy_recommendations(enhanced_analysis):
+    """Filter stocks to show only AI buy recommendations instead of 65% threshold"""
+    ai_buy_picks = []
+    
+    for stock in enhanced_analysis:
+        if stock.get('Is Buy Signal', False):
+            ai_buy_picks.append(stock)
+    
+    # Sort by AI Score (highest first), then by AI Potential % (highest first)
+    ai_buy_picks.sort(key=lambda x: (x.get('AI Score', 0), x.get('AI Potential %', 0)), reverse=True)
+    
+    return ai_buy_picks
+
 # #7 Background Task API Endpoints
 @app.route('/api/tasks/start/<symbol>')
 @rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
@@ -3007,6 +3304,43 @@ def get_professional_analysis(symbol):
         
     except Exception as e:
         logger.error("Failed to get professional analysis", symbol=symbol, error=str(e))
+        return jsonify({"error": str(e), "symbol": symbol}), 500
+
+@app.route('/api/ai-analysis/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def get_ai_stock_analysis(symbol):
+    """Get comprehensive AI-powered stock analysis"""
+    try:
+        # Get all professional analysis data
+        options_data = analyze_options_flow(symbol.upper())
+        institutional_data = track_institutional_flow(symbol.upper())
+        calendar_data = get_economic_calendar_impact(symbol.upper())
+        recovery_data = predict_stock_recovery(symbol.upper())
+        sentiment_data = get_social_sentiment_analysis(symbol.upper())
+        
+        # Create mock stock data for AI prediction
+        stock_data = {'Symbol': symbol.upper(), 'Current Price': 100}  # Mock price
+        
+        # Calculate AI prediction
+        ai_prediction = calculate_ai_rebound_prediction(
+            stock_data, options_data, institutional_data,
+            calendar_data, recovery_data, sentiment_data
+        )
+        
+        # Add HTTP caching
+        etag = generate_etag(ai_prediction)
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(jsonify(ai_prediction))
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=300)  # 5 min cache
+        
+    except Exception as e:
+        logger.error("Failed to get AI analysis", symbol=symbol, error=str(e))
         return jsonify({"error": str(e), "symbol": symbol}), 500
 
 if __name__ == '__main__':
