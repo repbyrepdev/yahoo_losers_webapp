@@ -3025,85 +3025,70 @@ def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data
     }
 
 def calculate_enhanced_investment_analysis(losers_data, details_data):
-    """Enhanced analysis with AI predictions for ALL stocks"""
+    """Enhanced analysis with AI predictions for ALL stocks - KEEPS original analyst data"""
+    # First get the original analysis (preserves all existing fields)
+    original_analysis = calculate_all_investment_analysis(losers_data, details_data)
     enhanced_analysis = []
     
-    for stock in losers_data:
-        symbol = stock['Symbol']
-        if symbol in [item['Symbol'] for item in details_data]:
-            details = next(item for item in details_data if item['Symbol'] == symbol)
+    for stock_analysis in original_analysis:
+        symbol = stock_analysis['Symbol']
+        
+        try:
+            # Get all professional analysis for AI
+            options_data = analyze_options_flow(symbol)
+            institutional_data = track_institutional_flow(symbol)
+            calendar_data = get_economic_calendar_impact(symbol)
+            recovery_data = predict_stock_recovery(symbol)
+            sentiment_data = get_social_sentiment_analysis(symbol)
             
-            try:
-                # Get all professional analysis
-                options_data = analyze_options_flow(symbol)
-                institutional_data = track_institutional_flow(symbol)
-                calendar_data = get_economic_calendar_impact(symbol)
-                recovery_data = predict_stock_recovery(symbol)
-                sentiment_data = get_social_sentiment_analysis(symbol)
-                
-                # Calculate AI prediction
-                ai_prediction = calculate_ai_rebound_prediction(
-                    stock, options_data, institutional_data, 
-                    calendar_data, recovery_data, sentiment_data
-                )
-                
-                # Extract traditional analyst data
-                current_price_str = details['Current Price'].replace('$', '').replace(',', '') if details['Current Price'] != 'N/A' else '0'
-                target_price_str = details['Price Target'].replace('$', '').replace(',', '') if details['Price Target'] != 'N/A' else '0'
-                
-                current_price = float(current_price_str) if current_price_str != '0' else 0
-                target_price = float(target_price_str) if target_price_str != '0' else 0
-                
-                analyst_potential_return = 0
-                if current_price > 0 and target_price > 0:
-                    analyst_potential_return = ((target_price - current_price) / current_price) * 100
-                
-                enhanced_analysis.append({
-                    'Symbol': symbol,
-                    'Name': stock['Name'],
-                    'Current Price': current_price if current_price > 0 else 'N/A',
-                    'Analyst Target': target_price if target_price > 0 else 'N/A',
-                    'Analyst Potential %': round(analyst_potential_return, 2) if analyst_potential_return != 0 else 'N/A',
-                    'Change Today': stock.get('Change', 'N/A'),
-                    'Percent Change Today': stock.get('% Change', 'N/A'),
-                    'Volume': details.get('Volume', 'N/A'),
-                    'Market Cap': details.get('Market Cap', 'N/A'),
-                    'Previous Close': details.get('Previous Close', 'N/A'),
-                    
-                    # AI Enhancement
-                    'AI Score': ai_prediction['ai_analysis']['overall_score'],
-                    'AI Target': ai_prediction['ai_analysis']['price_target'],
-                    'AI Potential %': ai_prediction['ai_analysis']['profit_potential'],
-                    'AI Recommendation': ai_prediction['ai_analysis']['recommendation'],
-                    'AI Emoji': ai_prediction['ai_analysis']['recommendation_emoji'],
-                    'AI Color': ai_prediction['ai_analysis']['recommendation_color'],
-                    'Is Buy Signal': ai_prediction['ai_analysis']['is_buy_signal'],
-                    'AI Confidence': ai_prediction['ai_analysis']['confidence_level'],
-                    'Time Horizon': ai_prediction['ai_analysis']['time_horizon'],
-                    'Key Factors': ai_prediction['key_factors']['confidence_factors'],
-                    'Risk Factors': ai_prediction['key_factors']['risk_factors'],
-                    'AI Summary': ai_prediction['summary']
-                })
-                
-            except Exception as e:
-                logger.warning(f"Failed to get AI analysis for {symbol}: {str(e)}")
-                # Fallback to basic analysis
-                enhanced_analysis.append({
-                    'Symbol': symbol,
-                    'Name': stock['Name'],
-                    'Current Price': 'N/A',
-                    'Analyst Target': 'N/A', 
-                    'Analyst Potential %': 'N/A',
-                    'AI Score': 0,
-                    'AI Target': 'N/A',
-                    'AI Potential %': 0,
-                    'AI Recommendation': 'AVOID',
-                    'AI Emoji': '⚠️',
-                    'AI Color': '#6c757d',
-                    'Is Buy Signal': False,
-                    'AI Confidence': 'Low',
-                    'AI Summary': 'Insufficient data for analysis'
-                })
+            # Create stock data for AI prediction (use actual current price)
+            stock_data = {
+                'Symbol': symbol,
+                'Current Price': stock_analysis.get('Current Price', 0)
+            }
+            
+            # Calculate AI prediction
+            ai_prediction = calculate_ai_rebound_prediction(
+                stock_data, options_data, institutional_data, 
+                calendar_data, recovery_data, sentiment_data
+            )
+            
+            # KEEP all original analysis fields AND add AI fields
+            enhanced_stock = stock_analysis.copy()  # Preserve everything from original
+            enhanced_stock.update({
+                # AI Enhancement - ADD to existing data
+                'AI Score': ai_prediction['ai_analysis']['overall_score'],
+                'AI Target': ai_prediction['ai_analysis']['price_target'],
+                'AI Potential %': ai_prediction['ai_analysis']['profit_potential'],
+                'AI Recommendation': ai_prediction['ai_analysis']['recommendation'],
+                'AI Emoji': ai_prediction['ai_analysis']['recommendation_emoji'],
+                'AI Color': ai_prediction['ai_analysis']['recommendation_color'],
+                'Is Buy Signal': ai_prediction['ai_analysis']['is_buy_signal'],
+                'AI Confidence': ai_prediction['ai_analysis']['confidence_level'],
+                'Time Horizon': ai_prediction['ai_analysis']['time_horizon'],
+                'Key Factors': ai_prediction['key_factors']['confidence_factors'],
+                'Risk Factors': ai_prediction['key_factors']['risk_factors'],
+                'AI Summary': ai_prediction['summary']
+            })
+            
+            enhanced_analysis.append(enhanced_stock)
+            
+        except Exception as e:
+            logger.warning(f"Failed to get AI analysis for {symbol}: {str(e)}")
+            # Fallback - keep original analysis, add basic AI fields
+            enhanced_stock = stock_analysis.copy()
+            enhanced_stock.update({
+                'AI Score': 0,
+                'AI Target': 'N/A',
+                'AI Potential %': 0,
+                'AI Recommendation': 'AVOID',
+                'AI Emoji': '⚠️',
+                'AI Color': '#6c757d',
+                'Is Buy Signal': False,
+                'AI Confidence': 'Low',
+                'AI Summary': 'Insufficient data for analysis'
+            })
+            enhanced_analysis.append(enhanced_stock)
     
     return enhanced_analysis
 
@@ -3318,8 +3303,16 @@ def get_ai_stock_analysis(symbol):
         recovery_data = predict_stock_recovery(symbol.upper())
         sentiment_data = get_social_sentiment_analysis(symbol.upper())
         
-        # Create mock stock data for AI prediction
-        stock_data = {'Symbol': symbol.upper(), 'Current Price': 100}  # Mock price
+        # Get actual stock data (try to get current price from Yahoo)
+        try:
+            # Try to get current price from a quick Yahoo lookup
+            import yfinance as yf
+            ticker = yf.Ticker(symbol.upper())
+            current_price = ticker.info.get('currentPrice', ticker.info.get('regularMarketPrice', 0))
+        except:
+            current_price = 0  # Will be handled in AI prediction
+        
+        stock_data = {'Symbol': symbol.upper(), 'Current Price': current_price}
         
         # Calculate AI prediction
         ai_prediction = calculate_ai_rebound_prediction(
