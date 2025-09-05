@@ -1,4 +1,6 @@
-from flask import Flask, render_template_string, request, jsonify, g
+from flask import Flask, render_template_string, request, jsonify, g, make_response
+from flask_compress import Compress
+from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -16,12 +18,164 @@ from functools import wraps
 import gc
 import psutil
 import threading
+import redis
+import structlog
+from celery import Celery
+import hashlib
 
 app = Flask(__name__)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# =============================================================================
+# PRODUCTION OPTIMIZATIONS SETUP
+# =============================================================================
+
+# #2 HTTP Response Caching & Compression
+Compress(app)
+app.config['COMPRESS_MIMETYPES'] = ['text/html', 'text/css', 'text/xml', 
+                                   'application/json', 'application/javascript']
+app.config['COMPRESS_LEVEL'] = 6
+app.config['COMPRESS_MIN_SIZE'] = 500
+
+# #6 Security Headers & CORS  
+CORS(app, origins=["*"], supports_credentials=True)
+app.config['CORS_HEADERS'] = 'Content-Type'
+
+# #5 Structured Logging & APM
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+# Get structured logger
+logger = structlog.get_logger(__name__)
+
+# #5 Enhanced APM - Request Logging Middleware
+@app.before_request
+def log_request_info():
+    """Log request start with structured data"""
+    g.start_time = time.time()
+    logger.info("Request started", 
+                method=request.method,
+                path=request.path,
+                remote_addr=request.remote_addr,
+                user_agent=request.user_agent.string if request.user_agent else None)
+
+@app.after_request
+def log_request_end(response):
+    """Log request completion with structured data"""
+    try:
+        duration = time.time() - g.start_time if hasattr(g, 'start_time') else 0
+        logger.info("Request completed",
+                    method=request.method,
+                    path=request.path,
+                    status_code=response.status_code,
+                    duration_ms=round(duration * 1000, 2),
+                    content_length=response.content_length)
+    except Exception:
+        pass  # Don't break response if logging fails
+    return response
+
+# #6 Additional Security Headers (beyond NGINX)
+@app.after_request  
+def add_security_headers(response):
+    """Add comprehensive security headers"""
+    # Content Security Policy
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://cdnjs.cloudflare.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https:; "
+        "frame-ancestors 'none';"
+    )
+    # Strict Transport Security (if HTTPS)
+    if request.is_secure:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    
+    # Additional security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'  
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    
+    return response
+
+# #1 Redis Caching Layer
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+try:
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5)
+    # Test connection
+    redis_client.ping()
+    logger.info("Redis connection established", redis_url=REDIS_URL)
+    USE_REDIS = True
+except (redis.RedisError, ConnectionError) as e:
+    logger.warning("Redis unavailable, falling back to file cache", error=str(e))
+    redis_client = None
+    USE_REDIS = False
+
+# #7 Background Task Queue (Celery)
+def make_celery(app):
+    celery = Celery(
+        app.import_name,
+        backend=REDIS_URL if USE_REDIS else 'rpc://',
+        broker=REDIS_URL if USE_REDIS else 'redis://localhost:6379/0'
+    )
+    celery.conf.update(app.config)
+    return celery
+
+celery_app = make_celery(app)
+
+# #7 Background Tasks for AI Processing
+@celery_app.task(bind=True, name='predict_recovery_task')
+def predict_recovery_task(self, symbol):
+    """Background task for AI recovery prediction"""
+    try:
+        logger.info("Starting background recovery prediction", symbol=symbol, task_id=self.request.id)
+        # This will be implemented when we convert the AI functions
+        result = {"status": "pending", "symbol": symbol, "task_id": self.request.id}
+        logger.info("Recovery prediction task queued", symbol=symbol, task_id=self.request.id)
+        return result
+    except Exception as e:
+        logger.error("Recovery prediction task failed", symbol=symbol, error=str(e))
+        raise
+
+@celery_app.task(bind=True, name='analyze_sentiment_task')
+def analyze_sentiment_task(self, symbol):
+    """Background task for sentiment analysis"""
+    try:
+        logger.info("Starting background sentiment analysis", symbol=symbol, task_id=self.request.id)
+        result = {"status": "pending", "symbol": symbol, "task_id": self.request.id}
+        logger.info("Sentiment analysis task queued", symbol=symbol, task_id=self.request.id)
+        return result
+    except Exception as e:
+        logger.error("Sentiment analysis task failed", symbol=symbol, error=str(e))
+        raise
+
+@celery_app.task(bind=True, name='bulk_analysis_task')
+def bulk_analysis_task(self, symbols):
+    """Background task for bulk stock analysis"""
+    try:
+        logger.info("Starting bulk analysis", symbol_count=len(symbols), task_id=self.request.id)
+        result = {"status": "pending", "symbols": symbols, "task_id": self.request.id}
+        logger.info("Bulk analysis task queued", symbol_count=len(symbols), task_id=self.request.id)
+        return result
+    except Exception as e:
+        logger.error("Bulk analysis task failed", error=str(e))
+        raise
 
 # Request tracking for rate limiting
 request_counts = {}
@@ -90,21 +244,53 @@ def log_performance(func_name, start_time, memory_before):
     return memory_after
 
 def save_cache(data):
-    """Save analysis results to cache with timestamp"""
+    """Save analysis results to cache with timestamp (Redis + file fallback)"""
     try:
         cache_data = {
             'timestamp': datetime.datetime.now(),
             'data': data
         }
-        with open(CACHE_FILE, 'wb') as f:
-            pickle.dump(cache_data, f)
-        logger.info(f"Cache saved successfully at {cache_data['timestamp']}")
+        
+        # Try Redis first
+        try:
+            redis_data = {
+                'timestamp': cache_data['timestamp'].isoformat(),
+                'data': data
+            }
+            redis_client.setex('yahoo_losers_cache', CACHE_DURATION_HOURS * 3600, json.dumps(redis_data, default=str))
+            logger.info(f"Cache saved to Redis successfully at {cache_data['timestamp']}")
+        except Exception as redis_error:
+            logger.warning(f"Redis cache save failed: {redis_error}, falling back to file")
+            # Fallback to file cache
+            with open(CACHE_FILE, 'wb') as f:
+                pickle.dump(cache_data, f)
+            logger.info(f"Cache saved to file successfully at {cache_data['timestamp']}")
+            
     except Exception as e:
         logger.error(f"Failed to save cache: {str(e)}")
 
 def load_cache():
-    """Load cached results if within 24 hours"""
+    """Load cached results if within 24 hours (Redis + file fallback)"""
     try:
+        # Try Redis first
+        try:
+            redis_data = redis_client.get('yahoo_losers_cache')
+            if redis_data:
+                cache_data = json.loads(redis_data)
+                cache_time = datetime.datetime.fromisoformat(cache_data['timestamp'])
+                current_time = datetime.datetime.now()
+                time_diff = current_time - cache_time
+                
+                cache_data_formatted = {
+                    'timestamp': cache_time,
+                    'data': cache_data['data']
+                }
+                logger.info(f"Valid cache found from Redis from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
+                return cache_data_formatted
+        except Exception as redis_error:
+            logger.warning(f"Redis cache load failed: {redis_error}, trying file fallback")
+        
+        # Fallback to file cache
         if not os.path.exists(CACHE_FILE):
             logger.info("No cache file found")
             return None
@@ -118,7 +304,7 @@ def load_cache():
         time_diff = current_time - cache_time
         
         if time_diff.total_seconds() / 3600 < CACHE_DURATION_HOURS:
-            logger.info(f"Valid cache found from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
+            logger.info(f"Valid cache found from file from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
             return cache_data
         else:
             logger.info(f"Cache expired ({time_diff.total_seconds()/3600:.1f} hours old), will refresh")
@@ -127,6 +313,21 @@ def load_cache():
     except Exception as e:
         logger.error(f"Failed to load cache: {str(e)}")
         return None
+
+# #2 HTTP Response Caching & ETag helpers
+def generate_etag(data):
+    """Generate ETag for HTTP caching based on data content"""
+    if isinstance(data, dict) or isinstance(data, list):
+        content = json.dumps(data, sort_keys=True, default=str)
+    else:
+        content = str(data)
+    return hashlib.md5(content.encode()).hexdigest()
+
+def add_cache_headers(response, max_age=3600):
+    """Add cache control headers to response"""
+    response.headers['Cache-Control'] = f'public, max-age={max_age}'
+    response.headers['Vary'] = 'Accept-Encoding'
+    return response
 
 def get_cache_status():
     """Get cache status for display in UI"""
@@ -1529,7 +1730,18 @@ def index():
                 cached_results['status']
             )
             
-            return render_template_string(html_template, **cached_results)
+            # Generate ETag and add cache headers
+            etag = generate_etag(cached_results)
+            
+            # Check if client has current version (ETag)
+            if request.headers.get('If-None-Match') == etag:
+                response = make_response('', 304)
+                response.headers['ETag'] = etag
+                return response
+            
+            response = make_response(render_template_string(html_template, **cached_results))
+            response.headers['ETag'] = etag
+            return add_cache_headers(response, max_age=1800)  # 30 min cache
         
         # No valid cache, perform fresh analysis
         logger.info("No valid cache, performing fresh analysis...")
@@ -1578,7 +1790,18 @@ def index():
         logger.info("Step 5: Formatting results...")
         html_template = format_results_as_html(losers_data, details_data, all_analysis, recommendations, losers_status)
         
-        return render_template_string(html_template, **template_vars)
+        # Generate ETag and add cache headers for fresh data
+        etag = generate_etag(template_vars)
+        
+        # Check if client has current version (ETag) 
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(render_template_string(html_template, **template_vars))
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=900)  # 15 min cache for fresh data
         
     except Exception as e:
         logger.error(f"Error in main analysis: {str(e)}")
@@ -1924,11 +2147,23 @@ def get_recovery_prediction(symbol):
         
         prediction = predict_stock_recovery(symbol)
         
-        return json.dumps({
+        api_response = {
             "symbol": symbol,
             "prediction": prediction,
             "timestamp": time.time()
-        })
+        }
+        
+        # Add HTTP caching with ETag
+        etag = generate_etag(api_response)
+        if request.headers.get('If-None-Match') == etag:
+            response = make_response('', 304)
+            response.headers['ETag'] = etag
+            return response
+            
+        response = make_response(json.dumps(api_response))
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['ETag'] = etag
+        return add_cache_headers(response, max_age=1800)  # 30 min cache
         
     except Exception as e:
         logger.error(f"Error predicting recovery for {symbol}: {str(e)}")
@@ -2304,6 +2539,76 @@ def analyze_social_sentiment(symbol):
         "trending_phrases": trending,
         "social_volume": "high" if (reddit_mentions + twitter_mentions) > 2000 else "moderate" if (reddit_mentions + twitter_mentions) > 500 else "low"
     }
+
+# #7 Background Task API Endpoints
+@app.route('/api/tasks/start/<symbol>')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def start_background_analysis(symbol):
+    """Start background analysis tasks for a symbol"""
+    try:
+        # Start multiple analysis tasks
+        recovery_task = predict_recovery_task.delay(symbol)
+        sentiment_task = analyze_sentiment_task.delay(symbol)
+        
+        response_data = {
+            "symbol": symbol,
+            "tasks": {
+                "recovery_prediction": recovery_task.id,
+                "sentiment_analysis": sentiment_task.id
+            },
+            "status": "started",
+            "message": f"Background analysis started for {symbol}"
+        }
+        
+        logger.info("Background analysis started", symbol=symbol, 
+                    recovery_task_id=recovery_task.id, 
+                    sentiment_task_id=sentiment_task.id)
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        logger.error("Failed to start background analysis", symbol=symbol, error=str(e))
+        return jsonify({"error": str(e), "symbol": symbol}), 500
+
+@app.route('/api/tasks/status/<task_id>')
+def get_task_status(task_id):
+    """Get status of a background task"""
+    try:
+        from celery.result import AsyncResult
+        
+        task = AsyncResult(task_id, app=celery_app)
+        
+        if task.state == 'PENDING':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'status': 'Task is waiting to be processed'
+            }
+        elif task.state == 'PROGRESS':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'progress': task.info.get('progress', 0),
+                'status': task.info.get('status', '')
+            }
+        elif task.state == 'SUCCESS':
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'result': task.result
+            }
+        else:  # FAILURE
+            response = {
+                'task_id': task_id,
+                'state': task.state,
+                'error': str(task.info)
+            }
+            
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error("Failed to get task status", task_id=task_id, error=str(e))
+        return jsonify({"error": str(e), "task_id": task_id}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
