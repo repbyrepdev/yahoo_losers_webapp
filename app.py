@@ -1224,9 +1224,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             style="background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
                         📈 View Chart
                     </button>
-                    <button onclick="showComprehensiveAnalysis('${symbol}')" 
-                            style="background: linear-gradient(45deg, #6f42c1, #e83e8c); color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
-                        🔮📱 Full Analysis
+                    <button onclick="showUltimateAnalysis('${symbol}')" 
+                            style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        🤖📱🔮 Complete Analysis
                     </button>
                 </div>
             `;
@@ -1528,6 +1528,212 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             document.body.appendChild(modal);
         }
         
+        // Ultimate Complete Analysis functionality (AI + Social + Recovery)
+        function showUltimateAnalysis(symbol) {
+            // Create loading modal first
+            showUltimateLoading(symbol);
+            
+            // Fetch all three analyses in parallel
+            Promise.all([
+                fetch('/api/news-analysis/' + symbol).then(response => response.json()),
+                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
+                fetch('/api/recovery-prediction/' + symbol).then(response => response.json())
+            ]).then(([aiData, sentimentData, recoveryData]) => {
+                // Cache all results
+                analysisCache[symbol] = aiData.analysis;
+                sentimentCache[symbol] = sentimentData.sentiment;
+                recoveryCache[symbol] = recoveryData.prediction;
+                
+                displayUltimateModal(symbol, aiData.analysis, sentimentData.sentiment, recoveryData.prediction);
+            }).catch(error => {
+                console.error('Ultimate analysis error:', error);
+                displayUltimateModal(symbol, null, null, null);
+            });
+        }
+        
+        function showUltimateLoading(symbol) {
+            const modal = createModal('ultimate-modal');
+            const container = createModalContainer();
+            
+            container.innerHTML = `
+                <button onclick="document.getElementById('ultimate-modal').remove()" 
+                        style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮 Complete Analysis: ${symbol}</h3>
+                <div style="text-align: center; padding: 40px;">
+                    <div style="font-size: 48px; animation: spin 1s linear infinite;">🤖</div>
+                    <div style="margin-top: 20px; font-size: 16px; color: #666;">
+                        Running comprehensive AI + Social + Recovery analysis...
+                    </div>
+                    <div style="margin-top: 10px; font-size: 14px; color: #999;">
+                        This may take a few moments as we gather insights from multiple sources
+                    </div>
+                </div>
+            `;
+            
+            modal.appendChild(container);
+            document.body.appendChild(modal);
+        }
+        
+        function displayUltimateModal(symbol, aiAnalysis, sentiment, recovery) {
+            const existingModal = document.getElementById('ultimate-modal');
+            if (existingModal) existingModal.remove();
+            
+            const modal = createModal('ultimate-modal');
+            const container = createModalContainer();
+            
+            // Handle missing data
+            if (!aiAnalysis) aiAnalysis = { reason: 'AI analysis unavailable', category: 'Unknown', confidence: 'Low' };
+            if (!sentiment) sentiment = { panic_level: 5, panic_description: 'Data unavailable', trending_phrases: ['Analysis failed'], panic_color: '#6c757d' };
+            if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
+            
+            // Data format handling
+            const isNewFormat = sentiment.sentiment_label !== undefined;
+            const getColorByPanic = (level) => {
+                if (level <= 3) return '#28a745';
+                if (level <= 6) return '#ffc107';
+                return '#dc3545';
+            };
+            const getRecoveryColor = (score) => {
+                if (score >= 75) return '#28a745';
+                if (score >= 60) return '#ffc107';
+                if (score >= 40) return '#fd7e14';
+                return '#dc3545';
+            };
+            
+            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const recoveryColor = getRecoveryColor(recovery.recovery_score || 0);
+            const sentimentDisplay = isNewFormat ? (sentiment.sentiment_label || '😐 Neutral') : (sentiment.panic_description || '📊 Standard');
+            
+            container.innerHTML = `
+                <button onclick="document.getElementById('ultimate-modal').remove()" 
+                        style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮 Complete Analysis: ${symbol}</h3>
+                
+                <!-- Tab Navigation -->
+                <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee;">
+                    <button onclick="switchUltimateTab('ai-tab', '🤖')" id="ai-tab-btn" class="ultimate-tab-btn ultimate-tab-active" style="background: none; border: none; padding: 10px 20px; margin: 0 5px; cursor: pointer; border-bottom: 3px solid #007bff; font-weight: bold; color: #007bff;">🤖 AI News</button>
+                    <button onclick="switchUltimateTab('sentiment-tab', '📱')" id="sentiment-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 20px; margin: 0 5px; cursor: pointer; border-bottom: 3px solid transparent; color: #666;">📱 Social</button>
+                    <button onclick="switchUltimateTab('recovery-tab', '🔮')" id="recovery-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 20px; margin: 0 5px; cursor: pointer; border-bottom: 3px solid transparent; color: #666;">🔮 Recovery</button>
+                </div>
+                
+                <!-- AI Analysis Tab -->
+                <div id="ai-tab" class="ultimate-tab-content" style="display: block;">
+                    <div style="background: linear-gradient(45deg, #007bff, #6610f2); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">🤖 AI News Analysis</h4>
+                        <div style="font-size: 16px; line-height: 1.6; text-align: center;">
+                            ${aiAnalysis.reason || 'AI analysis unavailable'}
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; text-align: center;">
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">${aiAnalysis.category || 'Unknown'}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Category</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">${aiAnalysis.confidence || 'Low'}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Social Sentiment Tab -->
+                <div id="sentiment-tab" class="ultimate-tab-content" style="display: none;">
+                    <div style="background: ${panicColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">📱 Social Sentiment</h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
+                            <div>
+                                <div style="font-size: 24px; font-weight: bold;">${sentimentDisplay}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Current Mood</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 24px; font-weight: bold;">${sentiment.panic_level || 5}/10</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
+                            </div>
+                        </div>
+                        ${isNewFormat ? `<div style="text-align: center; margin-top: 15px; font-size: 16px;">
+                            ${sentiment.volume_interest || '📊 Standard interest'}
+                        </div>` : ''}
+                    </div>
+                    
+                    ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                        <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Key Market Indicators</h5>
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            ${sentiment.trending_phrases.map(phrase => 
+                                `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                            ).join('')}
+                        </div>
+                    </div>` : ''}
+                </div>
+                
+                <!-- Recovery Analysis Tab -->
+                <div id="recovery-tab" class="ultimate-tab-content" style="display: none;">
+                    <div style="background: ${recoveryColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Recovery Potential</h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
+                            <div>
+                                <div style="font-size: 28px; font-weight: bold;">${recovery.recovery_score || 0}%</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                            </div>
+                        </div>
+                        <div style="text-align: center; margin-top: 15px; font-size: 16px; font-weight: bold;">
+                            ${recovery.recommendation || 'Analysis unavailable'}
+                        </div>
+                        ${recovery.timeframe ? `<div style="text-align: center; margin-top: 5px; font-size: 14px; opacity: 0.9;">
+                            Expected timeframe: ${recovery.timeframe}
+                        </div>` : ''}
+                    </div>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div style="text-align: center; margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px;">
+                    <button onclick="showTradingViewChart('${symbol}')" 
+                            style="background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        📈 View Chart
+                    </button>
+                    <button onclick="window.open('https://finance.yahoo.com/quote/${symbol}/news', '_blank')" 
+                            style="background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        📰 Latest News
+                    </button>
+                    <button onclick="window.open('https://www.reddit.com/search/?q=${symbol}', '_blank')" 
+                            style="background: #ff4757; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
+                        🔍 Social Discussion
+                    </button>
+                </div>
+            `;
+            
+            modal.appendChild(container);
+            document.body.appendChild(modal);
+        }
+        
+        // Tab switching functionality for ultimate modal
+        function switchUltimateTab(tabId, emoji) {
+            // Hide all tabs
+            const tabs = document.querySelectorAll('.ultimate-tab-content');
+            tabs.forEach(tab => tab.style.display = 'none');
+            
+            // Remove active class from all buttons
+            const buttons = document.querySelectorAll('.ultimate-tab-btn');
+            buttons.forEach(btn => {
+                btn.style.borderBottom = '3px solid transparent';
+                btn.style.color = '#666';
+                btn.style.fontWeight = 'normal';
+            });
+            
+            // Show selected tab
+            document.getElementById(tabId).style.display = 'block';
+            
+            // Activate selected button
+            const activeBtn = document.getElementById(tabId + '-btn');
+            activeBtn.style.borderBottom = '3px solid #007bff';
+            activeBtn.style.color = '#007bff';
+            activeBtn.style.fontWeight = 'bold';
+        }
+        
         // Initialize everything when page loads
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
@@ -1626,8 +1832,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                    <button class="ai-button" onclick="showAIAnalysis('{{ stock.Symbol }}')">🤖 AI</button>
-                                    <button class="ai-button" onclick="showComprehensiveAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #6f42c1, #e83e8c);">🔮📱 Analysis</button>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮 Complete Analysis</button>
                                 </td>
                                 <td>{{ stock.Name }}</td>
                                 <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
@@ -1666,8 +1871,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr {% if stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] > 65 %}class="highlight"{% endif %}>
                                 <td>
                                     <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                    <button class="ai-button" onclick="showAIAnalysis('{{ stock.Symbol }}')">🤖 AI</button>
-                                    <button class="ai-button" onclick="showComprehensiveAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #6f42c1, #e83e8c);">🔮📱 Analysis</button>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮 Complete Analysis</button>
                                 </td>
                                 <td>{{ stock.Name }}</td>
                                 <td>
