@@ -1935,11 +1935,11 @@ def refresh_cache():
         </html>
         """
 
-def is_market_holiday(date):
+def is_market_holiday(check_date):
     """Check if a given date is a US stock market holiday"""
-    year = date.year
-    month = date.month
-    day = date.day
+    year = check_date.year
+    month = check_date.month
+    day = check_date.day
     
     # Fixed holidays
     fixed_holidays = [
