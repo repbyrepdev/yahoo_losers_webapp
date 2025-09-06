@@ -4088,15 +4088,16 @@ def analyze_social_sentiment(symbol):
         "oversold bounce coming"
     ]
     
-    # Select trending phrases based on sentiment
+    # Select trending phrases based on sentiment (deterministically based on data)
     if panic_level > 6:
-        trending = random.sample(bearish_phrases, min(3, len(bearish_phrases)))
+        trending = bearish_phrases[:3]  # Take first 3 bearish phrases
         overall_sentiment = "very_bearish"
     elif panic_level > 4:
-        trending = random.sample(bearish_phrases + bullish_phrases, 3)
+        # Mix of bearish and bullish based on panic level
+        trending = bearish_phrases[:2] + bullish_phrases[:1]  # 2 bearish, 1 bullish
         overall_sentiment = "bearish"
     else:
-        trending = random.sample(bullish_phrases, min(3, len(bullish_phrases)))
+        trending = bullish_phrases[:3]  # Take first 3 bullish phrases
         overall_sentiment = "bullish"
     
     return {
