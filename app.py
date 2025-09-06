@@ -1725,6 +1725,46 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             Expected timeframe: ${recovery.timeframe}
                         </div>` : ''}
                     </div>
+                    
+                    ${recovery.score_breakdown ? `
+                    <!-- Mathematical Breakdown Section -->
+                    <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 15px; margin: 15px 0; color: white;">
+                        <h5 style="margin: 0 0 15px 0; text-align: center; color: white;">🧮 Mathematical Breakdown</h5>
+                        <div style="font-size: 14px; line-height: 1.6;">
+                            <div style="margin-bottom: 10px;">
+                                <strong>Base Score:</strong> ${Math.round((recovery.score_breakdown.base_score || 0) * 10) / 10}%
+                                <span style="opacity: 0.8; font-size: 12px;">(weighted average of all target probabilities)</span>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <strong>Market Adjustment:</strong> ${recovery.score_breakdown.market_adjustment || 0}%
+                                <span style="opacity: 0.8; font-size: 12px;">(${recovery.score_breakdown.volatility_regime || 'standard'} volatility regime)</span>
+                            </div>
+                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
+                                <strong>Final Score:</strong> ${Math.round((recovery.recovery_score || 0) * 10) / 10}%
+                            </div>
+                        </div>
+                        
+                        ${recovery.score_breakdown.target_details && recovery.score_breakdown.target_details.length > 0 ? `
+                        <div style="margin-top: 15px;">
+                            <h6 style="margin: 0 0 10px 0; text-align: center; color: white;">📊 Individual Target Analysis</h6>
+                            <div style="max-height: 200px; overflow-y: auto;">
+                                ${recovery.score_breakdown.target_details.map(target => `
+                                    <div style="background: rgba(255,255,255,0.1); border-radius: 5px; padding: 10px; margin: 5px 0; font-size: 12px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                            <strong>${target.target_type}: ${target.probability}%</strong>
+                                            <span style="opacity: 0.8;">+${target.upside_percent}%</span>
+                                        </div>
+                                        <div style="opacity: 0.8; margin-bottom: 3px;">
+                                            Weight: ${target.weight_factor}x → Contribution: ${target.weighted_contribution}%
+                                        </div>
+                                        <div style="opacity: 0.7; font-size: 11px; font-style: italic;">
+                                            ${target.reasoning}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>` : ''}
+                    </div>` : ''}
                 </div>
                 
                 <!-- Action Buttons -->
