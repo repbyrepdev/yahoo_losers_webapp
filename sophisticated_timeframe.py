@@ -343,8 +343,8 @@ class SophisticatedTimeframePredictor:
                         })
             
             if recoveries:
-                patterns['avg_recovery_days'] = round(np.mean(recoveries), 1)
-                patterns['median_recovery_days'] = round(np.median(recoveries), 1)
+                patterns['avg_recovery_days'] = round(float(np.mean(recoveries)), 1)
+                patterns['median_recovery_days'] = round(float(np.median(recoveries)), 1)
                 patterns['fastest_recovery'] = min(recoveries)
                 patterns['historical_success_rate'] = round((len(recoveries) / max(1, len([d for d in drawdowns if d < -3]))) * 100, 1)
             
