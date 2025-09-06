@@ -28,6 +28,7 @@ import structlog
 from celery import Celery
 import hashlib
 from sophisticated_timeframe import SophisticatedTimeframePredictor
+from real_data_recovery import predict_stock_recovery_real_data
 
 app = Flask(__name__)
 
@@ -758,13 +759,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             .sort-desc::after { content: ' ↓'; opacity: 1; }
         </style>
         <script>
-        // ULTRA-AGGRESSIVE CACHE-BUSTING VERSION 3.0 - NEW FUNCTION NAMES TO FORCE COMPLETE REFRESH
-        const CACHE_BUSTER_VERSION = '3.0_FORCE_REFRESH_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        const addCacheBuster = (url) => {
-            const separator = url.includes('?') ? '&' : '?';
-            return url + separator + 'cb=' + Date.now() + '&v=' + CACHE_BUSTER_VERSION;
-        };
-        console.log('🚀 COMPREHENSIVE CACHE-BUSTING ACTIVE - VERSION:', CACHE_BUSTER_VERSION);
         
         function sortTable(table, column, direction) {
             const tbody = table.querySelector('tbody');
@@ -1008,7 +1002,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             showAnalysisLoading(symbol);
             
             // Fetch AI analysis
-            fetch(addCacheBuster('/api/news-analysis/' + symbol))
+            fetch('/api/news-analysis/' + symbol)
                 .then(response => response.json())
                 .then(data => {
                     analysisCache[symbol] = data.analysis;
@@ -1125,8 +1119,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Recovery Prediction functionality
         let recoveryCache = {};
         
-        // NEW FUNCTION NAME TO BYPASS ALL BROWSER CACHES - VERSION 3.0
-        function showRecoveryPredictionV3(symbol) {
+        function showRecoveryPrediction(symbol) {
             if (recoveryCache[symbol]) {
                 displayRecoveryModal(symbol, recoveryCache[symbol]);
                 return;
@@ -1134,47 +1127,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showRecoveryLoading(symbol);
             
-            // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch(addCacheBuster('/api/sophisticated-timeframe/' + symbol))
+            fetch('/api/recovery-prediction/' + symbol)
                 .then(response => response.json())
                 .then(data => {
-                    // Transform sophisticated timeframe data to recovery prediction format
-                    console.log('🚀🚀🚀 VERSION 3.0 ULTRA-AGGRESSIVE CACHE-BUSTING ACTIVE 🚀🚀🚀');
-                    console.log('🔥 SOPHISTICATED DATA RECEIVED (V3.0 NEW FUNCTION NAMES):', data);
-                    console.log('💥 COMPLETE CACHE BYPASS - NEW FUNCTION NAME VERSION 3.0!!');
-                    const analysis = data.analysis || {};
-                    const timeframePreds = analysis.timeframe_predictions || {};
-                    
-                    // Get the first/best target from the timeframe predictions object
-                    const targetKeys = Object.keys(timeframePreds);
-                    const primaryTarget = targetKeys.length > 0 ? timeframePreds[targetKeys[0]] : null;
-                    const targetName = targetKeys.length > 0 ? targetKeys[0].replace('_', ' ') : 'Target';
-                    
-                    const confidence = analysis.confidence_level || 'Low';
-                    const confidenceValue = confidence === 'High' ? 0.8 : confidence === 'Medium' || confidence === 'Moderate' ? 0.6 : 0.4;
-                    
-                    console.log('🔥 PARSED VALUES:', {
-                        targetKeys, primaryTarget, confidence, confidenceValue,
-                        score: Math.round(confidenceValue * 100)
-                    });
-                    
-                    const recoveryData = {
-                        recovery_score: Math.round(confidenceValue * 100),
-                        recommendation: primaryTarget ? 
-                            `🎯 ${targetName} - ${primaryTarget.timeframe || 'TBD'}` : 
-                            '🟡 WAIT & WATCH - Analysis in progress',
-                        confidence: confidence.toLowerCase(),
-                        risk_level: confidenceValue > 0.7 ? 'low' : 'moderate',
-                        timeframe: primaryTarget?.timeframe || 'Analyzing...',
-                        factors: analysis.technical_momentum || {},
-                        breakdown: {
-                            technical_score: 25,
-                            fundamental_score: 25,
-                            analyst_score: 25,
-                            market_score: 25
-                        }
-                    };
-                    console.log('🔥 FINAL RECOVERY DATA:', recoveryData);
+                    const recoveryData = data.prediction;
                     recoveryCache[symbol] = recoveryData;
                     displayRecoveryModal(symbol, recoveryData);
                 })
@@ -1313,7 +1269,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showSentimentLoading(symbol);
             
-            fetch(addCacheBuster('/api/social-sentiment/' + symbol))
+            fetch('/api/social-sentiment/' + symbol)
                 .then(response => response.json())
                 .then(data => {
                     sentimentCache[symbol] = data.sentiment;
@@ -1429,7 +1385,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
                 
                 <div style="text-align: center; margin-top: 20px;">
-                    <button onclick="showRecoveryPredictionV3('${symbol}')" 
+                    <button onclick="showRecoveryPrediction('${symbol}')" 
                             style="background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
                         🔮 Recovery Analysis
                     </button>
@@ -1451,9 +1407,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch both social sentiment and recovery data in parallel
             Promise.all([
-                fetch(addCacheBuster('/api/social-sentiment/' + symbol)).then(response => response.json()),
+                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch(addCacheBuster('/api/sophisticated-timeframe/' + symbol)).then(response => response.json())
+            fetch('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
             ]).then(([sentimentData, recoveryData]) => {
                 // Cache the results
                 sentimentCache[symbol] = sentimentData.sentiment;
@@ -1603,10 +1559,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch all three analyses in parallel
             Promise.all([
-                fetch(addCacheBuster('/api/news-analysis/' + symbol)).then(response => response.json()),
-                fetch(addCacheBuster('/api/social-sentiment/' + symbol)).then(response => response.json()),
+                fetch('/api/news-analysis/' + symbol).then(response => response.json()),
+                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch(addCacheBuster('/api/sophisticated-timeframe/' + symbol)).then(response => response.json())
+            fetch('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
             ]).then(([aiData, sentimentData, recoveryData]) => {
                 // Cache all results
                 analysisCache[symbol] = aiData.analysis;
@@ -2638,7 +2594,7 @@ def get_recovery_prediction(symbol):
         import json
         import time
         
-        prediction = predict_stock_recovery(symbol)
+        prediction = predict_stock_recovery_real_data(symbol)
         
         api_response = {
             "symbol": symbol,
