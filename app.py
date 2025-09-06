@@ -3373,34 +3373,15 @@ def predict_stock_recovery(symbol):
         if target_count > 1:
             technical_factors.append(f"📊 {target_count} recovery targets identified")
         
-        # Calculate detailed score breakdown for transparency
-        score_breakdown = {
-            "base_score": round(base_recovery_score, 1),
-            "market_adjustment": adjustment,
-            "volatility_regime": volatility_regime,
-            "final_score": round(recovery_score, 1),
-            "target_details": [],
-            "calculation_explanation": f"Average of {len(weighted_scores)} targets, then {adjustment:+d}% for {volatility_regime} volatility"
-        }
-        
-        # Add individual target contributions to the breakdown
-        for target_name in priority_targets:
-            if target_name in timeframe_predictions:
-                target_data = timeframe_predictions[target_name]
-                upside_percent = target_data.get('upside_percent', 0)
-                if upside_percent > 0:
-                    probability = target_data.get('probability', 0)
-                    upside_weight = 1.0 if upside_percent <= 5 else 0.8 if upside_percent <= 10 else 0.6
-                    weighted_score = probability * upside_weight
-                    
-                    score_breakdown["target_details"].append({
-                        "target": target_names.get(target_name, target_name),
-                        "probability": probability,
-                        "upside_percent": round(upside_percent, 1),
-                        "weight_factor": upside_weight,
-                        "weighted_contribution": round(weighted_score, 1),
-                        "reason": f"Large moves (>{10 if upside_weight == 0.6 else 5}%) get {upside_weight}x weight"
-                    })
+        # The enhanced score_breakdown is already calculated above from _calculate_enhanced_recovery_score()
+        # Just add any additional context needed for the UI
+        if not score_breakdown:
+            score_breakdown = {
+                "base_score": round(base_recovery_score, 1),
+                "market_adjustment": adjustment,
+                "volatility_regime": volatility_regime,
+                "target_details": []
+            }
         
         return {
             "recovery_score": round(recovery_score, 1),
