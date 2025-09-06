@@ -1116,15 +1116,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .then(data => {
                     // Transform sophisticated timeframe data to recovery prediction format
                     const analysis = data.analysis || {};
-                    const timeframePreds = analysis.timeframe_predictions || [];
-                    const primaryTarget = timeframePreds.length > 0 ? timeframePreds[0] : null;
+                    const timeframePreds = analysis.timeframe_predictions || {};
+                    
+                    // Get the first/best target from the timeframe predictions object
+                    const targetKeys = Object.keys(timeframePreds);
+                    const primaryTarget = targetKeys.length > 0 ? timeframePreds[targetKeys[0]] : null;
+                    const targetName = targetKeys.length > 0 ? targetKeys[0].replace('_', ' ') : 'Target';
+                    
                     const confidence = analysis.confidence_level || 'Low';
-                    const confidenceValue = confidence === 'High' ? 0.8 : confidence === 'Medium' ? 0.6 : 0.4;
+                    const confidenceValue = confidence === 'High' ? 0.8 : confidence === 'Medium' || confidence === 'Moderate' ? 0.6 : 0.4;
                     
                     const recoveryData = {
                         recovery_score: Math.round(confidenceValue * 100),
                         recommendation: primaryTarget ? 
-                            `🎯 ${primaryTarget.target_name} - ${primaryTarget.timeframe}` : 
+                            `🎯 ${targetName} - ${primaryTarget.timeframe || 'TBD'}` : 
                             '🟡 WAIT & WATCH - Analysis in progress',
                         confidence: confidence.toLowerCase(),
                         risk_level: confidenceValue > 0.7 ? 'low' : 'moderate',
