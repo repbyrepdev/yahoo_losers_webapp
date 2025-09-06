@@ -13,6 +13,7 @@ import logging
 import pickle
 from pathlib import Path
 import time
+from datetime import datetime
 from functools import wraps
 import gc
 import psutil
@@ -120,6 +121,16 @@ def add_security_headers(response):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    
+    # ULTRA-AGGRESSIVE CACHE-BUSTING V3.0 - FORCE BROWSER TO NEVER CACHE HTML PAGES
+    if request.endpoint == 'index':  # Main HTML page
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        response.headers['Last-Modified'] = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
+        response.headers['Vary'] = '*'
+        # Add random header to ensure complete cache invalidation
+        response.headers['X-Cache-Bust-V3'] = f'{int(time.time())}_{hash(time.time())}'
     
     return response
 
@@ -747,8 +758,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             .sort-desc::after { content: ' ↓'; opacity: 1; }
         </style>
         <script>
-        // COMPREHENSIVE CACHE-BUSTING VERSION 2.1
-        const CACHE_BUSTER_VERSION = '2.1_' + Date.now();
+        // ULTRA-AGGRESSIVE CACHE-BUSTING VERSION 3.0 - NEW FUNCTION NAMES TO FORCE COMPLETE REFRESH
+        const CACHE_BUSTER_VERSION = '3.0_FORCE_REFRESH_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         const addCacheBuster = (url) => {
             const separator = url.includes('?') ? '&' : '?';
             return url + separator + 'cb=' + Date.now() + '&v=' + CACHE_BUSTER_VERSION;
@@ -1114,7 +1125,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Recovery Prediction functionality
         let recoveryCache = {};
         
-        function showRecoveryPrediction(symbol) {
+        // NEW FUNCTION NAME TO BYPASS ALL BROWSER CACHES - VERSION 3.0
+        function showRecoveryPredictionV3(symbol) {
             if (recoveryCache[symbol]) {
                 displayRecoveryModal(symbol, recoveryCache[symbol]);
                 return;
@@ -1127,8 +1139,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .then(response => response.json())
                 .then(data => {
                     // Transform sophisticated timeframe data to recovery prediction format
-                    console.log('🔥 SOPHISTICATED DATA RECEIVED (VERSION 2.1 CACHE-BUSTER ACTIVE):', data);
-                    console.log('🚀 NEW JAVASCRIPT VERSION 2.1 IS RUNNING - CACHE BYPASSED!');
+                    console.log('🚀🚀🚀 VERSION 3.0 ULTRA-AGGRESSIVE CACHE-BUSTING ACTIVE 🚀🚀🚀');
+                    console.log('🔥 SOPHISTICATED DATA RECEIVED (V3.0 NEW FUNCTION NAMES):', data);
+                    console.log('💥 COMPLETE CACHE BYPASS - NEW FUNCTION NAME VERSION 3.0!!');
                     const analysis = data.analysis || {};
                     const timeframePreds = analysis.timeframe_predictions || {};
                     
@@ -1416,7 +1429,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
                 
                 <div style="text-align: center; margin-top: 20px;">
-                    <button onclick="showRecoveryPrediction('${symbol}')" 
+                    <button onclick="showRecoveryPredictionV3('${symbol}')" 
                             style="background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; margin: 0 5px; cursor: pointer;">
                         🔮 Recovery Analysis
                     </button>
