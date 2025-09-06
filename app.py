@@ -2020,8 +2020,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Load data for specific tabs when clicked
             if (tabId === 'mediumterm-tab') {
+                console.log('DEBUG: Medium-term tab clicked, calling loadMediumTermData()');
                 loadMediumTermData();
             } else if (tabId === 'longterm-tab') {
+                console.log('DEBUG: Long-term tab clicked, calling loadLongTermData()');
                 loadLongTermData();
             }
         }
@@ -2029,9 +2031,17 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Load medium-term recovery data
         function loadMediumTermData() {
             const mediumtermData = document.getElementById('mediumterm-data');
-            const symbol = document.querySelector('h3').textContent.match(/: ([A-Z]+)/)?.[1];
+            const h3Element = document.querySelector('h3');
+            console.log('DEBUG: h3 element:', h3Element);
+            console.log('DEBUG: h3 textContent:', h3Element?.textContent);
+            const symbol = h3Element?.textContent.match(/: ([A-Z]+)/)?.[1];
+            console.log('DEBUG: extracted symbol:', symbol);
             
-            if (!symbol) return;
+            if (!symbol) {
+                console.error('No symbol found in h3 element');
+                mediumtermData.innerHTML = `<div style="text-align: center; color: rgba(255,255,255,0.8);"><div style="font-size: 16px; margin: 20px 0;">❌ No symbol found</div></div>`;
+                return;
+            }
             
             // Show loading state
             mediumtermData.innerHTML = `
@@ -2111,9 +2121,17 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Load long-term analyst data
         function loadLongTermData() {
             const longtermData = document.getElementById('longterm-data');
-            const symbol = document.querySelector('h3').textContent.match(/: ([A-Z]+)/)?.[1];
+            const h3Element = document.querySelector('h3');
+            console.log('DEBUG LONG: h3 element:', h3Element);
+            console.log('DEBUG LONG: h3 textContent:', h3Element?.textContent);
+            const symbol = h3Element?.textContent.match(/: ([A-Z]+)/)?.[1];
+            console.log('DEBUG LONG: extracted symbol:', symbol);
             
-            if (!symbol) return;
+            if (!symbol) {
+                console.error('No symbol found in h3 element for long-term');
+                longtermData.innerHTML = `<div style="text-align: center; color: rgba(255,255,255,0.8);"><div style="font-size: 16px; margin: 20px 0;">❌ No symbol found</div></div>`;
+                return;
+            }
             
             // Show loading state
             longtermData.innerHTML = `
