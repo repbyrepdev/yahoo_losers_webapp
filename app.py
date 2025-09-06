@@ -1,24 +1,18 @@
-from flask import Flask, render_template_string, request, jsonify, g, make_response
+from flask import Flask, render_template_string, render_template, request, jsonify, g, make_response
 from flask_compress import Compress
 from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import csv
 import os
 import json
 import ssl
-from io import StringIO
 import logging
-import pickle
-from pathlib import Path
 import time
-from datetime import datetime
 from functools import wraps
 import gc
 import psutil
 import threading
-import random
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta, date
@@ -201,8 +195,9 @@ def bulk_analysis_task(self, symbols):
 request_counts = {}
 request_lock = threading.Lock()
 
-# Create SSL context to handle certificate issues
-ssl._create_default_https_context = ssl._create_unverified_context
+# SSL configuration - Use default secure context
+# Removed ssl._create_unverified_context for security
+# Individual requests can handle SSL issues case-by-case if needed
 
 # Cache configuration
 CACHE_FILE = '/tmp/yahoo_finance_cache.pkl'  # Use /tmp for Render compatibility
@@ -3440,7 +3435,6 @@ def analyze_stock_news(symbol):
     """
     
     # Simulate realistic AI analysis based on common stock movement patterns
-    import random
     
     # Common reasons stocks fall (for simulation)
     reasons = [
@@ -3503,14 +3497,14 @@ def analyze_stock_news(symbol):
     ]
     
     # Select a realistic reason based on stock symbol characteristics
-    selected_reason = random.choice(reasons)
+    selected_reason = reasons[0]  # Use first reason as default
     
     # Add some symbol-specific intelligence
     if symbol in ['AAPL', 'MSFT', 'GOOGL', 'META', 'TSLA']:
         # Big tech stocks - likely market/regulatory issues
         tech_reasons = [r for r in reasons if r['icon'] in ['🌊', '⚖️', '📊']]
         if tech_reasons:
-            selected_reason = random.choice(tech_reasons)
+            selected_reason = tech_reasons[0]  # Use first tech reason as default
     
     return selected_reason
 
@@ -3755,8 +3749,6 @@ def analyze_social_sentiment(symbol):
     Analyze social media sentiment and panic levels
     Simulates scraping Reddit, Twitter, StockTwits, etc.
     """
-    import random
-    
     # Simulate social media metrics
     reddit_mentions = random.randint(50, 5000)
     twitter_mentions = random.randint(100, 8000)
@@ -3832,7 +3824,6 @@ def analyze_social_sentiment(symbol):
 
 def analyze_options_flow(symbol):
     """Analyze unusual options activity for a stock"""
-    import random
     from datetime import datetime, timedelta
     
     # Simulate realistic options flow data (in production, would use real API)
@@ -3917,7 +3908,6 @@ def analyze_options_flow(symbol):
 
 def track_institutional_flow(symbol):
     """Track institutional buying/selling patterns"""
-    import random
     from datetime import datetime, timedelta
     
     # Simulate institutional flow data
@@ -4007,7 +3997,6 @@ def track_institutional_flow(symbol):
 
 def get_economic_calendar_impact(symbol):
     """Get relevant economic events that could impact the stock"""
-    import random
     from datetime import datetime, timedelta
     
     # Economic events with stock impact potential
@@ -4111,7 +4100,6 @@ def get_economic_calendar_impact(symbol):
 
 def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data, calendar_data, recovery_data, sentiment_data):
     """AI-powered rebound prediction combining ALL professional analysis"""
-    import random
     from datetime import datetime, timedelta
     
     symbol = stock_data['Symbol']
@@ -4620,7 +4608,7 @@ def get_ai_stock_analysis(symbol):
         institutional_data = track_institutional_flow(symbol.upper())
         calendar_data = get_economic_calendar_impact(symbol.upper())
         recovery_data = predict_stock_recovery(symbol.upper())
-        sentiment_data = get_social_sentiment_analysis(symbol.upper())
+        sentiment_data = analyze_social_sentiment(symbol.upper())
         
         # Get actual stock data (try to get current price from Yahoo)
         try:
