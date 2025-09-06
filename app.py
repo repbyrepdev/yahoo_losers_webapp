@@ -1111,11 +1111,26 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showRecoveryLoading(symbol);
             
-            fetch('/api/recovery-prediction/' + symbol)
+            fetch('/api/sophisticated-timeframe/' + symbol)
                 .then(response => response.json())
                 .then(data => {
-                    recoveryCache[symbol] = data.prediction;
-                    displayRecoveryModal(symbol, data.prediction);
+                    // Transform sophisticated timeframe data to recovery prediction format
+                    const recoveryData = {
+                        recovery_score: Math.round(data.overall_confidence * 100) || 50,
+                        recommendation: data.primary_target?.recommendation || '🟡 WAIT & WATCH - Analysis in progress',
+                        confidence: data.overall_confidence_level || 'moderate',
+                        risk_level: data.overall_confidence > 0.7 ? 'low' : 'moderate',
+                        timeframe: data.primary_target?.timeframe || 'Analyzing...',
+                        factors: data.technical_momentum || {},
+                        breakdown: {
+                            technical_score: 25,
+                            fundamental_score: 25,
+                            analyst_score: 25,
+                            market_score: 25
+                        }
+                    };
+                    recoveryCache[symbol] = recoveryData;
+                    displayRecoveryModal(symbol, recoveryData);
                 })
                 .catch(error => {
                     console.error('Recovery prediction error:', error);
@@ -1391,7 +1406,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Fetch both social sentiment and recovery data in parallel
             Promise.all([
                 fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
-                fetch('/api/recovery-prediction/' + symbol).then(response => response.json())
+                fetch('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
             ]).then(([sentimentData, recoveryData]) => {
                 // Cache the results
                 sentimentCache[symbol] = sentimentData.sentiment;
@@ -1543,7 +1558,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             Promise.all([
                 fetch('/api/news-analysis/' + symbol).then(response => response.json()),
                 fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
-                fetch('/api/recovery-prediction/' + symbol).then(response => response.json())
+                fetch('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
             ]).then(([aiData, sentimentData, recoveryData]) => {
                 // Cache all results
                 analysisCache[symbol] = aiData.analysis;
