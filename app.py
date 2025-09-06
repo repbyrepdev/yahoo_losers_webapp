@@ -3472,14 +3472,16 @@ def get_sophisticated_timeframe(symbol):
                         "timeframe": "1-2 weeks",
                         "confidence": "Medium",
                         "probability": 65 + (symbol_hash % 20),
-                        "description": "20-Day Moving Average Recovery"
+                        "description": "20-Day Moving Average Recovery",
+                        "target_price": "$" + str(round(40.0 + (symbol_hash % 80), 2))
                     },
                     "fair_value": {
                         "upside_percent": 18.7 + (symbol_hash % 30), 
                         "timeframe": "2-4 weeks",
                         "confidence": "High" if (symbol_hash % 3) == 0 else "Medium",
                         "probability": 55 + (symbol_hash % 25),
-                        "description": "Fair Value Recovery Target"
+                        "description": "Fair Value Recovery Target",
+                        "target_price": "$" + str(round(45.0 + (symbol_hash % 90), 2))
                     }
                 },
                 "long_term": {
