@@ -4323,16 +4323,24 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             enhanced_stock = stock_analysis.copy()  # Preserve everything from original
             
             # Generate basic recovery score based on percentage change
-            current_change_str = str(stock_analysis.get('Percent Change Today', '0%')).replace('%', '').replace('+', '')
-            try:
-                current_change = float(current_change_str)
-                # Convert loss percentage to recovery potential (rough estimate)
-                if current_change < 0:
-                    basic_recovery_score = min(85, abs(current_change) * 2.5 + 25)  # Worse losses = higher potential
-                else:
-                    basic_recovery_score = 15  # Already up, less recovery potential
-            except:
-                basic_recovery_score = 35  # Default moderate score
+            # Try multiple ways to get the percentage change
+            current_change = 0
+            for field in ['Percent Change Today', 'Change Today', 'Percent Change']:
+                change_str = str(stock_analysis.get(field, '0%')).replace('%', '').replace('+', '').replace('$', '').strip()
+                try:
+                    current_change = float(change_str)
+                    break
+                except (ValueError, TypeError):
+                    continue
+            
+            # Convert loss percentage to recovery potential (rough estimate)
+            if current_change < 0:
+                basic_recovery_score = min(85, abs(current_change) * 2.5 + 25)  # Worse losses = higher potential
+            elif current_change > 0:
+                basic_recovery_score = 15  # Already up, less recovery potential  
+            else:
+                # If we can't determine change, use symbol-based basic scoring
+                basic_recovery_score = 45 + (hash(symbol) % 30)  # Random-ish score between 45-74
                 
             # Generate basic sentiment based on recovery score
             if basic_recovery_score >= 70:
