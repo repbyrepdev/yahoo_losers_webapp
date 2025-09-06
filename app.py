@@ -907,7 +907,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Create title with exchange indicator
             const title = document.createElement('h3');
-            title.textContent = symbol + ' - Live Chart (NASDAQ)';
+            title.textContent = symbol + ' - Live Chart (Auto-detect)';
             title.style.cssText = 'margin-top: 0; text-align: center; color: #333;';
             
             // Update title when switching exchanges
@@ -919,34 +919,34 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const chartFrame = document.createElement('iframe');
             chartFrame.style.cssText = 'width: 100%; height: calc(100% - 60px); border: none; border-radius: 5px;';
             
-            // Start with NASDAQ TradingView (most reliable for embeds)
-            chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+            // Start with Auto-detect (no prefix - most universal)
+            chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
             
             // Add a button to try different exchanges
             const switchBtn = document.createElement('button');
-            switchBtn.textContent = 'Try NYSE';
+            switchBtn.textContent = 'Try NASDAQ';
             switchBtn.style.cssText = 'position: absolute; top: 50px; right: 15px; background: #007bff; color: white; border: none; border-radius: 3px; padding: 5px 10px; cursor: pointer; font-size: 12px;';
             switchBtn.onclick = function() {
-                if (this.textContent === 'Try NYSE') {
+                if (this.textContent === 'Try NASDAQ') {
+                    // Try NASDAQ prefix
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    updateTitle('NASDAQ');
+                    this.textContent = 'Try NYSE';
+                } else if (this.textContent === 'Try NYSE') {
                     // Try NYSE prefix
                     chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NYSE:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
                     updateTitle('NYSE');
-                    this.textContent = 'Try without prefix';
-                } else if (this.textContent === 'Try without prefix') {
-                    // Try without exchange prefix
-                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
-                    updateTitle('Auto-detect');
                     this.textContent = 'Try AMEX';
                 } else if (this.textContent === 'Try AMEX') {
                     // Try AMEX prefix
                     chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=AMEX:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
                     updateTitle('AMEX');
-                    this.textContent = 'Back to NASDAQ';
+                    this.textContent = 'Back to Auto-detect';
                 } else {
-                    // Back to NASDAQ (default)
-                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NASDAQ:' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
-                    updateTitle('NASDAQ');
-                    this.textContent = 'Try NYSE';
+                    // Back to Auto-detect (default)
+                    chartFrame.src = 'https://www.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=' + symbol + '&interval=D&hideideas=1&hidetoptoolbar=1&hidecontrols=0&theme=light&style=1&timezone=Etc%2FUTC&studies=%5B%5D&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en';
+                    updateTitle('Auto-detect');
+                    this.textContent = 'Try NASDAQ';
                 }
             };
             
@@ -1202,7 +1202,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         ${prediction.recovery_score >= 75 ? '🚀' : prediction.recovery_score >= 60 ? '📈' : prediction.recovery_score >= 40 ? '⚖️' : '⚠️'}
                     </div>
                     <div style="font-size: 36px; font-weight: bold; margin-bottom: 5px;">
-                        ${prediction.recovery_score}% Recovery Score
+                        ${Math.round(prediction.recovery_score * 10) / 10}% Recovery Score
                     </div>
                     <div style="font-size: 18px; opacity: 0.9;">
                         Expected timeframe: ${prediction.timeframe}
@@ -1481,7 +1481,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Recovery Potential</h4>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
                         <div>
-                            <div style="font-size: 28px; font-weight: bold;">${recovery.recovery_score || 0}%</div>
+                            <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
                             <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                         </div>
                         <div>
@@ -1687,7 +1687,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Recovery Potential</h4>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${recovery.recovery_score || 0}%</div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                             </div>
                             <div>
@@ -1942,9 +1942,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <tr>
                             <td>
                                 <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                <button class="ai-button" onclick="showAIAnalysis('{{ stock.Symbol }}')">🤖 AI</button>
-                                <button class="ai-button" onclick="showRecoveryPrediction('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #28a745, #20c997);">🔮 Recovery</button>
-                                <button class="ai-button" onclick="showSocialSentiment('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #ff6b6b, #ee5a24);">📱 Social</button>
+                                <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
+                                        style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">
+                                    🤖📱🔮 Complete Analysis
+                                </button>
                             </td>
                             <td>{{ stock['Current Price'] }}</td>
                             <td>{{ stock['Previous Close'] }}</td>
@@ -1974,9 +1975,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <tr>
                             <td>
                                 <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                <button class="ai-button" onclick="showAIAnalysis('{{ stock.Symbol }}')">🤖 AI</button>
-                                <button class="ai-button" onclick="showRecoveryPrediction('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #28a745, #20c997);">🔮 Recovery</button>
-                                <button class="ai-button" onclick="showSocialSentiment('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #ff6b6b, #ee5a24);">📱 Social</button>
+                                <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
+                                        style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">
+                                    🤖📱🔮 Complete Analysis
+                                </button>
                             </td>
                             <td>{{ stock.Name }}</td>
                             <td>{{ stock.Price }}</td>
