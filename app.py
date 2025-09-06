@@ -747,6 +747,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             .sort-desc::after { content: ' ↓'; opacity: 1; }
         </style>
         <script>
+        // COMPREHENSIVE CACHE-BUSTING VERSION 2.1
+        const CACHE_BUSTER_VERSION = '2.1_' + Date.now();
+        const addCacheBuster = (url) => {
+            const separator = url.includes('?') ? '&' : '?';
+            return url + separator + 'cb=' + Date.now() + '&v=' + CACHE_BUSTER_VERSION;
+        };
+        console.log('🚀 COMPREHENSIVE CACHE-BUSTING ACTIVE - VERSION:', CACHE_BUSTER_VERSION);
+        
         function sortTable(table, column, direction) {
             const tbody = table.querySelector('tbody');
             const rows = Array.from(tbody.querySelectorAll('tr'));
@@ -989,7 +997,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             showAnalysisLoading(symbol);
             
             // Fetch AI analysis
-            fetch('/api/news-analysis/' + symbol)
+            fetch(addCacheBuster('/api/news-analysis/' + symbol))
                 .then(response => response.json())
                 .then(data => {
                     analysisCache[symbol] = data.analysis;
@@ -1115,7 +1123,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             showRecoveryLoading(symbol);
             
             // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now() + '&v=2.1')
+            fetch(addCacheBuster('/api/sophisticated-timeframe/' + symbol))
                 .then(response => response.json())
                 .then(data => {
                     // Transform sophisticated timeframe data to recovery prediction format
@@ -1292,7 +1300,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showSentimentLoading(symbol);
             
-            fetch('/api/social-sentiment/' + symbol)
+            fetch(addCacheBuster('/api/social-sentiment/' + symbol))
                 .then(response => response.json())
                 .then(data => {
                     sentimentCache[symbol] = data.sentiment;
@@ -1430,9 +1438,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch both social sentiment and recovery data in parallel
             Promise.all([
-                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
+                fetch(addCacheBuster('/api/social-sentiment/' + symbol)).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now() + '&v=2.1').then(response => response.json())
+            fetch(addCacheBuster('/api/sophisticated-timeframe/' + symbol)).then(response => response.json())
             ]).then(([sentimentData, recoveryData]) => {
                 // Cache the results
                 sentimentCache[symbol] = sentimentData.sentiment;
@@ -1582,10 +1590,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch all three analyses in parallel
             Promise.all([
-                fetch('/api/news-analysis/' + symbol).then(response => response.json()),
-                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
+                fetch(addCacheBuster('/api/news-analysis/' + symbol)).then(response => response.json()),
+                fetch(addCacheBuster('/api/social-sentiment/' + symbol)).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now() + '&v=2.1').then(response => response.json())
+            fetch(addCacheBuster('/api/sophisticated-timeframe/' + symbol)).then(response => response.json())
             ]).then(([aiData, sentimentData, recoveryData]) => {
                 // Cache all results
                 analysisCache[symbol] = aiData.analysis;
