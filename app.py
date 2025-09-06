@@ -3451,80 +3451,39 @@ def get_sophisticated_timeframe(symbol):
     try:
         logger.info(f"🔥 Sophisticated timeframe API called for {symbol}")
         
-        # TEMPORARY FIX: Create basic medium/long-term analysis to fix Loading... tabs
-        # Generate basic recovery targets based on symbol
-        symbol_hash = hash(symbol.upper())
+        # DEBUG: Test the REAL sophisticated predictor
+        print(f"DEBUG: Testing real sophisticated_predictor.predict_recovery_timeframes({symbol})")
         
-        # Create basic sophisticated analysis structure
-        basic_sophisticated_result = {
-            "timeframe_predictions": {
-                "short_term": {
-                    "recovery_targets": {
-                        "previous_close": {"upside_percent": 3.2 + (symbol_hash % 10), "timeframe": "1-2 days"},
-                        "5day_high": {"upside_percent": 8.5 + (symbol_hash % 15), "timeframe": "3-5 days"}
-                    },
-                    "average_recovery": 5.8 + (symbol_hash % 20),
-                    "median_recovery": 4.9 + (symbol_hash % 18)
-                },
-                "medium_term": {
-                    "20day_ma": {
-                        "upside_percent": 12.3 + (symbol_hash % 25), 
-                        "timeframe": "1-2 weeks",
-                        "confidence": "Medium",
-                        "probability": 65 + (symbol_hash % 20),
-                        "description": "20-Day Moving Average Recovery",
-                        "target_price": "$" + str(round(40.0 + (symbol_hash % 80), 2))
-                    },
-                    "fair_value": {
-                        "upside_percent": 18.7 + (symbol_hash % 30), 
-                        "timeframe": "2-4 weeks",
-                        "confidence": "High" if (symbol_hash % 3) == 0 else "Medium",
-                        "probability": 55 + (symbol_hash % 25),
-                        "description": "Fair Value Recovery Target",
-                        "target_price": "$" + str(round(45.0 + (symbol_hash % 90), 2))
-                    }
-                },
-                "long_term": {
-                    "analyst_consensus": {
-                        "upside_percent": 35.2 + (symbol_hash % 40),
-                        "timeframe": "6-12 months", 
-                        "confidence": "High" if (symbol_hash % 4) == 0 else "Medium",
-                        "probability": 70 + (symbol_hash % 20),
-                        "description": "Analyst Consensus Price Target",
-                        "target_price": "$" + str(round(50.0 + (symbol_hash % 100), 2))
-                    },
-                    "bull_case": {
-                        "upside_percent": 55.8 + (symbol_hash % 50),
-                        "timeframe": "12-18 months",
-                        "confidence": "Medium",
-                        "probability": 40 + (symbol_hash % 30), 
-                        "description": "Bull Case Scenario",
-                        "target_price": "$" + str(round(75.0 + (symbol_hash % 125), 2))
-                    }
-                }
-            },
-            "medium_targets": {
-                "20day_ma": {"price": 45.20 + (symbol_hash % 50), "upside_percent": 12.3 + (symbol_hash % 25)},
-                "fair_value": {"price": 52.80 + (symbol_hash % 60), "upside_percent": 18.7 + (symbol_hash % 30)}
-            },
-            "confidence": "moderate",
-            "market_regime": "normal_volatility"
-        }
-        
-        # Create basic prediction summary
-        prediction_summary = {
-            "recovery_score": 45.5 + (symbol_hash % 30),
-            "confidence": "moderate", 
-            "timeframe": "1-3 weeks",
-            "recommendation": "WAIT & WATCH"
-        }
+        try:
+            # Get the ACTUAL sophisticated analysis - no fake data!
+            sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
+            print(f"DEBUG: sophisticated_predictor SUCCESS! Result type: {type(sophisticated_result)}")
+            print(f"DEBUG: sophisticated_result keys: {list(sophisticated_result.keys()) if isinstance(sophisticated_result, dict) else 'Not a dict'}")
+            
+            # Get the ACTUAL prediction summary - no fake data!
+            prediction_summary = predict_stock_recovery(symbol.upper())
+            print(f"DEBUG: predict_stock_recovery SUCCESS! Result type: {type(prediction_summary)}")
+            print(f"DEBUG: prediction_summary keys: {list(prediction_summary.keys()) if isinstance(prediction_summary, dict) else 'Not a dict'}")
+            
+        except Exception as e:
+            print(f"CRITICAL ERROR in real analysis: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # Return an error response instead of fake data
+            return jsonify({
+                "symbol": symbol.upper(),
+                "error": f"Real sophisticated analysis failed: {str(e)}",
+                "debug_info": "Check server logs for full traceback",
+                "api_version": "2.0"
+            }), 500
         
         api_response = {
             "symbol": symbol.upper(),
             "prediction": prediction_summary,  # Frontend compatible format
-            "sophisticated_analysis": basic_sophisticated_result,  # Basic working analysis structure
+            "sophisticated_analysis": sophisticated_result,  # REAL sophisticated analysis
             "api_version": "2.0",
-            "description": "Basic recovery timeframe prediction with multiple targets",
+            "description": "Real sophisticated recovery timeframe prediction",
             "timestamp": time.time()
         }
         
