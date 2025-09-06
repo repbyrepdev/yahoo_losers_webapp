@@ -1114,11 +1114,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showRecoveryLoading(symbol);
             
-            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now())
+            // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
+            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now() + '&v=2.1')
                 .then(response => response.json())
                 .then(data => {
                     // Transform sophisticated timeframe data to recovery prediction format
-                    console.log('🔥 SOPHISTICATED DATA RECEIVED:', data);
+                    console.log('🔥 SOPHISTICATED DATA RECEIVED (VERSION 2.1 CACHE-BUSTER ACTIVE):', data);
+                    console.log('🚀 NEW JAVASCRIPT VERSION 2.1 IS RUNNING - CACHE BYPASSED!');
                     const analysis = data.analysis || {};
                     const timeframePreds = analysis.timeframe_predictions || {};
                     
@@ -1429,7 +1431,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Fetch both social sentiment and recovery data in parallel
             Promise.all([
                 fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
-                fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now()).then(response => response.json())
+                // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
+            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now() + '&v=2.1').then(response => response.json())
             ]).then(([sentimentData, recoveryData]) => {
                 // Cache the results
                 sentimentCache[symbol] = sentimentData.sentiment;
@@ -1581,7 +1584,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             Promise.all([
                 fetch('/api/news-analysis/' + symbol).then(response => response.json()),
                 fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
-                fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now()).then(response => response.json())
+                // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
+            fetch('/api/sophisticated-timeframe/' + symbol + '?cb=' + Date.now() + '&v=2.1').then(response => response.json())
             ]).then(([aiData, sentimentData, recoveryData]) => {
                 // Cache all results
                 analysisCache[symbol] = aiData.analysis;
