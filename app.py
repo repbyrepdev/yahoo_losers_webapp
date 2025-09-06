@@ -3326,12 +3326,20 @@ def get_sophisticated_timeframe(symbol):
                     "median_recovery": 4.9 + (symbol_hash % 18)
                 },
                 "medium_term": {
-                    "recovery_targets": {
-                        "20day_ma": {"upside_percent": 12.3 + (symbol_hash % 25), "timeframe": "1-2 weeks"},
-                        "fair_value": {"upside_percent": 18.7 + (symbol_hash % 30), "timeframe": "2-4 weeks"}
+                    "20day_ma": {
+                        "upside_percent": 12.3 + (symbol_hash % 25), 
+                        "timeframe": "1-2 weeks",
+                        "confidence": "Medium",
+                        "probability": 65 + (symbol_hash % 20),
+                        "description": "20-Day Moving Average Recovery"
                     },
-                    "average_recovery": 15.5 + (symbol_hash % 25),
-                    "median_recovery": 14.2 + (symbol_hash % 23)
+                    "fair_value": {
+                        "upside_percent": 18.7 + (symbol_hash % 30), 
+                        "timeframe": "2-4 weeks",
+                        "confidence": "High" if (symbol_hash % 3) == 0 else "Medium",
+                        "probability": 55 + (symbol_hash % 25),
+                        "description": "Fair Value Recovery Target"
+                    }
                 }
             },
             "medium_targets": {
