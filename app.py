@@ -3694,8 +3694,8 @@ def predict_stock_recovery(symbol):
             probability = primary_target['probability']
             technical_factors.append(f"🎯 Target: ${target_price} (+{upside:.1f}%) - {probability:.0f}% probability")
         
-        # Add multiple target summary
-        target_count = len([t for t in timeframe_predictions.values() if t['upside_percent'] > 0])
+        # Add multiple target summary (using short-term predictions)
+        target_count = len([t for t in short_term_predictions.values() if t.get('upside_percent', 0) > 0])
         if target_count > 1:
             technical_factors.append(f"📊 {target_count} recovery targets identified")
         
