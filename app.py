@@ -621,86 +621,303 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         <meta http-equiv="Pragma" content="no-cache">
         <meta http-equiv="Expires" content="0">
         <style>
+            /* DARK MODE DEFAULT - Professional Theme */
             :root {
-                --bg-primary: #f5f5f5;
-                --bg-secondary: white;
-                --text-primary: #333;
-                --text-secondary: #666;
-                --border-color: #ddd;
-                --header-bg: #f8f9fa;
-                --positive-color: #28a745;
-                --negative-color: #dc3545;
-                --highlight-bg: #fff3cd;
-                --summary-bg: #e7f3ff;
-                --shadow: rgba(0,0,0,0.1);
+                --bg-primary: #0d1117;
+                --bg-secondary: #161b22;
+                --bg-tertiary: #21262d;
+                --text-primary: #f0f6fc;
+                --text-secondary: #8b949e;
+                --border-color: #30363d;
+                --header-bg: #21262d;
+                --positive-color: #3fb950;
+                --negative-color: #f85149;
+                --highlight-bg: #1f2328;
+                --summary-bg: #0d419d;
+                --shadow: rgba(0,0,0,0.4);
+                --accent-blue: #1f6feb;
+                --accent-purple: #8b5cf6;
+                --modal-bg: rgba(22,27,34,0.95);
             }
             
-            [data-theme="dark"] {
-                --bg-primary: #1a1a1a;
-                --bg-secondary: #2d2d2d;
-                --text-primary: #e0e0e0;
-                --text-secondary: #b0b0b0;
-                --border-color: #404040;
-                --header-bg: #3d3d3d;
-                --positive-color: #4ade80;
-                --negative-color: #f87171;
-                --highlight-bg: #4a4a00;
-                --summary-bg: #1e3a8a;
-                --shadow: rgba(0,0,0,0.3);
+            /* Light Mode Override */
+            [data-theme="light"] {
+                --bg-primary: #ffffff;
+                --bg-secondary: #f6f8fa;
+                --bg-tertiary: #ffffff;
+                --text-primary: #24292f;
+                --text-secondary: #656d76;
+                --border-color: #d0d7de;
+                --header-bg: #f6f8fa;
+                --positive-color: #1a7f37;
+                --negative-color: #cf222e;
+                --highlight-bg: #fff8c5;
+                --summary-bg: #dbeafe;
+                --shadow: rgba(0,0,0,0.08);
+                --accent-blue: #0969da;
+                --accent-purple: #8250df;
+                --modal-bg: rgba(255,255,255,0.95);
             }
             
-            * { transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease; }
+            * { 
+                transition: all 0.2s ease; 
+                box-sizing: border-box;
+            }
             
             body { 
-                font-family: Arial, sans-serif; 
-                margin: 20px; 
-                background-color: var(--bg-primary); 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; 
+                margin: 0; 
+                padding: 12px;
+                background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-tertiary) 100%);
                 color: var(--text-primary);
+                line-height: 1.6;
+                min-height: 100vh;
             }
-            .container { max-width: 1200px; margin: 0 auto; }
-            h1, h2, h3 { color: var(--text-primary); text-align: center; }
+            
+            .container { 
+                max-width: 1600px; 
+                margin: 0 auto; 
+                padding: 0 20px;
+            }
+            
+            /* Widescreen Grid Layout */
+            .grid-layout {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 24px;
+                margin: 20px 0;
+            }
+            
+            .grid-full {
+                grid-column: 1 / -1;
+            }
+            
+            @media (max-width: 1200px) {
+                .grid-layout {
+                    grid-template-columns: 1fr;
+                    gap: 16px;
+                }
+            }
+            
+            h1 { 
+                color: var(--text-primary); 
+                text-align: center; 
+                font-size: 2.5rem;
+                font-weight: 700;
+                margin: 24px 0;
+                background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }
+            
+            h2 { 
+                color: var(--text-primary); 
+                text-align: center; 
+                font-size: 1.8rem;
+                font-weight: 600;
+                margin: 24px 0 16px 0;
+                padding: 12px 0;
+                border-bottom: 2px solid var(--border-color);
+            }
+            
+            h3 { 
+                color: var(--text-primary); 
+                font-size: 1.3rem;
+                font-weight: 600;
+                margin: 20px 0 12px 0;
+            }
+            
             .section { 
                 background: var(--bg-secondary); 
-                margin: 20px 0; 
-                padding: 20px; 
-                border-radius: 8px; 
-                box-shadow: 0 2px 4px var(--shadow); 
+                margin: 16px 0; 
+                padding: 24px; 
+                border-radius: 12px; 
+                box-shadow: 0 4px 12px var(--shadow);
+                border: 1px solid var(--border-color);
+                backdrop-filter: blur(10px);
             }
-            table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+            
+            /* Widescreen Optimized Tables */
+            table { 
+                width: 100%; 
+                border-collapse: collapse; 
+                margin: 12px 0;
+                border-radius: 8px;
+                overflow: hidden;
+                box-shadow: 0 2px 8px var(--shadow);
+            }
+            
             th, td { 
-                padding: 8px 12px; 
+                padding: 12px 16px; 
                 text-align: left; 
                 border-bottom: 1px solid var(--border-color); 
                 color: var(--text-primary);
+                font-size: 0.9rem;
             }
-            th { background-color: var(--header-bg); font-weight: bold; }
-            .positive { color: var(--positive-color); }
-            .negative { color: var(--negative-color); }
+            
+            th { 
+                background: linear-gradient(135deg, var(--header-bg), var(--bg-tertiary)); 
+                font-weight: 600;
+                font-size: 0.85rem;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: var(--text-secondary);
+            }
+            
+            tr:hover {
+                background-color: var(--highlight-bg);
+                transform: translateY(-1px);
+            }
+            
+            .positive { color: var(--positive-color); font-weight: 600; }
+            .negative { color: var(--negative-color); font-weight: 600; }
             .highlight { background-color: var(--highlight-bg); }
-            .timestamp { text-align: center; color: var(--text-secondary); font-size: 14px; }
-            .summary { background-color: var(--summary-bg); padding: 15px; border-radius: 5px; margin: 15px 0; }
-            .status-live { background-color: var(--positive-color); color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
-            .status-sample { background-color: #f59e0b; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
-            .status-error { background-color: var(--negative-color); color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
-            .status-cached { background-color: #3b82f6; color: white; padding: 10px; border-radius: 5px; margin: 10px 0; opacity: 0.9; }
-            .status-icon { font-weight: bold; margin-right: 8px; }
             
             .theme-toggle { 
                 position: fixed; 
-                top: 20px; 
-                right: 20px; 
+                top: 24px; 
+                right: 24px; 
                 z-index: 1000; 
                 background: var(--bg-secondary); 
                 border: 2px solid var(--border-color); 
                 border-radius: 50px; 
-                padding: 10px 15px; 
+                padding: 12px 18px; 
                 cursor: pointer; 
-                font-size: 16px; 
-                box-shadow: 0 2px 10px var(--shadow);
+                font-size: 14px; 
+                font-weight: 600;
+                box-shadow: 0 4px 12px var(--shadow);
                 color: var(--text-primary);
+                backdrop-filter: blur(10px);
             }
-            .theme-toggle:hover { transform: scale(1.05); }
+            .theme-toggle:hover { 
+                transform: scale(1.05); 
+                box-shadow: 0 6px 20px var(--shadow);
+                border-color: var(--accent-blue);
+            }
             
+            /* Professional Status Indicators */
+            .status-live { 
+                background: linear-gradient(135deg, var(--positive-color), #4ade80); 
+                color: white; 
+                padding: 16px 20px; 
+                border-radius: 10px; 
+                margin: 16px 0; 
+                font-weight: 600;
+                box-shadow: 0 4px 12px rgba(63, 185, 80, 0.3);
+            }
+            .status-cached { 
+                background: linear-gradient(135deg, var(--accent-blue), #3b82f6); 
+                color: white; 
+                padding: 16px 20px; 
+                border-radius: 10px; 
+                margin: 16px 0; 
+                font-weight: 600;
+                box-shadow: 0 4px 12px rgba(31, 111, 235, 0.3);
+            }
+            .status-sample { 
+                background: linear-gradient(135deg, #f59e0b, #fbbf24); 
+                color: white; 
+                padding: 16px 20px; 
+                border-radius: 10px; 
+                margin: 16px 0; 
+                font-weight: 600;
+                box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+            }
+            .status-error { 
+                background: linear-gradient(135deg, var(--negative-color), #f87171); 
+                color: white; 
+                padding: 16px 20px; 
+                border-radius: 10px; 
+                margin: 16px 0; 
+                font-weight: 600;
+                box-shadow: 0 4px 12px rgba(248, 81, 73, 0.3);
+            }
+            .status-icon { font-weight: bold; margin-right: 12px; font-size: 1.1rem; }
+            
+            /* Enhanced AI Button */
+            .ai-button {
+                background: linear-gradient(135deg, var(--accent-purple), #a855f7);
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 8px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                margin-left: 12px;
+                box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+                backdrop-filter: blur(10px);
+            }
+            
+            .ai-button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 16px rgba(139, 92, 246, 0.4);
+                background: linear-gradient(135deg, #a855f7, var(--accent-purple));
+            }
+            
+            /* Summary and Info Boxes */
+            .summary { 
+                background: linear-gradient(135deg, var(--summary-bg), #1e40af); 
+                color: white; 
+                padding: 24px; 
+                border-radius: 12px; 
+                margin: 20px 0;
+                box-shadow: 0 4px 16px rgba(13, 65, 157, 0.3);
+            }
+            
+            .timestamp { 
+                text-align: center; 
+                color: var(--text-secondary); 
+                font-size: 14px; 
+                margin: 20px 0;
+                padding: 12px;
+                background: var(--bg-tertiary);
+                border-radius: 8px;
+                border: 1px solid var(--border-color);
+            }
+            
+            /* Stock Symbol Styling */
+            .stock-symbol {
+                color: var(--accent-blue);
+                font-weight: 700;
+                font-size: 1rem;
+                display: inline-block;
+                padding: 4px 0;
+                border-bottom: 2px solid transparent;
+            }
+            .stock-symbol:hover {
+                color: var(--accent-purple);
+                border-bottom-color: var(--accent-purple);
+            }
+            
+            /* Table Sorting */
+            .sortable { 
+                cursor: pointer; 
+                user-select: none; 
+                position: relative;
+                transition: all 0.2s ease;
+            }
+            .sortable:hover { 
+                background-color: var(--highlight-bg);
+                color: var(--accent-blue);
+            }
+            .sortable::after { content: ' ↕️'; font-size: 12px; opacity: 0.5; }
+            .sort-asc::after { content: ' ↑'; opacity: 1; color: var(--positive-color); }
+            .sort-desc::after { content: ' ↓'; opacity: 1; color: var(--negative-color); }
+            
+            /* Chart Container */
+            .chart-container {
+                margin: 16px 0;
+                text-align: center;
+                background: var(--bg-tertiary);
+                border-radius: 12px;
+                padding: 20px;
+                box-shadow: 0 4px 12px var(--shadow);
+                border: 1px solid var(--border-color);
+            }
+            
+            /* Animations */
             @keyframes pulse {
                 0% { opacity: 1; }
                 50% { opacity: 0.7; }
@@ -712,50 +929,15 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 100% { transform: rotate(360deg); }
             }
             
-            .ai-button {
-                background: linear-gradient(45deg, #6f42c1, #e83e8c);
-                color: white;
-                border: none;
-                padding: 4px 8px;
-                border-radius: 12px;
-                font-size: 11px;
-                cursor: pointer;
-                font-weight: bold;
-                margin-left: 8px;
-                transition: transform 0.2s;
+            /* Responsive Design */
+            @media (max-width: 768px) {
+                .container { padding: 0 8px; }
+                .section { padding: 16px; margin: 12px 0; }
+                h1 { font-size: 2rem; }
+                h2 { font-size: 1.5rem; }
+                th, td { padding: 8px 12px; font-size: 0.8rem; }
+                .ai-button { font-size: 10px; padding: 6px 10px; }
             }
-            
-            .ai-button:hover {
-                transform: scale(1.1);
-                box-shadow: 0 2px 8px rgba(111, 66, 193, 0.4);
-            }
-            
-            .chart-container {
-                margin: 10px 0;
-                text-align: center;
-                background: var(--bg-secondary);
-                border-radius: 5px;
-                padding: 10px;
-                box-shadow: 0 1px 3px var(--shadow);
-            }
-            
-            .stock-symbol {
-                cursor: pointer;
-                color: #007bff;
-                text-decoration: underline;
-                font-weight: bold;
-            }
-            .stock-symbol:hover {
-                color: #0056b3;
-                background-color: rgba(0, 123, 255, 0.1);
-                padding: 2px 4px;
-                border-radius: 3px;
-            }
-            .sortable { cursor: pointer; user-select: none; position: relative; }
-            .sortable:hover { background-color: #e9ecef; }
-            .sortable::after { content: ' ↕️'; font-size: 12px; opacity: 0.5; }
-            .sort-asc::after { content: ' ↑'; opacity: 1; }
-            .sort-desc::after { content: ' ↓'; opacity: 1; }
         </style>
         <script>
         
@@ -1812,6 +1994,39 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             activeBtn.style.fontWeight = 'bold';
         }
         
+        // Theme Toggle Functionality
+        function toggleTheme() {
+            const body = document.body;
+            const themeToggle = document.getElementById('theme-toggle');
+            const currentTheme = body.getAttribute('data-theme');
+            
+            if (currentTheme === 'dark') {
+                body.setAttribute('data-theme', 'light');
+                themeToggle.innerHTML = '🌙 Dark Mode';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.setAttribute('data-theme', 'dark');
+                themeToggle.innerHTML = '☀️ Light Mode';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+        
+        function initTheme() {
+            const body = document.body;
+            const themeToggle = document.getElementById('theme-toggle');
+            const savedTheme = localStorage.getItem('theme');
+            
+            // Default to dark mode if no preference saved
+            const theme = savedTheme || 'dark';
+            body.setAttribute('data-theme', theme);
+            
+            if (theme === 'dark') {
+                themeToggle.innerHTML = '☀️ Light Mode';
+            } else {
+                themeToggle.innerHTML = '🌙 Dark Mode';
+            }
+        }
+        
         // Initialize everything when page loads
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
@@ -1821,9 +2036,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         });
         </script>
     </head>
-    <body>
+    <body data-theme="dark">
         <!-- Theme Toggle Button -->
-        <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
+        <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">☀️ Light Mode</button>
         
         <div class="container">
             <h1>📉 Yahoo Finance Daily Losers Analysis</h1>
@@ -1836,72 +2051,83 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </span>
             </div>
             
-            <!-- Market Status -->
-            <div class="section" style="text-align: center;">
-                <h3>🕐 Market Status</h3>
-                <div style="font-size: 18px; font-weight: bold; margin: 10px 0;">
-                    {{ market_status.message }}
+            <!-- Widescreen Status Grid -->
+            <div class="grid-layout">
+                <!-- Market Status -->
+                <div class="section" style="text-align: center;">
+                    <h3>🕐 Market Status</h3>
+                    <div style="font-size: 18px; font-weight: bold; margin: 10px 0;">
+                        {{ market_status.message }}
+                    </div>
+                    {% if market_status.time_to_close %}
+                        <div style="color: var(--positive-color);">{{ market_status.time_to_close }}</div>
+                    {% endif %}
+                    {% if market_status.next_open %}
+                        <div style="color: var(--text-secondary); font-size: 14px;">{{ market_status.next_open }}</div>
+                    {% endif %}
                 </div>
-                {% if market_status.time_to_close %}
-                    <div style="color: #28a745;">{{ market_status.time_to_close }}</div>
-                {% endif %}
-                {% if market_status.next_open %}
-                    <div style="color: #6c757d; font-size: 14px;">{{ market_status.next_open }}</div>
-                {% endif %}
+                
+                <!-- Data Source Status -->
+                <div class="section" style="text-align: center;">
+                    <h3>📡 Data Source</h3>
+                    {% if status.data_source == 'cached' %}
+                        <div class="status-cached" style="margin: 0;">
+                            <span class="status-icon">📁 CACHED DATA:</span> {{ status.message }}
+                        </div>
+                    {% elif status.data_source == 'live' %}
+                        <div class="status-live" style="margin: 0;">
+                            <span class="status-icon">✅ LIVE DATA:</span> {{ status.message }}
+                        </div>
+                    {% elif status.data_source == 'sample' %}
+                        <div class="status-sample" style="margin: 0;">
+                            <span class="status-icon">⚠️ SAMPLE DATA:</span> {{ status.message }}
+                        </div>
+                    {% elif status.data_source == 'error' %}
+                        <div class="status-error" style="margin: 0;">
+                            <span class="status-icon">❌ ERROR:</span> {{ status.message }}
+                        </div>
+                    {% endif %}
+                </div>
             </div>
             
-            <!-- Data Source Status -->
-            {% if status.data_source == 'cached' %}
-                <div class="status-cached">
-                    <span class="status-icon">📁 CACHED DATA:</span> {{ status.message }}
-                </div>
-            {% elif status.data_source == 'live' %}
-                <div class="status-live">
-                    <span class="status-icon">✅ LIVE DATA:</span> {{ status.message }}
-                </div>
-            {% elif status.data_source == 'sample' %}
-                <div class="status-sample">
-                    <span class="status-icon">⚠️ SAMPLE DATA:</span> {{ status.message }}
-                </div>
-            {% elif status.data_source == 'error' %}
-                <div class="status-error">
-                    <span class="status-icon">❌ ERROR:</span> {{ status.message }}
-                </div>
-            {% endif %}
-            
-            <div class="summary">
-                <h3>📊 Summary</h3>
-                <ul>
-                    <li><strong>Total Losers Analyzed:</strong> {{ total_losers }}</li>
-                    <li><strong>Detailed Analysis:</strong> {{ detailed_count }}</li>
-                    <li><strong>Complete Investment Analysis:</strong> {{ all_analysis_count }}</li>
-                    <li><strong>AI Recovery Recommendations:</strong> {{ recommendations_count }}</li>
-                </ul>
-                
-                <div style="margin-top: 15px; padding: 10px; background: rgba(0, 123, 255, 0.1); border-radius: 5px; border-left: 4px solid #007bff;">
-                    <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Enhanced Features (September 2025):</h4>
-                    <ul style="margin: 5px 0; font-size: 14px;">
-                        <li><strong>🤖📱🔮 Ultimate Analysis:</strong> Single-click comprehensive AI + Social + Recovery analysis in tabbed modal</li>
-                        <li><strong>🧮 Mathematical Transparency:</strong> Detailed breakdown showing exactly how recovery scores are calculated</li>
-                        <li><strong>📊 Enhanced Recovery Engine:</strong> Less conservative scoring (65/50/35 thresholds) with 6 recovery targets</li>
-                        <li><strong>🌐 Multi-Market Intelligence:</strong> SPY/QQQ momentum + sector ETF analysis using free data sources</li>
-                        <li><strong>📈 Interactive Charts:</strong> Live TradingView charts with smart auto-detect exchange selection</li>
-                        <li><strong>⏰ EST Time Display:</strong> All timestamps in Eastern Time with smart market countdown</li>
-                        <li><strong>🎨 Precision Data:</strong> Clean percentage formatting and rounded recovery scores</li>
-                        <li><strong>🔄 Smart Caching:</strong> 5-minute cache for optimal API usage and performance</li>
-                        <li><strong>🌙 Dark Mode:</strong> Toggle theme with button in top-right corner</li>
-                    </ul>
+            <!-- Summary Section - Full Width -->
+            <div class="section grid-full">
+                <h3>📊 Analysis Summary</h3>
+                <div class="grid-layout">
+                    <div>
+                        <h4 style="margin-top: 0;">📈 Data Analysis</h4>
+                        <ul style="margin: 0;">
+                            <li><strong>Total Losers Analyzed:</strong> {{ total_losers }}</li>
+                            <li><strong>Detailed Analysis:</strong> {{ detailed_count }}</li>
+                            <li><strong>Complete Investment Analysis:</strong> {{ all_analysis_count }}</li>
+                            <li><strong>AI Recovery Recommendations:</strong> {{ recommendations_count }}</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4 style="margin-top: 0;">🚀 Enhanced Features</h4>
+                        <ul style="margin: 0; font-size: 14px;">
+                            <li><strong>🤖📱🔮 Ultimate Analysis:</strong> Comprehensive AI + Social + Recovery analysis</li>
+                            <li><strong>🧮 Mathematical Transparency:</strong> Detailed recovery score calculations</li>
+                            <li><strong>📊 Enhanced Engine:</strong> Less conservative scoring (65/50/35 thresholds)</li>
+                            <li><strong>🌐 Multi-Market Intelligence:</strong> SPY/QQQ + sector ETF analysis</li>
+                            <li><strong>📈 Interactive Charts:</strong> Live TradingView integration</li>
+                            <li><strong>⏰ EST Time:</strong> Eastern timezone with market countdown</li>
+                        </ul>
+                    </div>
                 </div>
                 
                 <!-- Enhanced Recovery Prediction Explanation -->
-                <div style="margin-top: 15px; padding: 15px; background: rgba(40, 167, 69, 0.1); border-radius: 5px; border-left: 4px solid #28a745;">
-                    <h4 style="margin: 0 0 10px 0; color: #28a745;">🔮 Enhanced Recovery Prediction System:</h4>
-                    <div style="font-size: 14px; line-height: 1.6;">
-                        <p style="margin: 8px 0;"><strong>Multi-Target Analysis:</strong> Each stock analyzed for 6 potential recovery levels (previous close, 5-day high, 20-day MA, support levels, analyst targets, fair value)</p>
-                        <p style="margin: 8px 0;"><strong>Market Intelligence:</strong> Real-time SPY/QQQ momentum, sector ETF performance, and VIX volatility regime analysis</p>
-                        <p style="margin: 8px 0;"><strong>Less Conservative Scoring:</strong> More opportunities identified with improved 65/50/35 thresholds (vs old 75/60/40)</p>
-                        <p style="margin: 8px 0;"><strong>Mathematical Transparency:</strong> Click recovery analysis to see detailed breakdown of how scores are calculated</p>
-                        <p style="margin: 8px 0;"><strong>100% Free Data:</strong> Uses Yahoo Finance, yfinance, sector ETFs - no premium APIs required</p>
+                <div style="margin-top: 20px; padding: 20px; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); color: white; border-radius: 12px;">
+                    <h4 style="margin: 0 0 15px 0; color: white;">🔮 Enhanced Recovery Prediction System</h4>
+                    <div class="grid-layout">
+                        <div>
+                            <p style="margin: 8px 0;"><strong>Multi-Target Analysis:</strong> 6 recovery levels (previous close, 5-day high, 20-day MA, support levels, analyst targets, fair value)</p>
+                            <p style="margin: 8px 0;"><strong>Market Intelligence:</strong> Real-time SPY/QQQ momentum, sector ETF performance, VIX volatility analysis</p>
+                        </div>
+                        <div>
+                            <p style="margin: 8px 0;"><strong>Less Conservative Scoring:</strong> Improved 65/50/35 thresholds (vs old 75/60/40) for more opportunities</p>
+                            <p style="margin: 8px 0;"><strong>Mathematical Transparency:</strong> Click recovery analysis for detailed calculation breakdown</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2009,8 +2235,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <th>Symbol</th>
                                 <th>Company Name</th>
                                 <th>Current Price</th>
-                                <th>Target Price</th>
-                                <th>Potential Return</th>
+                                <th>Analyst 1 Yr Price Target</th>
+                                <th>Potential 1 Yr Return</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
                             </tr>
@@ -2083,8 +2309,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <th>Symbol</th>
                                 <th>Company Name</th>
                                 <th>Current Price</th>
-                                <th>Target Price</th>
-                                <th>Potential Return</th>
+                                <th>Analyst 1 Yr Price Target</th>
+                                <th>Potential 1 Yr Return</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
                                 <th>Market Cap</th>
@@ -2142,7 +2368,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <th>Symbol</th>
                             <th>Current Price</th>
                             <th>Previous Close</th>
-                            <th>Price Target</th>
+                            <th>Analyst 1 Yr Price Target</th>
                             <th>Volume</th>
                         </tr>
                     </thead>
