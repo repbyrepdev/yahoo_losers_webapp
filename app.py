@@ -2031,11 +2031,32 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Load medium-term recovery data
         function loadMediumTermData() {
             const mediumtermData = document.getElementById('mediumterm-data');
-            const h3Element = document.querySelector('h3');
+            // Try multiple ways to get the symbol
+            const h3Element = document.querySelector('#ultimate-modal h3');
             console.log('DEBUG: h3 element:', h3Element);
             console.log('DEBUG: h3 textContent:', h3Element?.textContent);
-            const symbol = h3Element?.textContent.match(/: ([A-Z]+)/)?.[1];
-            console.log('DEBUG: extracted symbol:', symbol);
+            
+            let symbol = null;
+            if (h3Element && h3Element.textContent) {
+                // Try different regex patterns
+                const patterns = [
+                    /: ([A-Z]+)(?:\s|$)/,  // Standard pattern with word boundary
+                    /Analysis:\s*([A-Z]+)/,  // "Analysis: SYMBOL"
+                    /([A-Z]{2,5})$/,        // 2-5 uppercase letters at end
+                    /([A-Z]+)/              // Any uppercase letters
+                ];
+                
+                for (let pattern of patterns) {
+                    const match = h3Element.textContent.match(pattern);
+                    if (match && match[1]) {
+                        symbol = match[1];
+                        console.log('DEBUG: Found symbol using pattern:', pattern, 'Symbol:', symbol);
+                        break;
+                    }
+                }
+            }
+            
+            console.log('DEBUG: Final extracted symbol:', symbol);
             
             if (!symbol) {
                 console.error('No symbol found in h3 element');
@@ -2121,11 +2142,32 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Load long-term analyst data
         function loadLongTermData() {
             const longtermData = document.getElementById('longterm-data');
-            const h3Element = document.querySelector('h3');
+            // Try multiple ways to get the symbol
+            const h3Element = document.querySelector('#ultimate-modal h3');
             console.log('DEBUG LONG: h3 element:', h3Element);
             console.log('DEBUG LONG: h3 textContent:', h3Element?.textContent);
-            const symbol = h3Element?.textContent.match(/: ([A-Z]+)/)?.[1];
-            console.log('DEBUG LONG: extracted symbol:', symbol);
+            
+            let symbol = null;
+            if (h3Element && h3Element.textContent) {
+                // Try different regex patterns
+                const patterns = [
+                    /: ([A-Z]+)(?:\s|$)/,  // Standard pattern with word boundary
+                    /Analysis:\s*([A-Z]+)/,  // "Analysis: SYMBOL"
+                    /([A-Z]{2,5})$/,        // 2-5 uppercase letters at end
+                    /([A-Z]+)/              // Any uppercase letters
+                ];
+                
+                for (let pattern of patterns) {
+                    const match = h3Element.textContent.match(pattern);
+                    if (match && match[1]) {
+                        symbol = match[1];
+                        console.log('DEBUG LONG: Found symbol using pattern:', pattern, 'Symbol:', symbol);
+                        break;
+                    }
+                }
+            }
+            
+            console.log('DEBUG LONG: Final extracted symbol:', symbol);
             
             if (!symbol) {
                 console.error('No symbol found in h3 element for long-term');
