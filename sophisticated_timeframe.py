@@ -77,8 +77,11 @@ class SophisticatedTimeframePredictor:
             current_price = hist['Close'].iloc[-1]
             prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
             
-            # 1. DEFINE MULTIPLE RECOVERY TARGETS
+            # 1. DEFINE SHORT-TERM RECOVERY TARGETS (1-5 days)
             targets = self._calculate_recovery_targets(stock, hist, info, current_price)
+            
+            # 2. DEFINE MEDIUM-TERM RECOVERY TARGETS (1-4 weeks)
+            medium_targets = self._calculate_medium_term_targets(stock, hist, info, current_price)
             
             # 2. GET MARKET CONDITIONS
             market_conditions = self._analyze_market_conditions()
@@ -97,7 +100,7 @@ class SophisticatedTimeframePredictor:
             
             # 7. CALCULATE SOPHISTICATED TIMEFRAMES
             timeframe_predictions = self._calculate_sophisticated_timeframes(
-                targets, market_conditions, historical_patterns, 
+                targets, medium_targets, market_conditions, historical_patterns, 
                 catalysts, technical_momentum, sector_context, current_price
             )
             
@@ -105,6 +108,7 @@ class SophisticatedTimeframePredictor:
                 'symbol': symbol,
                 'current_price': round(current_price, 2),
                 'targets': targets,
+                'medium_targets': medium_targets,
                 'market_conditions': market_conditions,
                 'historical_patterns': historical_patterns,
                 'catalysts': catalysts,
@@ -176,6 +180,56 @@ class SophisticatedTimeframePredictor:
                             'description': f'Gap fill from {i} days ago'
                         }
                         break
+        
+        return targets
+    
+    def _calculate_medium_term_targets(self, stock, hist: pd.DataFrame, info: Dict, current_price: float) -> Dict:
+        """Calculate medium-term recovery targets (1-4 weeks)"""
+        targets = {}
+        
+        # Target 1: 20-day moving average (Medium-term technical recovery)
+        if len(hist) >= 20:
+            ma_20 = hist['Close'].tail(20).mean()
+            targets['20day_ma'] = {
+                'price': round(ma_20, 2),
+                'upside_percent': round(((ma_20 - current_price) / current_price) * 100, 2),
+                'description': '20-day moving average reversion'
+            }
+        
+        # Target 2: Support level bounce (Medium-term technical)
+        if len(hist) >= 30:
+            support_level = hist['Low'].tail(30).min() * 1.02  # 2% above 30-day low
+            targets['support_bounce'] = {
+                'price': round(support_level, 2),
+                'upside_percent': round(((support_level - current_price) / current_price) * 100, 2),
+                'description': 'Support level bounce from 30-day low'
+            }
+        
+        # Target 3: Fair value estimate (Medium-term fundamental)
+        try:
+            pe_ratio = info.get('trailingPE', 0)
+            if pe_ratio and pe_ratio > 0:
+                # Estimate fair value based on sector average P/E
+                sector_avg_pe = 18  # Market average approximation
+                fair_value = (current_price / pe_ratio) * sector_avg_pe
+                if fair_value > current_price:
+                    targets['fair_value'] = {
+                        'price': round(fair_value, 2),
+                        'upside_percent': round(((fair_value - current_price) / current_price) * 100, 2),
+                        'description': 'Estimated fair value (P/E based)'
+                    }
+        except:
+            pass
+        
+        # Target 4: 50-day moving average (Medium-term trend)
+        if len(hist) >= 50:
+            ma_50 = hist['Close'].tail(50).mean()
+            if ma_50 > current_price:
+                targets['50day_ma'] = {
+                    'price': round(ma_50, 2),
+                    'upside_percent': round(((ma_50 - current_price) / current_price) * 100, 2),
+                    'description': '50-day moving average recovery'
+                }
         
         return targets
     
@@ -499,7 +553,7 @@ class SophisticatedTimeframePredictor:
         }
         return contexts.get(sector_performance, 'Sector impact unclear')
     
-    def _calculate_sophisticated_timeframes(self, targets: Dict, market_conditions: Dict, 
+    def _calculate_sophisticated_timeframes(self, targets: Dict, medium_targets: Dict, market_conditions: Dict, 
                                          historical_patterns: Dict, catalysts: Dict,
                                          technical_momentum: Dict, sector_context: Dict,
                                          current_price: float) -> Dict:
@@ -582,7 +636,60 @@ class SophisticatedTimeframePredictor:
                 'description': target_data['description']
             }
         
-        return predictions
+        # MEDIUM-TERM recovery timeframes (1-4 weeks)
+        medium_predictions = {}
+        medium_base_recovery_days = {
+            '20day_ma': 14,              # 2 weeks for MA reversion
+            'support_bounce': 21,        # 3 weeks for support bounce
+            'fair_value': 28,            # 4 weeks for fundamental recovery
+            '50day_ma': 21               # 3 weeks for longer MA reversion
+        }
+        
+        for target_name, target_data in medium_targets.items():
+            if target_name not in medium_base_recovery_days:
+                continue
+                
+            base_days = medium_base_recovery_days[target_name]
+            upside_percent = target_data.get('upside_percent', 0)
+            
+            # Skip targets that are below current price
+            if upside_percent <= 0:
+                continue
+            
+            # Apply market conditions multiplier (less impact for medium-term)
+            adjusted_days = base_days * (1 + (market_conditions.get('recovery_multiplier', 1.0) - 1) * 0.5)
+            
+            # Apply historical pattern adjustments (medium-term patterns)
+            if historical_patterns.get('avg_recovery_days', 0) > 0:
+                historical_factor = historical_patterns['avg_recovery_days'] / (base_days / 2)  # Different weighting for medium-term
+                historical_factor = min(1.8, max(0.6, historical_factor))
+                adjusted_days *= historical_factor
+            
+            # Calculate probability for medium-term targets
+            probability = self._calculate_recovery_probability(
+                upside_percent, historical_patterns, market_conditions,
+                technical_momentum, sector_context
+            )
+            # Medium-term targets are generally more reliable, so boost probability slightly
+            probability = min(85, probability + 5)
+            
+            # Format timeframe
+            timeframe_str = self._format_timeframe(adjusted_days)
+            
+            medium_predictions[target_name] = {
+                'target_price': target_data['price'],
+                'upside_percent': upside_percent,
+                'expected_days': round(adjusted_days, 1),
+                'timeframe': timeframe_str,
+                'probability': probability,
+                'confidence': self._get_confidence_level(probability),
+                'description': target_data['description']
+            }
+        
+        return {
+            'short_term': predictions,
+            'medium_term': medium_predictions
+        }
     
     def _calculate_recovery_probability(self, upside_percent: float, historical_patterns: Dict,
                                      market_conditions: Dict, technical_momentum: Dict,

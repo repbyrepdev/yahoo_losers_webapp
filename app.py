@@ -1827,13 +1827,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮📊 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮⏰📊 Complete Analysis: ${symbol}</h3>
                 
                 <!-- Tab Navigation -->
                 <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee; flex-wrap: wrap;">
                     <button onclick="switchUltimateTab('ai-tab', '🤖')" id="ai-tab-btn" class="ultimate-tab-btn ultimate-tab-active" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid #007bff; font-weight: bold; color: #007bff; font-size: 13px;">🤖 AI News</button>
                     <button onclick="switchUltimateTab('sentiment-tab', '📱')" id="sentiment-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">📱 Social</button>
                     <button onclick="switchUltimateTab('recovery-tab', '🔮')" id="recovery-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">🔮 Short Term</button>
+                    <button onclick="switchUltimateTab('mediumterm-tab', '⏰')" id="mediumterm-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">⏰ Medium Term</button>
                     <button onclick="switchUltimateTab('longterm-tab', '📊')" id="longterm-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">📊 Long Term</button>
                 </div>
                 
@@ -1950,6 +1951,18 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     </div>` : ''}
                 </div>
                 
+                <!-- Medium Term Recovery Tab -->
+                <div id="mediumterm-tab" class="ultimate-tab-content" style="display: none;">
+                    <div style="background: linear-gradient(135deg, #6610f2, #e83e8c); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">⏰ Medium Term Recovery (1-4 weeks)</h4>
+                        <div id="mediumterm-data">
+                            <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                                <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Long Term Projection Tab -->
                 <div id="longterm-tab" class="ultimate-tab-content" style="display: none;">
                     <div style="background: linear-gradient(135deg, #28a745, #20c997); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
@@ -2005,6 +2018,93 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             activeBtn.style.borderBottom = '3px solid #007bff';
             activeBtn.style.color = '#007bff';
             activeBtn.style.fontWeight = 'bold';
+            
+            // Load medium-term data if tab is clicked
+            if (tabId === 'mediumterm-tab') {
+                loadMediumTermData();
+            }
+        }
+        
+        // Load medium-term recovery data
+        function loadMediumTermData() {
+            const mediumtermData = document.getElementById('mediumterm-data');
+            const symbol = document.querySelector('h3').textContent.match(/: ([A-Z]+)/)?.[1];
+            
+            if (!symbol) return;
+            
+            // Show loading state
+            mediumtermData.innerHTML = `
+                <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                    <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
+                </div>
+            `;
+            
+            fetch('/api/sophisticated-timeframe/' + symbol)
+                .then(response => response.json())
+                .then(data => {
+                    const sophisticatedAnalysis = data.sophisticated_analysis;
+                    const mediumTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.medium_term || {};
+                    const mediumTargets = sophisticatedAnalysis?.medium_targets || {};
+                    
+                    if (Object.keys(mediumTermPredictions).length === 0) {
+                        mediumtermData.innerHTML = `
+                            <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                                <div style="font-size: 16px; margin: 20px 0;">📊 No medium-term targets available</div>
+                                <div style="font-size: 14px; opacity: 0.7;">Stock may not have suitable 1-4 week recovery targets</div>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    let mediumTermHtml = `
+                        <div style="display: grid; gap: 15px;">
+                    `;
+                    
+                    Object.entries(mediumTermPredictions).forEach(([targetName, prediction]) => {
+                        const confidence = prediction.confidence || 'Low';
+                        const probability = Math.round(prediction.probability || 0);
+                        const confidenceColor = confidence === 'High' ? '#28a745' : 
+                                              confidence === 'Medium' ? '#ffc107' : '#dc3545';
+                        
+                        mediumTermHtml += `
+                            <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
+                                <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
+                                    <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
+                                        ${prediction.description || targetName}
+                                    </div>
+                                    <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
+                                        ${probability}% probability
+                                    </div>
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
+                                    <div>
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff;">$${prediction.target_price}</div>
+                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Target Price</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 18px; font-weight: bold; color: #28a745;">+${prediction.upside_percent}%</div>
+                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffc107;">${prediction.timeframe}</div>
+                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Timeframe</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    mediumTermHtml += `</div>`;
+                    mediumtermData.innerHTML = mediumTermHtml;
+                })
+                .catch(error => {
+                    console.error('Medium-term data error:', error);
+                    mediumtermData.innerHTML = `
+                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading medium-term data</div>
+                        </div>
+                    `;
+                });
         }
         
         // Theme Toggle Functionality
