@@ -2590,7 +2590,7 @@ def export_csv():
 def get_recovery_prediction(symbol):
     """AI-powered recovery prediction for a stock"""
     try:
-        prediction = sophisticated_predictor.predict_recovery_timeframes(symbol)
+        prediction = predict_stock_recovery(symbol)
         
         api_response = {
             "symbol": symbol,
