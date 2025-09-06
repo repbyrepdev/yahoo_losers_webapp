@@ -3198,14 +3198,18 @@ def predict_stock_recovery(symbol):
         market_conditions = sophisticated_result.get('market_conditions', {})
         volatility_regime = market_conditions.get('volatility_regime', 'normal')
         
-        # Adjust score based on market volatility (high vol = better reversal chance)
+        # Calculate market volatility adjustment
+        base_recovery_score = recovery_score  # Store original score
+        adjustment = 0
         if volatility_regime == 'extreme':
-            recovery_score += 10
+            adjustment = 10
         elif volatility_regime == 'elevated':
-            recovery_score += 5
+            adjustment = 5
         elif volatility_regime == 'low':
-            recovery_score -= 5
+            adjustment = -5
         
+        # Apply adjustment
+        recovery_score += adjustment
         recovery_score = max(0, min(100, recovery_score))  # Cap between 0-100
         
         # Determine confidence and recommendation
@@ -3327,6 +3331,35 @@ def predict_stock_recovery(symbol):
         if target_count > 1:
             technical_factors.append(f"📊 {target_count} recovery targets identified")
         
+        # Calculate detailed score breakdown for transparency
+        score_breakdown = {
+            "base_score": round(base_recovery_score, 1),
+            "market_adjustment": adjustment,
+            "volatility_regime": volatility_regime,
+            "final_score": round(recovery_score, 1),
+            "target_details": [],
+            "calculation_explanation": f"Average of {len(weighted_scores)} targets, then {adjustment:+d}% for {volatility_regime} volatility"
+        }
+        
+        # Add individual target contributions to the breakdown
+        for target_name in priority_targets:
+            if target_name in timeframe_predictions:
+                target_data = timeframe_predictions[target_name]
+                upside_percent = target_data.get('upside_percent', 0)
+                if upside_percent > 0:
+                    probability = target_data.get('probability', 0)
+                    upside_weight = 1.0 if upside_percent <= 5 else 0.8 if upside_percent <= 10 else 0.6
+                    weighted_score = probability * upside_weight
+                    
+                    score_breakdown["target_details"].append({
+                        "target": target_names.get(target_name, target_name),
+                        "probability": probability,
+                        "upside_percent": round(upside_percent, 1),
+                        "weight_factor": upside_weight,
+                        "weighted_contribution": round(weighted_score, 1),
+                        "reason": f"Large moves (>{10 if upside_weight == 0.6 else 5}%) get {upside_weight}x weight"
+                    })
+        
         return {
             "recovery_score": round(recovery_score, 1),
             "confidence": confidence,
@@ -3340,6 +3373,8 @@ def predict_stock_recovery(symbol):
                 "news": market_factors[:3]  # Use market factors as "news"
             },
             "current_drop": price_drop,
+            # Add score breakdown for transparency
+            "score_breakdown": score_breakdown,
             # Add sophisticated data for advanced endpoints
             "sophisticated_analysis": sophisticated_result
         }
