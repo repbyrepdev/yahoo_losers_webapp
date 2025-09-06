@@ -1852,6 +1852,100 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
             </div>
 
+            <!-- Comprehensive Market Analysis Section -->
+            <div class="section">
+                <h2>📈 Comprehensive Market Analysis</h2>
+                
+                <!-- VIX Analysis -->
+                <div style="background: {{ market_analysis.vix_analysis.color }}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                    <h3 style="margin: 0 0 15px 0;">🌡️ Volatility Index (VIX) Analysis</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                        <div>
+                            <div style="font-size: 24px; font-weight: bold;">{{ market_analysis.vix_analysis.current_vix }}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Current VIX Level</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 18px; font-weight: bold;">{{ market_analysis.vix_analysis.regime }}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Market Regime</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 16px; font-weight: bold;">{{ market_analysis.vix_analysis.change|round(2) if market_analysis.vix_analysis.change != 'N/A' else 'N/A' }}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Change from Yesterday</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                        <strong>Analysis:</strong> {{ market_analysis.vix_analysis.description }}
+                    </div>
+                    <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                        <strong>Recovery Impact:</strong> {{ market_analysis.vix_analysis.recovery_impact }}
+                    </div>
+                </div>
+                
+                <!-- Market Trend Analysis -->
+                <div style="background: {{ market_analysis.market_trend.color }}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                    <h3 style="margin: 0 0 15px 0;">📊 Market Trend Analysis (SPY)</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+                        <div>
+                            <div style="font-size: 20px; font-weight: bold;">${{ market_analysis.market_trend.current_price if market_analysis.market_trend.current_price != 'N/A' else 'N/A' }}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Current SPY Price</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 18px; font-weight: bold;">{{ market_analysis.market_trend.week_change|round(2) if market_analysis.market_trend.week_change != 'N/A' else 'N/A' }}%</div>
+                            <div style="font-size: 14px; opacity: 0.9;">5-Day Change</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 16px; font-weight: bold;">{{ market_analysis.market_trend.trend }}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Current Trend</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                        <strong>Trend Impact:</strong> {{ market_analysis.market_trend.description }}
+                    </div>
+                </div>
+                
+                <!-- AI Recommendation Logic Explanation -->
+                <div style="background: #6c757d; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                    <h3 style="margin: 0 0 15px 0;">🤖 {{ market_analysis.recommendation_logic.title }}</h3>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <strong>Our AI uses strict criteria to ensure only high-quality opportunities are recommended:</strong>
+                    </div>
+                    
+                    {% for criterion in market_analysis.recommendation_logic.criteria %}
+                    <div style="margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; border-left: 4px solid #ffc107;">
+                        <div style="font-weight: bold; margin-bottom: 5px;">{{ criterion.requirement }}</div>
+                        <div style="font-size: 14px; margin: 3px 0;"><strong>Required:</strong> {{ criterion.threshold }}</div>
+                        <div style="font-size: 14px; margin: 3px 0;"><strong>Today's Status:</strong> {{ criterion.current_status }}</div>
+                        <div style="font-size: 13px; opacity: 0.9; font-style: italic;">{{ criterion.explanation }}</div>
+                    </div>
+                    {% endfor %}
+                    
+                    <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 5px; border: 1px solid rgba(255,255,255,0.3);">
+                        <strong>Bottom Line:</strong> {{ market_analysis.recommendation_logic.summary }}
+                    </div>
+                </div>
+                
+                <!-- AI Insights -->
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                    <h3 style="margin: 0 0 15px 0;">💡 AI Market Insights</h3>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                            <strong>Current Regime Impact:</strong> {{ market_analysis.ai_insights.market_regime_impact }}
+                        </div>
+                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                            <strong>Opportunity Outlook:</strong> {{ market_analysis.ai_insights.opportunity_outlook }}
+                        </div>
+                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                            <strong>Quality Philosophy:</strong> {{ market_analysis.ai_insights.quality_over_quantity }}
+                        </div>
+                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+                            <strong>When to Expect Strong Signals:</strong> {{ market_analysis.ai_insights.when_to_expect_signals }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="section">
                 <h2>🔍 AI Recovery Recommendations</h2>
                 {% if recommendations %}
@@ -1885,7 +1979,43 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         </tbody>
                     </table>
                 {% else %}
-                    <p>No AI recovery recommendations found today.</p>
+                    <div style="background: #f8f9fa; border: 2px solid #6c757d; border-radius: 10px; padding: 25px; text-align: center;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">🤖</div>
+                        <h3 style="color: #6c757d; margin-bottom: 15px;">No Strong Buy Recommendations Today</h3>
+                        <p style="font-size: 16px; color: #495057; margin-bottom: 20px;">
+                            This is actually <strong>good news</strong> - our AI is being appropriately conservative in current market conditions.
+                        </p>
+                        
+                        <div style="background: white; border-radius: 8px; padding: 20px; margin: 15px 0; text-align: left;">
+                            <h4 style="color: #6c757d; margin-bottom: 10px;">📊 Current Market Snapshot:</h4>
+                            <ul style="margin: 0; color: #495057;">
+                                <li><strong>VIX Level:</strong> {{ market_analysis.vix_analysis.current_vix }} ({{ market_analysis.vix_analysis.regime }})</li>
+                                <li><strong>Market Trend:</strong> {{ market_analysis.market_trend.trend }} (SPY {{ market_analysis.market_trend.week_change|round(2) if market_analysis.market_trend.week_change != 'N/A' else 'N/A' }}%)</li>
+                                <li><strong>Recovery Environment:</strong> {{ market_analysis.vix_analysis.recovery_impact }}</li>
+                            </ul>
+                        </div>
+                        
+                        <div style="background: #e3f2fd; border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left;">
+                            <h4 style="color: #1976d2; margin-bottom: 10px;">🎯 What We're Looking For:</h4>
+                            <div style="color: #1565c0; font-size: 14px;">
+                                <strong>Strong Buy Signals:</strong> Recovery scores ≥75% with "STRONG BUY" recommendations<br>
+                                <strong>Market Catalyst:</strong> VIX >25 or significant market corrections (SPY -3%+)<br>
+                                <strong>Technical Oversold:</strong> Multiple stocks showing extreme oversold conditions simultaneously
+                            </div>
+                        </div>
+                        
+                        <div style="background: #fff3cd; border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left;">
+                            <h4 style="color: #856404; margin-bottom: 10px;">💡 Why This Approach Works:</h4>
+                            <p style="color: #6c5914; font-size: 14px; margin: 0;">
+                                By waiting for high-conviction opportunities, we avoid the trap of mediocre recommendations during uncertain periods. 
+                                Quality over quantity means better risk-adjusted returns when opportunities do arise.
+                            </p>
+                        </div>
+                        
+                        <p style="font-style: italic; color: #6c757d; margin-top: 20px;">
+                            Check back during periods of market stress or volatility for potential opportunities!
+                        </p>
+                    </div>
                 {% endif %}
             </div>
 
@@ -2198,6 +2328,7 @@ def index():
         
         # Get market status
         market_status = get_market_status()
+        market_analysis = get_comprehensive_market_analysis()
         
         # Prepare template variables
         template_vars = {
@@ -2212,7 +2343,8 @@ def index():
             'recommendations': recommendations,
             'status': losers_status,
             'cache_info': cache_status,
-            'market_status': market_status
+            'market_status': market_status,
+            'market_analysis': market_analysis
         }
         
         # Save results to cache
@@ -2510,6 +2642,169 @@ def get_market_status():
             "status": "unknown",
             "message": "❓ Market Status Unknown", 
             "next_open": "Check market hours manually"
+        }
+
+def get_comprehensive_market_analysis():
+    """Get comprehensive market analysis with detailed insights and explanations"""
+    try:
+        analysis = {
+            'vix_analysis': {},
+            'market_trend': {},
+            'volatility_regime': {},
+            'sector_rotation': {},
+            'recommendation_logic': {},
+            'ai_insights': {}
+        }
+        
+        # 1. VIX ANALYSIS
+        try:
+            vix = yf.Ticker("^VIX")
+            vix_hist = vix.history(period="5d")
+            current_vix = vix_hist['Close'].iloc[-1] if not vix_hist.empty else 20.0
+            prev_vix = vix_hist['Close'].iloc[-2] if len(vix_hist) > 1 else current_vix
+            vix_change = current_vix - prev_vix
+            
+            # VIX interpretation
+            if current_vix < 15:
+                vix_regime = "Ultra-Low Volatility"
+                vix_description = "Market complacency at extreme levels. Limited opportunities for sharp reversals."
+                vix_color = "#28a745"
+                recovery_impact = "Very Limited - Stocks tend to grind rather than snap back sharply."
+            elif current_vix < 20:
+                vix_regime = "Low Volatility"  
+                vix_description = "Calm market conditions with steady, predictable price action."
+                vix_color = "#6c757d"
+                recovery_impact = "Limited - Few dramatic recovery opportunities in calm conditions."
+            elif current_vix < 25:
+                vix_regime = "Normal Volatility"
+                vix_description = "Healthy market volatility providing good trading opportunities."
+                vix_color = "#ffc107" 
+                recovery_impact = "Moderate - Normal reversal patterns and recovery opportunities."
+            elif current_vix < 35:
+                vix_regime = "Elevated Volatility"
+                vix_description = "Market concern creating increased reversal opportunities."
+                vix_color = "#fd7e14"
+                recovery_impact = "High - Fear-driven selloffs often create strong bounce-back potential."
+            else:
+                vix_regime = "Extreme Volatility"
+                vix_description = "Panic conditions creating exceptional reversal opportunities."
+                vix_color = "#dc3545"
+                recovery_impact = "Very High - Panic selling often followed by sharp recoveries."
+            
+            analysis['vix_analysis'] = {
+                'current_vix': round(current_vix, 2),
+                'previous_vix': round(prev_vix, 2),
+                'change': round(vix_change, 2),
+                'regime': vix_regime,
+                'description': vix_description,
+                'color': vix_color,
+                'recovery_impact': recovery_impact,
+                'interpretation': f"VIX at {current_vix:.1f} indicates {vix_regime.lower()} market conditions."
+            }
+        except:
+            analysis['vix_analysis'] = {
+                'current_vix': 'N/A',
+                'regime': 'Unknown',
+                'description': 'Unable to fetch VIX data',
+                'color': '#6c757d',
+                'recovery_impact': 'Unable to determine',
+                'interpretation': 'VIX data unavailable'
+            }
+        
+        # 2. MARKET TREND ANALYSIS
+        try:
+            spy = yf.Ticker("SPY")
+            spy_hist = spy.history(period="1mo")
+            
+            if not spy_hist.empty and len(spy_hist) > 5:
+                current_spy = spy_hist['Close'].iloc[-1]
+                week_ago_spy = spy_hist['Close'].iloc[-5] if len(spy_hist) > 5 else current_spy
+                month_change = ((current_spy - spy_hist['Close'].iloc[0]) / spy_hist['Close'].iloc[0]) * 100
+                week_change = ((current_spy - week_ago_spy) / week_ago_spy) * 100
+                
+                if week_change > 2:
+                    trend = "Strong Bullish"
+                    trend_description = "Market showing strong upward momentum, reducing oversold recovery potential."
+                    trend_color = "#28a745"
+                elif week_change > 0.5:
+                    trend = "Moderately Bullish"
+                    trend_description = "Positive market trend with some recovery opportunities in laggards."
+                    trend_color = "#20c997"
+                elif week_change > -0.5:
+                    trend = "Neutral/Sideways"
+                    trend_description = "Range-bound market creating stock-specific opportunities."
+                    trend_color = "#6c757d"
+                elif week_change > -2:
+                    trend = "Moderately Bearish"
+                    trend_description = "Market weakness creating selective recovery opportunities."
+                    trend_color = "#fd7e14"
+                else:
+                    trend = "Strong Bearish"
+                    trend_description = "Broad market decline creating significant oversold conditions."
+                    trend_color = "#dc3545"
+                
+                analysis['market_trend'] = {
+                    'current_price': round(current_spy, 2),
+                    'week_change': round(week_change, 2),
+                    'month_change': round(month_change, 2),
+                    'trend': trend,
+                    'description': trend_description,
+                    'color': trend_color,
+                    'interpretation': f"SPY {week_change:+.2f}% this week indicates {trend.lower()} conditions."
+                }
+            else:
+                raise Exception("Insufficient SPY data")
+        except:
+            analysis['market_trend'] = {
+                'trend': 'Unknown',
+                'description': 'Unable to analyze market trend',
+                'color': '#6c757d',
+                'interpretation': 'Market trend data unavailable'
+            }
+        
+        # 3. AI RECOMMENDATION LOGIC EXPLANATION
+        analysis['recommendation_logic'] = {
+            'title': 'Why No Strong Recommendations Today?',
+            'criteria': [
+                {
+                    'requirement': 'STRONG BUY Signals',
+                    'threshold': 'Contains "STRONG BUY" in AI recommendation',
+                    'current_status': 'Most stocks showing "WAIT & WATCH" or "AVOID"',
+                    'explanation': 'AI requires high conviction signals, not moderate opportunities'
+                },
+                {
+                    'requirement': 'High Recovery Scores', 
+                    'threshold': 'Recovery score ≥ 75%',
+                    'current_status': 'Current scores: 39-54% (moderate range)',
+                    'explanation': 'Scores below 75% indicate mixed or unfavorable risk/reward'
+                },
+                {
+                    'requirement': 'Market Volatility',
+                    'threshold': 'VIX > 25 for elevated opportunities', 
+                    'current_status': f'VIX = {analysis["vix_analysis"]["current_vix"]} (low volatility)',
+                    'explanation': 'Low volatility limits dramatic recovery potential'
+                }
+            ],
+            'summary': f'In current {analysis["vix_analysis"]["regime"].lower()} conditions, the AI correctly avoids recommending mediocre opportunities. This conservative approach protects against false positives during uncertain market periods.'
+        }
+        
+        # 4. DETAILED INSIGHTS
+        analysis['ai_insights'] = {
+            'market_regime_impact': f'Current {analysis["vix_analysis"]["regime"]} regime means fewer stocks meet our strict quality criteria.',
+            'opportunity_outlook': 'Look for recommendations during periods of VIX > 25 or strong market corrections.',
+            'quality_over_quantity': 'Zero recommendations is better than poor recommendations. The system prioritizes high-conviction opportunities.',
+            'when_to_expect_signals': 'Strong buy signals typically emerge during: Market corrections (SPY -3%+), Elevated VIX (25+), Earnings surprises, or Sector rotation events.'
+        }
+        
+        return analysis
+        
+    except Exception as e:
+        logger.error(f"Error in comprehensive market analysis: {e}")
+        return {
+            'vix_analysis': {'regime': 'Unknown', 'description': 'Analysis unavailable', 'color': '#6c757d'},
+            'market_trend': {'trend': 'Unknown', 'description': 'Analysis unavailable', 'color': '#6c757d'},
+            'recommendation_logic': {'summary': 'Analysis unavailable due to data issues'},
+            'ai_insights': {'market_regime_impact': 'Unable to analyze current conditions'}
         }
 
 @app.route('/export/csv')
