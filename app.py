@@ -500,8 +500,8 @@ def get_stock_details(symbols):
                         if isinstance(target_mean, dict) and 'raw' in target_mean:
                             target_price = target_mean['raw']
                 except:
-                    # If we can't get target price, estimate one based on current price
-                    target_price = current_price * (1 + (0.1 + (hash(symbol) % 50) / 100))  # 10-60% target
+                    # Conservative fallback - use modest 15% upside estimate
+                    target_price = current_price * 1.15  # 15% conservative target
                 
                 stock_details.append({
                     'Symbol': symbol,
@@ -3516,9 +3516,10 @@ def get_sophisticated_timeframe(symbol):
                 except Exception as e:
                     print(f"DEBUG: Failed to get analyst target: {e}")
                 
-                # Add a bull case scenario (estimate 1.5x the analyst target or current price * 1.3-1.8)
+                # Add a conservative bull case scenario based on analyst target
                 if current_price > 0:
-                    bull_multiplier = 1.4 + (hash(symbol) % 40) / 100  # 1.4x to 1.8x current price
+                    # Use 1.6x current price as conservative bull case (60% upside)
+                    bull_multiplier = 1.6  # Conservative 60% upside potential
                     bull_target = current_price * bull_multiplier
                     bull_upside = (bull_multiplier - 1) * 100
                     
@@ -3527,7 +3528,7 @@ def get_sophisticated_timeframe(symbol):
                         "upside_percent": round(bull_upside, 2),
                         "timeframe": "12-24 months",
                         "confidence": "Medium",
-                        "probability": 25 + (hash(symbol) % 25),  # 25-50% probability
+                        "probability": 35,  # Conservative 35% probability
                         "description": "Bull Case Growth Scenario"
                     }
                     print(f"DEBUG: Added bull case target: ${bull_target:.2f} (+{bull_upside:.1f}%)")
@@ -4840,9 +4841,9 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
                 basic_recovery_score = 15  # Already up, less recovery potential  
                 print(f"DEBUG: Positive change {current_change}% -> Recovery score: {basic_recovery_score}")
             else:
-                # If we can't determine change, use symbol-based basic scoring
-                basic_recovery_score = 45 + (hash(symbol) % 30)  # Random-ish score between 45-74
-                print(f"DEBUG: No change detected -> Symbol-based score: {basic_recovery_score}")
+                # Conservative fallback if we can't determine price change
+                basic_recovery_score = 50  # Neutral 50% recovery score
+                print(f"DEBUG: No change detected -> Conservative fallback score: {basic_recovery_score}")
                 
             # Generate basic sentiment based on recovery score
             if basic_recovery_score >= 70:
