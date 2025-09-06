@@ -3548,10 +3548,10 @@ def predict_stock_recovery(symbol):
                 target_data = short_term_predictions[target_name]
                 if target_data.get('upside_percent', 0) > 0:  # Only positive upside targets
                     primary_target = target_data
-                    target_price = target_data['target_price']
-                    upside_percent = target_data['upside_percent']
+                    target_price = target_data.get('target_price', 0)
+                    upside_percent = target_data.get('upside_percent', 0)
                     upside_dollars = target_price - current_price if current_price > 0 else 0
-                    timeframe = target_data['timeframe']
+                    timeframe = target_data.get('timeframe', 'unknown')
                     probability = target_data.get('probability', 0)
                     
                     # Create detailed timeframe description
@@ -3689,9 +3689,9 @@ def predict_stock_recovery(symbol):
         
         # Add sophisticated targets info to technical factors
         if primary_target:
-            target_price = primary_target['target_price']
-            upside = primary_target['upside_percent']
-            probability = primary_target['probability']
+            target_price = primary_target.get('target_price', 0)
+            upside = primary_target.get('upside_percent', 0)
+            probability = primary_target.get('probability', 0)
             technical_factors.append(f"🎯 Target: ${target_price} (+{upside:.1f}%) - {probability:.0f}% probability")
         
         # Add multiple target summary (using short-term predictions)
