@@ -1115,6 +1115,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .then(response => response.json())
                 .then(data => {
                     // Transform sophisticated timeframe data to recovery prediction format
+                    console.log('🔥 SOPHISTICATED DATA RECEIVED:', data);
                     const analysis = data.analysis || {};
                     const timeframePreds = analysis.timeframe_predictions || {};
                     
@@ -1125,6 +1126,11 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     const confidence = analysis.confidence_level || 'Low';
                     const confidenceValue = confidence === 'High' ? 0.8 : confidence === 'Medium' || confidence === 'Moderate' ? 0.6 : 0.4;
+                    
+                    console.log('🔥 PARSED VALUES:', {
+                        targetKeys, primaryTarget, confidence, confidenceValue,
+                        score: Math.round(confidenceValue * 100)
+                    });
                     
                     const recoveryData = {
                         recovery_score: Math.round(confidenceValue * 100),
@@ -1142,6 +1148,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             market_score: 25
                         }
                     };
+                    console.log('🔥 FINAL RECOVERY DATA:', recoveryData);
                     recoveryCache[symbol] = recoveryData;
                     displayRecoveryModal(symbol, recoveryData);
                 })
