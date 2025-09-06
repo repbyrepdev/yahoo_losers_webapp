@@ -552,9 +552,12 @@ def calculate_all_investment_analysis(losers_data, details_data):
             details = details_dict[symbol]
             
             try:
-                # Clean and convert prices
-                current_price_str = details['Current Price'].replace('$', '').replace(',', '') if details['Current Price'] != 'N/A' else '0'
-                target_price_str = details['Price Target'].replace('$', '').replace(',', '') if details['Price Target'] != 'N/A' else '0'
+                # Clean and convert prices (handle both string and numeric values)
+                current_price_value = details['Current Price']
+                current_price_str = str(current_price_value).replace('$', '').replace(',', '') if current_price_value != 'N/A' else '0'
+                
+                target_price_value = details['Price Target']
+                target_price_str = str(target_price_value).replace('$', '').replace(',', '') if target_price_value != 'N/A' else '0'
                 
                 current_price = float(current_price_str) if current_price_str != '0' else 0
                 target_price = float(target_price_str) if target_price_str != '0' else 0
@@ -4340,9 +4343,11 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             enhanced_stock.update({
                 # AI Enhancement - ADD to existing data using correct field mapping
                 'AI Score': ai_score,
+                'Recovery Score': ai_score,  # For table column display
                 'AI Target': stock_analysis.get('Current Price', 0),  # Use current price as fallback
                 'AI Potential %': ai_score * 0.8,  # Approximate potential
                 'AI Recommendation': ai_recommendation,
+                'AI Sentiment': recovery_data.get('factors', {}).get('news', [{}])[0].get('description', '📊 Neutral'),  # Extract news sentiment
                 'AI Emoji': '🟢' if ai_score >= 60 else '🔴',
                 'AI Color': 'green' if ai_score >= 60 else 'red',
                 'Is Buy Signal': is_buy_signal,
@@ -4361,9 +4366,11 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             enhanced_stock = stock_analysis.copy()
             enhanced_stock.update({
                 'AI Score': 0,
+                'Recovery Score': 0,  # For table column display
                 'AI Target': 'N/A',
                 'AI Potential %': 0,
                 'AI Recommendation': 'AVOID',
+                'AI Sentiment': '⚠️ Analysis Error',  # For table column display
                 'AI Emoji': '⚠️',
                 'AI Color': '#6c757d',
                 'Is Buy Signal': False,
