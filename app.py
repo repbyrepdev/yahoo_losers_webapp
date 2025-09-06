@@ -1014,6 +1014,29 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             }
         }
         
+        /* ========================================================================
+         * REAL DATA SOURCES USED THROUGHOUT THIS APPLICATION:
+         * ========================================================================
+         * 
+         * 📊 YAHOO FINANCE APIs:
+         *    - Daily losers: finance.yahoo.com/screener/predefined/day_losers
+         *    - Stock quotes: query1.finance.yahoo.com/v8/finance/chart/{symbol}
+         *    - Analyst data: query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}
+         *    - Options chain: query1.finance.yahoo.com/v7/finance/options/{symbol}
+         *    - Earnings calendar: quoteSummary?modules=calendarEvents
+         * 
+         * 📱 SOCIAL MEDIA APIs:
+         *    - Reddit API: reddit.com/search.json?q=${symbol} (real mentions)
+         *    - StockTwits API: api.stocktwits.com/api/2/streams/symbol/{symbol}.json
+         * 
+         * 🔮 SOPHISTICATED ANALYSIS ENGINE:
+         *    - 6 recovery targets: previous close, 5-day high, 20-day MA, support, analyst, fair value
+         *    - Real technical indicators: RSI, support levels, volume analysis
+         *    - Market conditions: VIX volatility, SPY trend analysis
+         * 
+         * 🚫 NO FAKE/RANDOM DATA: All analysis based on actual financial market data
+         * ======================================================================== */
+        
         // Auto-refresh functionality
         let autoRefreshInterval;
         let lastUpdateTime = Date.now();
@@ -1181,7 +1204,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Show loading modal first
             showAnalysisLoading(symbol);
             
-            // Fetch AI analysis
+            // Fetch AI analysis powered by REAL Yahoo Finance analyst recommendation data
+            // Data Source: Yahoo Finance API - recommendation trends, earnings history, analyst downgrades
             fetch('/api/news-analysis/' + symbol)
                 .then(response => response.json())
                 .then(data => {
@@ -1307,6 +1331,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showRecoveryLoading(symbol);
             
+            // Fetch SOPHISTICATED recovery prediction using REAL multi-target analysis
+            // Data Sources: Yahoo Finance (prices, volumes, analyst targets), yfinance (technical indicators)
             fetch('/api/recovery-prediction/' + symbol)
                 .then(response => response.json())
                 .then(data => {
@@ -1449,6 +1475,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             showSentimentLoading(symbol);
             
+            // Fetch REAL social sentiment from Reddit API and StockTwits API
+            // Data Sources: Reddit search API, StockTwits streaming API, real mention counts and sentiment
             fetch('/api/social-sentiment/' + symbol)
                 .then(response => response.json())
                 .then(data => {
@@ -1585,7 +1613,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Create loading modal first
             showComprehensiveLoading(symbol);
             
-            // Fetch both social sentiment and recovery data in parallel
+            // Fetch REAL social sentiment and sophisticated recovery analysis in parallel
+            // Data Sources: Reddit API + StockTwits API + Yahoo Finance sophisticated multi-target analysis
             Promise.all([
                 fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
@@ -1737,7 +1766,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Create loading modal first
             showUltimateLoading(symbol);
             
-            // Fetch all three analyses in parallel
+            // Fetch ALL THREE REAL analysis types in parallel for comprehensive stock analysis
+            // Data Sources: Yahoo Finance analyst data + Reddit/StockTwits APIs + Sophisticated multi-target recovery
             Promise.all([
                 fetch('/api/news-analysis/' + symbol).then(response => response.json()),
                 fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
