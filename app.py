@@ -2635,9 +2635,13 @@ def get_sophisticated_timeframe(symbol):
         # Get full sophisticated analysis
         sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
         
+        # Convert to frontend-compatible format while preserving sophisticated data
+        prediction_summary = predict_stock_recovery(symbol.upper())
+        
         api_response = {
             "symbol": symbol.upper(),
-            "analysis": sophisticated_result,
+            "prediction": prediction_summary,  # Frontend compatible format
+            "sophisticated_analysis": sophisticated_result,  # Full detailed analysis
             "api_version": "2.0",
             "description": "Advanced recovery timeframe prediction with multiple targets",
             "timestamp": time.time()
