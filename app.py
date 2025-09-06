@@ -4344,7 +4344,25 @@ def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data
 def calculate_enhanced_investment_analysis(losers_data, details_data):
     """Enhanced analysis with AI predictions for ALL stocks - KEEPS original analyst data"""
     # First get the original analysis (preserves all existing fields)
-    original_analysis = calculate_all_investment_analysis(losers_data, details_data)
+    try:
+        original_analysis = calculate_all_investment_analysis(losers_data, details_data)
+    except Exception as e:
+        logger.error(f"Original analysis failed: {str(e)}")
+        # If original analysis completely fails, create basic structure from losers_data
+        original_analysis = []
+        for stock in losers_data:
+            original_analysis.append({
+                'Symbol': stock['Symbol'],
+                'Name': stock['Name'], 
+                'Current Price': 'N/A',
+                'Target Price': 'N/A',
+                'Potential Return %': 'N/A',
+                'Volume': stock.get('Volume', 'N/A'),
+                'Change Today': stock['Change'],
+                'Percent Change Today': stock['Percent Change'],
+                'Market Cap': stock.get('Market Cap', 'N/A')
+            })
+    
     enhanced_analysis = []
     
     for stock_analysis in original_analysis:
@@ -4359,22 +4377,33 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             # Generate basic recovery score based on percentage change
             # Try multiple ways to get the percentage change
             current_change = 0
+            
+            # Debug print the stock analysis structure
+            print(f"DEBUG: Stock analysis for {symbol}: {list(stock_analysis.keys())}")
+            
             for field in ['Percent Change Today', 'Change Today', 'Percent Change']:
-                change_str = str(stock_analysis.get(field, '0%')).replace('%', '').replace('+', '').replace('$', '').strip()
+                raw_value = stock_analysis.get(field, '0%')
+                change_str = str(raw_value).replace('%', '').replace('+', '').replace('$', '').replace('(', '').replace(')', '').strip()
+                print(f"DEBUG: {field} = '{raw_value}' -> '{change_str}'")
                 try:
                     current_change = float(change_str)
+                    print(f"DEBUG: Successfully parsed {field}: {current_change}")
                     break
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as e:
+                    print(f"DEBUG: Failed to parse {field}: {e}")
                     continue
             
             # Convert loss percentage to recovery potential (rough estimate)
             if current_change < 0:
                 basic_recovery_score = min(85, abs(current_change) * 2.5 + 25)  # Worse losses = higher potential
+                print(f"DEBUG: Negative change {current_change}% -> Recovery score: {basic_recovery_score}")
             elif current_change > 0:
                 basic_recovery_score = 15  # Already up, less recovery potential  
+                print(f"DEBUG: Positive change {current_change}% -> Recovery score: {basic_recovery_score}")
             else:
                 # If we can't determine change, use symbol-based basic scoring
                 basic_recovery_score = 45 + (hash(symbol) % 30)  # Random-ish score between 45-74
+                print(f"DEBUG: No change detected -> Symbol-based score: {basic_recovery_score}")
                 
             # Generate basic sentiment based on recovery score
             if basic_recovery_score >= 70:
