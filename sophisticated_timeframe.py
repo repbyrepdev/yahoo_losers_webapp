@@ -156,14 +156,8 @@ class SophisticatedTimeframePredictor:
             'description': 'Support level bounce'
         }
         
-        # Target 5: Analyst price target (Fundamental recovery)
-        analyst_target = info.get('targetMeanPrice', 0)
-        if analyst_target and analyst_target > current_price:
-            targets['analyst_target'] = {
-                'price': round(analyst_target, 2),
-                'upside_percent': round(((analyst_target - current_price) / current_price) * 100, 2),
-                'description': 'Analyst consensus target'
-            }
+        # Target 5: [REMOVED] Analyst targets moved to Long Term Projections
+        # This keeps short-term recovery focused on technical/momentum targets
         
         # Target 6: Fair value (using P/E comparison to sector)
         try:

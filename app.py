@@ -1827,13 +1827,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮📊 Complete Analysis: ${symbol}</h3>
                 
                 <!-- Tab Navigation -->
-                <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee;">
-                    <button onclick="switchUltimateTab('ai-tab', '🤖')" id="ai-tab-btn" class="ultimate-tab-btn ultimate-tab-active" style="background: none; border: none; padding: 10px 20px; margin: 0 5px; cursor: pointer; border-bottom: 3px solid #007bff; font-weight: bold; color: #007bff;">🤖 AI News</button>
-                    <button onclick="switchUltimateTab('sentiment-tab', '📱')" id="sentiment-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 20px; margin: 0 5px; cursor: pointer; border-bottom: 3px solid transparent; color: #666;">📱 Social</button>
-                    <button onclick="switchUltimateTab('recovery-tab', '🔮')" id="recovery-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 20px; margin: 0 5px; cursor: pointer; border-bottom: 3px solid transparent; color: #666;">🔮 Recovery</button>
+                <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee; flex-wrap: wrap;">
+                    <button onclick="switchUltimateTab('ai-tab', '🤖')" id="ai-tab-btn" class="ultimate-tab-btn ultimate-tab-active" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid #007bff; font-weight: bold; color: #007bff; font-size: 13px;">🤖 AI News</button>
+                    <button onclick="switchUltimateTab('sentiment-tab', '📱')" id="sentiment-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">📱 Social</button>
+                    <button onclick="switchUltimateTab('recovery-tab', '🔮')" id="recovery-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">🔮 Short Term</button>
+                    <button onclick="switchUltimateTab('longterm-tab', '📊')" id="longterm-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">📊 Long Term</button>
                 </div>
                 
                 <!-- AI Analysis Tab -->
@@ -1947,6 +1948,18 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </div>
                         </div>` : ''}
                     </div>` : ''}
+                </div>
+                
+                <!-- Long Term Projection Tab -->
+                <div id="longterm-tab" class="ultimate-tab-content" style="display: none;">
+                    <div style="background: linear-gradient(135deg, #28a745, #20c997); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">📊 Long Term Analyst Projection</h4>
+                        <div id="longterm-data">
+                            <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                                <div style="font-size: 16px; margin: 20px 0;">⏳ Loading analyst data...</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Action Buttons -->
@@ -2227,7 +2240,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
 
             <div class="section">
-                <h2>🔍 AI Recovery Recommendations</h2>
+                <h2>🔍 Short Term Recovery Recommendations</h2>
                 {% if recommendations %}
                     <table>
                         <thead>
@@ -2235,8 +2248,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <th>Symbol</th>
                                 <th>Company Name</th>
                                 <th>Current Price</th>
-                                <th>Analyst 1 Yr Price Target</th>
-                                <th>Potential 1 Yr Return</th>
+                                <th>Recovery Score</th>
+                                <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
                             </tr>
@@ -2246,12 +2259,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮 Complete Analysis</button>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮📊 Complete Analysis</button>
                                 </td>
                                 <td>{{ stock.Name }}</td>
                                 <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
-                                <td>${{ "%.2f"|format(stock['Target Price']) }}</td>
-                                <td class="positive"><strong>{{ stock['Potential Return %'] }}%</strong></td>
+                                <td class="positive"><strong>{{ stock.get('Recovery Score', 'Loading...') }}{% if stock.get('Recovery Score') %}%{% endif %}</strong></td>
+                                <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
                             </tr>
@@ -2300,8 +2313,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
 
             <div class="section">
-                <h2>💼 Complete Investment Analysis (All Stocks)</h2>
-                <p><em>This shows investment potential analysis for ALL analyzed stocks, regardless of return percentage.</em></p>
+                <h2>💼 Complete Short Term Analysis (All Stocks)</h2>
+                <p><em>This shows short-term recovery analysis for ALL stocks. Click "Complete Analysis" for long-term analyst projections.</em></p>
                 {% if all_analysis %}
                     <table>
                         <thead>
@@ -2309,19 +2322,18 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <th>Symbol</th>
                                 <th>Company Name</th>
                                 <th>Current Price</th>
-                                <th>Analyst 1 Yr Price Target</th>
-                                <th>Potential 1 Yr Return</th>
+                                <th>Recovery Score</th>
+                                <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
-                                <th>Market Cap</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for stock in all_analysis %}
-                            <tr {% if stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] > 65 %}class="highlight"{% endif %}>
+                            <tr>
                                 <td>
                                     <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮 Complete Analysis</button>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮📊 Complete Analysis</button>
                                 </td>
                                 <td>{{ stock.Name }}</td>
                                 <td>
@@ -2331,26 +2343,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                         ${{ "%.2f"|format(stock['Current Price']) }}
                                     {% endif %}
                                 </td>
-                                <td>
-                                    {% if stock['Target Price'] == 'N/A' %}
-                                        {{ stock['Target Price'] }}
-                                    {% else %}
-                                        ${{ "%.2f"|format(stock['Target Price']) }}
-                                    {% endif %}
+                                <td class="{% if stock.get('Recovery Score', 0) >= 65 %}positive{% elif stock.get('Recovery Score', 0) >= 35 %}neutral{% else %}negative{% endif %}">
+                                    <strong>{{ stock.get('Recovery Score', 'Loading...') }}{% if stock.get('Recovery Score') %}%{% endif %}</strong>
                                 </td>
-                                <td class="{% if stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] > 0 %}positive{% elif stock['Potential Return %'] != 'N/A' and stock['Potential Return %'] < 0 %}negative{% endif %}">
-                                    {% if stock['Potential Return %'] == 'N/A' %}
-                                        N/A
-                                    {% else %}
-                                        {{ stock['Potential Return %'] }}%
-                                        {% if stock['Potential Return %'] > 65 %}
-                                            <strong>🎯 HIGH POTENTIAL</strong>
-                                        {% endif %}
-                                    {% endif %}
-                                </td>
+                                <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
-                                <td>{{ stock['Market Cap'] }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -2368,7 +2366,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <th>Symbol</th>
                             <th>Current Price</th>
                             <th>Previous Close</th>
-                            <th>Analyst 1 Yr Price Target</th>
+                            <th>Recovery Score</th>
+                            <th>AI News Sentiment</th>
+                            <th>Today's Change</th>
                             <th>Volume</th>
                         </tr>
                     </thead>
@@ -2379,12 +2379,16 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <span class="stock-symbol">{{ stock.Symbol }}</span>
                                 <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
                                         style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">
-                                    🤖📱🔮 Complete Analysis
+                                    🤖📱🔮📊 Complete Analysis
                                 </button>
                             </td>
                             <td>{{ stock['Current Price'] }}</td>
                             <td>{{ stock['Previous Close'] }}</td>
-                            <td>{{ stock['Price Target'] }}</td>
+                            <td class="{% if stock.get('Recovery Score', 0) >= 65 %}positive{% elif stock.get('Recovery Score', 0) >= 35 %}neutral{% else %}negative{% endif %}">
+                                {{ stock.get('Recovery Score', 'Loading...') }}{% if stock.get('Recovery Score') %}%{% endif %}
+                            </td>
+                            <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
+                            <td class="{% if stock.get('Change Today', '').startswith('-') %}negative{% else %}positive{% endif %}">{{ stock.get('Change Today', 'N/A') }}</td>
                             <td>{{ stock.Volume }}</td>
                         </tr>
                         {% endfor %}
@@ -3429,14 +3433,13 @@ def predict_stock_recovery(symbol):
         primary_timeframe = "uncertain"  # default for unclear situations
         target_description = "Unknown target"
         
-        # Priority order: previous_close -> 5day_high -> 20day_ma -> others
-        priority_targets = ['previous_close', '5day_high', '20day_ma', 'support_bounce', 'analyst_target', 'fair_value']
+        # Priority order: Short-term technical targets only (analyst targets moved to Long Term Projections)
+        priority_targets = ['previous_close', '5day_high', '20day_ma', 'support_bounce', 'fair_value']
         target_names = {
             'previous_close': "previous close",
             '5day_high': "5-day high", 
             '20day_ma': "20-day moving average",
             'support_bounce': "support level",
-            'analyst_target': "analyst target",
             'fair_value': "fair value estimate"
         }
         
