@@ -1879,16 +1879,30 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </ul>
                 
                 <div style="margin-top: 15px; padding: 10px; background: rgba(0, 123, 255, 0.1); border-radius: 5px; border-left: 4px solid #007bff;">
-                    <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Interactive Features (Updated January 2025):</h4>
+                    <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Enhanced Features (September 2025):</h4>
                     <ul style="margin: 5px 0; font-size: 14px;">
                         <li><strong>🤖📱🔮 Ultimate Analysis:</strong> Single-click comprehensive AI + Social + Recovery analysis in tabbed modal</li>
+                        <li><strong>🧮 Mathematical Transparency:</strong> Detailed breakdown showing exactly how recovery scores are calculated</li>
+                        <li><strong>📊 Enhanced Recovery Engine:</strong> Less conservative scoring (65/50/35 thresholds) with 6 recovery targets</li>
+                        <li><strong>🌐 Multi-Market Intelligence:</strong> SPY/QQQ momentum + sector ETF analysis using free data sources</li>
                         <li><strong>📈 Interactive Charts:</strong> Live TradingView charts with smart auto-detect exchange selection</li>
                         <li><strong>⏰ EST Time Display:</strong> All timestamps in Eastern Time with smart market countdown</li>
                         <li><strong>🎨 Precision Data:</strong> Clean percentage formatting and rounded recovery scores</li>
-                        <li><strong>🔄 Auto-Refresh:</strong> Data updates every 3 hours during market hours</li>
+                        <li><strong>🔄 Smart Caching:</strong> 5-minute cache for optimal API usage and performance</li>
                         <li><strong>🌙 Dark Mode:</strong> Toggle theme with button in top-right corner</li>
-                        <li><strong>📊 Sortable Tables:</strong> Click column headers to sort data</li>
                     </ul>
+                </div>
+                
+                <!-- Enhanced Recovery Prediction Explanation -->
+                <div style="margin-top: 15px; padding: 15px; background: rgba(40, 167, 69, 0.1); border-radius: 5px; border-left: 4px solid #28a745;">
+                    <h4 style="margin: 0 0 10px 0; color: #28a745;">🔮 Enhanced Recovery Prediction System:</h4>
+                    <div style="font-size: 14px; line-height: 1.6;">
+                        <p style="margin: 8px 0;"><strong>Multi-Target Analysis:</strong> Each stock analyzed for 6 potential recovery levels (previous close, 5-day high, 20-day MA, support levels, analyst targets, fair value)</p>
+                        <p style="margin: 8px 0;"><strong>Market Intelligence:</strong> Real-time SPY/QQQ momentum, sector ETF performance, and VIX volatility regime analysis</p>
+                        <p style="margin: 8px 0;"><strong>Less Conservative Scoring:</strong> More opportunities identified with improved 65/50/35 thresholds (vs old 75/60/40)</p>
+                        <p style="margin: 8px 0;"><strong>Mathematical Transparency:</strong> Click recovery analysis to see detailed breakdown of how scores are calculated</p>
+                        <p style="margin: 8px 0;"><strong>100% Free Data:</strong> Uses Yahoo Finance, yfinance, sector ETFs - no premium APIs required</p>
+                    </div>
                 </div>
             </div>
 
@@ -3219,56 +3233,44 @@ def predict_stock_recovery(symbol):
                     primary_timeframe = f"{timeframe} to reach {target_description} (${target_price:.2f}, +{upside_percent:.1f}% or +${upside_dollars:.2f}) - {probability}% probability"
                     break
         
-        # Calculate overall recovery score based on multiple target probabilities
-        recovery_score = 50  # default
-        if timeframe_predictions:
-            # Weight by probability and achievability (smaller targets weighted higher)
-            weighted_scores = []
-            for target_name, target_data in timeframe_predictions.items():
-                if target_data['upside_percent'] > 0:
-                    # Weight smaller moves higher (more likely to achieve)
-                    upside_weight = 1.0 if target_data['upside_percent'] <= 5 else 0.8 if target_data['upside_percent'] <= 10 else 0.6
-                    weighted_score = target_data['probability'] * upside_weight
-                    weighted_scores.append(weighted_score)
-            
-            if weighted_scores:
-                recovery_score = sum(weighted_scores) / len(weighted_scores)
-        
-        # Determine recommendation based on recovery score and market conditions
+        # Get enhanced market analysis
+        targets = sophisticated_result.get('targets', {})
         market_conditions = sophisticated_result.get('market_conditions', {})
-        volatility_regime = market_conditions.get('volatility_regime', 'normal')
+        technical_momentum = sophisticated_result.get('technical_momentum', {})
         
-        # Calculate market volatility adjustment
-        base_recovery_score = recovery_score  # Store original score
-        adjustment = 0
-        if volatility_regime == 'extreme':
-            adjustment = 10
-        elif volatility_regime == 'elevated':
-            adjustment = 5
-        elif volatility_regime == 'low':
-            adjustment = -5
+        # Get additional market breadth and sector analysis from sophisticated predictor
+        market_breadth = sophisticated_predictor._get_market_breadth()
+        sector_analysis = sophisticated_predictor._get_enhanced_sector_analysis(
+            sophisticated_result.get('sector_context', {})
+        )
         
-        # Apply adjustment
-        recovery_score += adjustment
-        recovery_score = max(0, min(100, recovery_score))  # Cap between 0-100
+        # Use enhanced recovery score calculation
+        recovery_score, score_breakdown = sophisticated_predictor._calculate_enhanced_recovery_score(
+            targets, market_conditions, technical_momentum, sector_analysis, market_breadth
+        )
         
-        # Determine confidence and recommendation
-        if recovery_score >= 75:
+        # Store breakdown for UI transparency
+        base_recovery_score = score_breakdown.get('base_score', recovery_score)
+        adjustment = score_breakdown.get('market_adjustment', 0)
+        volatility_regime = score_breakdown.get('volatility_regime', 'normal')
+        
+        # Determine confidence and recommendation (LESS CONSERVATIVE THRESHOLDS)
+        if recovery_score >= 65:  # Lowered from 75
             confidence = "very_high"
             risk_level = "low"
-            recommendation = "🟢 STRONG BUY THE DIP - High recovery probability with multiple targets"
-        elif recovery_score >= 60:
+            recommendation = "🟢 STRONG BUY THE DIP - High recovery probability with favorable market conditions"
+        elif recovery_score >= 50:  # Lowered from 60
             confidence = "high"
             risk_level = "moderate"
-            recommendation = "🟡 MODERATE BUY - Good recovery chance with favorable conditions"
-        elif recovery_score >= 40:
+            recommendation = "🟡 MODERATE BUY - Good recovery chance with supportive factors"
+        elif recovery_score >= 35:  # Lowered from 40
             confidence = "moderate"
             risk_level = "moderate"
-            recommendation = "🟡 WAIT & WATCH - Mixed signals from market dynamics"
+            recommendation = "🟡 WAIT & WATCH - Monitor for improved conditions"
         else:
             confidence = "low"
             risk_level = "high"
-            recommendation = "🔴 AVOID - Unfavorable recovery outlook across multiple targets"
+            recommendation = "🔴 AVOID - Multiple headwinds present"
         
         # Adjust timeframe based on recommendation to ensure logical consistency
         # This prevents confusing scenarios like "AVOID" + short timeframes

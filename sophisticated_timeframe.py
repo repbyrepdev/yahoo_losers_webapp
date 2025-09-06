@@ -6,7 +6,13 @@ import requests
 from bs4 import BeautifulSoup
 from typing import Dict, List, Tuple, Optional
 import warnings
+import json
+import time
+import logging
 warnings.filterwarnings('ignore')
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class SophisticatedTimeframePredictor:
     """
@@ -20,6 +26,40 @@ class SophisticatedTimeframePredictor:
             'medium': 30,   # VIX 20-30: Normal volatility
             'high': 40      # VIX > 40: High fear
         }
+        
+        # Enhanced market regime thresholds (less conservative)
+        self.recovery_thresholds = {
+            'strong_buy': 65,    # Lowered from 75
+            'buy': 50,           # Lowered from 60  
+            'watch': 30          # Lowered from 40
+        }
+        
+        # Free data source configurations
+        self.data_sources = {
+            'fred_api': 'https://api.stlouisfed.org/fred/series/observations',
+            'yahoo_finance': True,  # Already using
+            'cboe_vix': 'https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv',
+            'economic_calendar': 'https://api.tradingeconomics.com/calendar',
+        }
+        
+        # Sector ETF mapping for broader market analysis
+        self.sector_etfs = {
+            'Technology': 'XLK',
+            'Healthcare': 'XLV', 
+            'Financial': 'XLF',
+            'Energy': 'XLE',
+            'Utilities': 'XLU',
+            'Consumer Discretionary': 'XLY',
+            'Consumer Staples': 'XLP',
+            'Industrial': 'XLI',
+            'Materials': 'XLB',
+            'Real Estate': 'XLRE',
+            'Communication': 'XLC'
+        }
+        
+        # Cache for API calls to avoid rate limits
+        self._cache = {}
+        self._cache_timeout = 300  # 5 minutes
         
     def predict_recovery_timeframes(self, symbol: str) -> Dict:
         """
@@ -650,6 +690,178 @@ class SophisticatedTimeframePredictor:
             return "Moderate"
         else:
             return "Low"
+    
+    def _get_cached_data(self, key: str):
+        """Get cached data to avoid excessive API calls"""
+        if key in self._cache:
+            timestamp, data = self._cache[key]
+            if time.time() - timestamp < self._cache_timeout:
+                return data
+        return None
+    
+    def _cache_data(self, key: str, data):
+        """Cache data with timestamp"""
+        self._cache[key] = (time.time(), data)
+    
+    def _get_market_breadth(self) -> Dict:
+        """Get broader market context using free data sources"""
+        try:
+            # Get SPY and QQQ for market direction
+            spy = yf.Ticker("SPY").history(period="1mo")
+            qqq = yf.Ticker("QQQ").history(period="1mo") 
+            
+            if spy.empty or qqq.empty:
+                return {'spy_trend': 'neutral', 'qqq_trend': 'neutral', 'market_momentum': 0}
+            
+            # Calculate momentum
+            spy_5d_change = ((spy['Close'].iloc[-1] - spy['Close'].iloc[-5]) / spy['Close'].iloc[-5]) * 100
+            qqq_5d_change = ((qqq['Close'].iloc[-1] - qqq['Close'].iloc[-5]) / qqq['Close'].iloc[-5]) * 100
+            
+            spy_trend = 'bullish' if spy_5d_change > 2 else 'bearish' if spy_5d_change < -2 else 'neutral'
+            qqq_trend = 'bullish' if qqq_5d_change > 2 else 'bearish' if qqq_5d_change < -2 else 'neutral'
+            
+            # Overall market momentum (helps with recovery probability)
+            market_momentum = (spy_5d_change + qqq_5d_change) / 2
+            
+            return {
+                'spy_trend': spy_trend,
+                'spy_5d_change': round(spy_5d_change, 2),
+                'qqq_trend': qqq_trend, 
+                'qqq_5d_change': round(qqq_5d_change, 2),
+                'market_momentum': round(market_momentum, 2),
+                'market_supportive': market_momentum > -1  # Market not in free fall
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error getting market breadth: {e}")
+            return {'spy_trend': 'neutral', 'qqq_trend': 'neutral', 'market_momentum': 0, 'market_supportive': True}
+    
+    def _get_enhanced_sector_analysis(self, info: Dict) -> Dict:
+        """Enhanced sector analysis using sector ETFs"""
+        try:
+            sector = info.get('sector', 'Unknown')
+            etf_symbol = self.sector_etfs.get(sector)
+            
+            if not etf_symbol:
+                return {'sector_momentum': 0, 'sector_trend': 'neutral', 'relative_strength': 'neutral'}
+            
+            # Get sector ETF data
+            sector_etf = yf.Ticker(etf_symbol)
+            etf_hist = sector_etf.history(period="1mo")
+            
+            if etf_hist.empty:
+                return {'sector_momentum': 0, 'sector_trend': 'neutral', 'relative_strength': 'neutral'}
+            
+            # Calculate sector momentum
+            sector_5d_change = ((etf_hist['Close'].iloc[-1] - etf_hist['Close'].iloc[-5]) / etf_hist['Close'].iloc[-5]) * 100
+            sector_trend = 'bullish' if sector_5d_change > 1 else 'bearish' if sector_5d_change < -1 else 'neutral'
+            
+            # Compare to SPY for relative strength
+            spy = yf.Ticker("SPY").history(period="1mo")
+            if not spy.empty:
+                spy_5d_change = ((spy['Close'].iloc[-1] - spy['Close'].iloc[-5]) / spy['Close'].iloc[-5]) * 100
+                relative_performance = sector_5d_change - spy_5d_change
+                relative_strength = 'outperforming' if relative_performance > 1 else 'underperforming' if relative_performance < -1 else 'neutral'
+            else:
+                relative_strength = 'neutral'
+            
+            return {
+                'sector': sector,
+                'sector_etf': etf_symbol,
+                'sector_momentum': round(sector_5d_change, 2),
+                'sector_trend': sector_trend,
+                'relative_strength': relative_strength,
+                'sector_supportive': sector_5d_change > -2  # Sector not collapsing
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error in enhanced sector analysis: {e}")
+            return {'sector_momentum': 0, 'sector_trend': 'neutral', 'relative_strength': 'neutral', 'sector_supportive': True}
+    
+    def _calculate_enhanced_recovery_score(self, targets: Dict, market_conditions: Dict, 
+                                         technical_momentum: Dict, sector_analysis: Dict, 
+                                         market_breadth: Dict) -> Tuple[float, Dict]:
+        """Calculate enhanced recovery score with less conservative weighting"""
+        try:
+            if not targets:
+                return 25.0, {}
+            
+            weighted_scores = []
+            target_details = []
+            
+            for target_name, target_data in targets.items():
+                if target_data.get('upside_percent', 0) <= 0:
+                    continue
+                
+                upside_percent = target_data['upside_percent']
+                base_probability = target_data.get('probability', 50)
+                
+                # LESS CONSERVATIVE WEIGHTING - More generous for larger moves
+                if upside_percent <= 8:
+                    weight_factor = 1.0
+                elif upside_percent <= 15:
+                    weight_factor = 0.9  # Was 0.8
+                elif upside_percent <= 25:
+                    weight_factor = 0.8  # Was 0.6
+                else:
+                    weight_factor = 0.7  # Was 0.6
+                
+                # Market condition boosts (NEW - helps with recovery)
+                market_boost = 0
+                if market_breadth.get('market_supportive', False):
+                    market_boost += 5
+                if sector_analysis.get('sector_supportive', False):
+                    market_boost += 3
+                if technical_momentum.get('momentum_score', 0) > 2:
+                    market_boost += 5
+                
+                # Enhanced probability with market context
+                enhanced_probability = min(85, base_probability + market_boost)
+                
+                weighted_score = enhanced_probability * weight_factor
+                weighted_scores.append(weighted_score)
+                
+                # Store detailed breakdown for transparency
+                target_details.append({
+                    'target_type': target_name.replace('_', ' ').title(),
+                    'probability': round(enhanced_probability, 1),
+                    'upside_percent': round(upside_percent, 1),
+                    'weight_factor': weight_factor,
+                    'weighted_contribution': round(weighted_score, 1),
+                    'reasoning': f"Base: {base_probability}% + Market boost: +{market_boost}% × {weight_factor} weight"
+                })
+            
+            if not weighted_scores:
+                return 25.0, {'target_details': []}
+            
+            # Calculate base score
+            base_score = sum(weighted_scores) / len(weighted_scores)
+            
+            # Market regime adjustment (less harsh than before)
+            volatility_regime = market_conditions.get('volatility_regime', 'normal')
+            if volatility_regime == 'extreme':
+                adjustment = 8  # Was 10
+            elif volatility_regime == 'elevated':
+                adjustment = 4  # Was 5
+            elif volatility_regime == 'low':
+                adjustment = -3  # Was -5
+            else:
+                adjustment = 0
+            
+            final_score = max(5, min(95, base_score + adjustment))
+            
+            score_breakdown = {
+                'base_score': round(base_score, 1),
+                'market_adjustment': adjustment,
+                'volatility_regime': volatility_regime,
+                'target_details': target_details
+            }
+            
+            return final_score, score_breakdown
+            
+        except Exception as e:
+            logger.error(f"Error calculating enhanced recovery score: {e}")
+            return 25.0, {}
     
     def _fallback_prediction(self, symbol: str) -> Dict:
         """Fallback prediction when data is insufficient"""

@@ -70,20 +70,73 @@ Yahoo Finance Losers → yfinance Details → Real AI Analysis → Smart Filteri
                         Real news sentiment  Real market data
 ```
 
-## 🔍 AI Recovery Prediction System
+## 🔍 Enhanced AI Recovery Prediction System
 
-### **Real Data Scoring Components** (0-100 scale)
-- **Real Options Analysis** (25% weight) - Actual put/call ratios from yfinance options chains
-- **Real Institutional Data** (30% weight) - Actual institutional ownership percentages from yfinance  
-- **Real Economic Calendar** (20% weight) - Sector-specific events based on actual company sectors
-- **Real Technical Analysis** (15% weight) - Actual RSI calculations and volume analysis from price history
-- **Real News Sentiment** (10% weight) - Sentiment analysis of actual yfinance news headlines
+### **Advanced Multi-Factor Analysis** (0-100 scale)
+Our sophisticated recovery prediction engine combines **6 real-time data sources** with **less conservative scoring** to identify more opportunities while maintaining accuracy:
 
-### **Recommendation Levels**
-- **🟢 STRONG BUY** (Score ≥75): "High recovery probability" - Shows in AI Recovery Recommendations
-- **🟡 MODERATE BUY** (Score 60-74): "Good recovery chance" - Filtered out for quality
-- **🟡 WAIT & WATCH** (Score 40-59): "Uncertain outcome" - Not recommended
-- **🔴 AVOID** (Score <40): "Poor recovery outlook" - High risk
+#### **🎯 Multiple Recovery Targets**
+1. **Previous Close Recovery** - Return to yesterday's closing price
+2. **5-Day High Recovery** - Bounce to recent 5-day peak
+3. **20-Day Moving Average** - Mean reversion to 20-day MA
+4. **Support Level Bounce** - Technical support level recovery
+5. **Analyst Target Recovery** - Move toward analyst price targets
+6. **Fair Value Recovery** - Fundamental valuation-based target
+
+#### **📊 Enhanced Market Intelligence** (FREE Data Sources)
+- **Market Breadth Analysis** - SPY & QQQ momentum via Yahoo Finance
+- **Sector Performance Context** - Sector ETF relative strength analysis
+- **VIX Volatility Regime** - Market fear index for recovery probability
+- **Technical Momentum Scoring** - RSI, volume surge, trend strength
+- **Historical Recovery Patterns** - Stock-specific recovery timeframes
+- **Catalyst Analysis** - Earnings proximity, dividend dates, events
+
+#### **🧮 Less Conservative Scoring Formula**
+```python
+# Enhanced Weighting (More Liberal)
+if upside_percent <= 8%:     weight = 1.0
+elif upside_percent <= 15%:  weight = 0.9  # Was 0.8
+elif upside_percent <= 25%:  weight = 0.8  # Was 0.6  
+else:                        weight = 0.7  # Was 0.6
+
+# Market Condition Boosts
+market_boost = 0
+if market_supportive:        boost += 5%
+if sector_supportive:        boost += 3%
+if strong_technicals:        boost += 5%
+
+final_probability = min(85%, base_probability + market_boost)
+```
+
+#### **📈 Improved Recommendation Thresholds**
+- **🟢 STRONG BUY** (Score ≥65): "High recovery probability" - *Lowered from 75*
+- **🟡 MODERATE BUY** (Score 50-64): "Good recovery chance" - *Lowered from 60*
+- **🟡 WAIT & WATCH** (Score 35-49): "Monitor conditions" - *Lowered from 40*
+- **🔴 AVOID** (Score <35): "Multiple headwinds present" - *More nuanced*
+
+#### **🔍 Mathematical Transparency**
+Each prediction includes detailed breakdown showing:
+- **Base Score Calculation** - Weighted average of target probabilities
+- **Market Adjustments** - Volatility regime impacts (-3% to +8%)
+- **Individual Target Analysis** - Each target's probability, weight, contribution
+- **Reasoning Logic** - Why each target was selected and weighted
+
+### **🌐 Free Real-Time Data Sources**
+All analysis uses **100% free, real market data**:
+
+| Data Source | Usage | API Limit |
+|-------------|-------|-----------|
+| **Yahoo Finance** | Primary stock data, sector ETFs | Unlimited |
+| **yfinance Library** | Technical indicators, options data | Rate limited |
+| **CBOE VIX** | Volatility analysis | Free CSV |
+| **St. Louis Fed (FRED)** | Economic data | Unlimited |
+| **Sector ETF Analysis** | XLK, XLF, XLE, etc. | Via Yahoo Finance |
+
+### **⚡ Smart Caching & Performance**
+- **5-minute cache** for market data to avoid rate limits
+- **Parallel API calls** for SPY, QQQ, and sector analysis
+- **Fallback mechanisms** when data sources are unavailable
+- **Error handling** with graceful degradation
 
 ## 🌐 API Endpoints
 
