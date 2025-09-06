@@ -21,6 +21,7 @@ import random
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta, date
+import pytz
 import redis
 import structlog
 from celery import Celery
@@ -1816,10 +1817,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </ul>
                 
                 <div style="margin-top: 15px; padding: 10px; background: rgba(0, 123, 255, 0.1); border-radius: 5px; border-left: 4px solid #007bff;">
-                    <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Interactive Features:</h4>
+                    <h4 style="margin: 0 0 5px 0; color: #007bff;">🚀 Interactive Features (Updated January 2025):</h4>
                     <ul style="margin: 5px 0; font-size: 14px;">
-                        <li><strong>🤖 AI News Analysis:</strong> Click "AI" button to discover why stocks are falling</li>
-                        <li><strong>📈 Live Charts:</strong> Click any stock symbol to view TradingView charts</li>
+                        <li><strong>🤖📱🔮 Ultimate Analysis:</strong> Single-click comprehensive AI + Social + Recovery analysis in tabbed modal</li>
+                        <li><strong>📈 Interactive Charts:</strong> Live TradingView charts with smart auto-detect exchange selection</li>
+                        <li><strong>⏰ EST Time Display:</strong> All timestamps in Eastern Time with smart market countdown</li>
+                        <li><strong>🎨 Precision Data:</strong> Clean percentage formatting and rounded recovery scores</li>
                         <li><strong>🔄 Auto-Refresh:</strong> Data updates every 3 hours during market hours</li>
                         <li><strong>🌙 Dark Mode:</strong> Toggle theme with button in top-right corner</li>
                         <li><strong>📊 Sortable Tables:</strong> Click column headers to sort data</li>
@@ -2063,7 +2066,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <div style="max-width: 800px; margin: 0 auto;">
                     <h4 style="margin-bottom: 15px; color: #fff;">📊 Yahoo Finance Daily Losers Analyzer</h4>
                     <p style="margin-bottom: 20px; line-height: 1.6;">
-                        A real-time web scraper that analyzes Yahoo Finance daily losers and identifies high-potential investment opportunities based on analyst price targets.
+                        A next-generation web platform that analyzes Yahoo Finance daily losers with Ultimate Analysis buttons, interactive TradingView charts, EST time display, and AI-powered investment insights.
                     </p>
                     
                     <div style="display: flex; justify-content: center; gap: 30px; flex-wrap: wrap; margin-bottom: 20px;">
@@ -2125,7 +2128,7 @@ def index():
             cached_results['cache_info'] = cache_status
             
             # Update timestamp to show cache time
-            cached_results['timestamp'] = f"{cache_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S UTC')} (cached)"
+            cached_results['timestamp'] = f"{cache_data['timestamp'].astimezone(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S EST')} (cached)"
             
             # Add current market status (always fresh)
             cached_results['market_status'] = get_market_status()
@@ -2176,7 +2179,7 @@ def index():
         
         # Prepare template variables
         template_vars = {
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'timestamp': datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S EST'),
             'total_losers': len(losers_data),
             'detailed_count': len(details_data),
             'all_analysis_count': len(all_analysis),
@@ -2459,11 +2462,26 @@ def get_market_status():
                 "next_open": "Opens tomorrow at 9:30 AM EST"
             }
         else:
-            minutes_to_close = int((market_close - now_est).total_seconds() / 60)
+            seconds_to_close = int((market_close - now_est).total_seconds())
+            
+            # Smart time unit selection
+            if seconds_to_close >= 3600:  # 1+ hours
+                hours = seconds_to_close // 3600
+                minutes = (seconds_to_close % 3600) // 60
+                if hours == 1:
+                    time_display = f"Closes in 1 hour {minutes} minutes" if minutes > 0 else "Closes in 1 hour"
+                else:
+                    time_display = f"Closes in {hours} hours {minutes} minutes" if minutes > 0 else f"Closes in {hours} hours"
+            elif seconds_to_close >= 60:  # 1+ minutes
+                minutes = seconds_to_close // 60
+                time_display = f"Closes in {minutes} minute{'s' if minutes != 1 else ''}"
+            else:  # Less than 1 minute
+                time_display = f"Closes in {seconds_to_close} second{'s' if seconds_to_close != 1 else ''}"
+            
             return {
                 "status": "open",
                 "message": f"🟢 Markets Open",
-                "time_to_close": f"Closes in {minutes_to_close} minutes"
+                "time_to_close": time_display
             }
     except:
         return {
