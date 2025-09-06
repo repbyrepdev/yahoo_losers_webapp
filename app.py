@@ -3146,7 +3146,7 @@ def predict_stock_recovery(symbol):
         
         # Determine primary recovery target and timeframe
         primary_target = None
-        primary_timeframe = "7-14 days"  # default
+        primary_timeframe = "uncertain"  # default for unclear situations
         
         # Priority order: previous_close -> 5day_high -> 20day_ma -> others
         priority_targets = ['previous_close', '5day_high', '20day_ma', 'support_bounce', 'analyst_target', 'fair_value']
@@ -3205,6 +3205,22 @@ def predict_stock_recovery(symbol):
             confidence = "low"
             risk_level = "high"
             recommendation = "🔴 AVOID - Unfavorable recovery outlook across multiple targets"
+        
+        # Adjust timeframe based on recommendation to ensure logical consistency
+        # This prevents confusing scenarios like "AVOID" + "1 day" 
+        if recommendation.startswith("🔴 AVOID"):
+            # For AVOID recommendations, either show uncertainty or longer timeframes
+            if primary_target and primary_target.get('probability', 0) < 50:
+                primary_timeframe = "uncertain conditions - Low probability"
+            elif primary_timeframe in ["1 days", "2 days", "3 days"]:
+                # Convert short timeframes to more realistic ones for AVOID recommendations
+                primary_timeframe = "7-14 days (if conditions improve)"
+        elif recommendation.startswith("🟡 WAIT"):
+            # For WAIT recommendations, add conditional language
+            if primary_timeframe in ["1 days", "2 days"]:
+                primary_timeframe = f"{primary_timeframe} (monitor closely)"
+            else:
+                primary_timeframe = f"{primary_timeframe} (evaluate conditions)"
         
         # Build factors from sophisticated analysis
         technical_factors = []
