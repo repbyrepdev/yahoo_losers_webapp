@@ -1604,6 +1604,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const recoveryColor = getRecoveryColor(recovery.recovery_score || 0);
             const sentimentDisplay = isNewFormat ? (sentiment.sentiment_label || '😐 Neutral') : (sentiment.panic_description || '📊 Standard');
             
+            // Map AI sentiment to meaningful category
+            const getCategoryFromSentiment = (sentiment) => {
+                if (!sentiment) return '📊 News Analysis';
+                switch(sentiment.toLowerCase()) {
+                    case 'positive': return '📈 Positive News';
+                    case 'negative': return '📉 Negative News';  
+                    case 'neutral': return '📊 Neutral News';
+                    case 'bullish': return '🐂 Bullish Outlook';
+                    case 'bearish': return '🐻 Bearish Outlook';
+                    default: return '📰 Market News';
+                }
+            };
+            const aiCategory = getCategoryFromSentiment(aiAnalysis.sentiment);
+            
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
@@ -1625,7 +1639,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         </div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; text-align: center;">
                             <div>
-                                <div style="font-size: 18px; font-weight: bold;">${aiAnalysis.category || 'Unknown'}</div>
+                                <div style="font-size: 18px; font-weight: bold;">${aiCategory}</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Category</div>
                             </div>
                             <div>
