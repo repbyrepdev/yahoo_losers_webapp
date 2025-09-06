@@ -3522,6 +3522,9 @@ def predict_stock_recovery(symbol):
         # Convert sophisticated results back to format expected by existing app
         timeframe_predictions = sophisticated_result.get('timeframe_predictions', {})
         
+        # Extract short-term predictions (the new structure has short_term and medium_term)
+        short_term_predictions = timeframe_predictions.get('short_term', {})
+        
         # Determine primary recovery target and timeframe with detailed explanation
         primary_target = None
         primary_timeframe = "uncertain"  # default for unclear situations
@@ -3541,9 +3544,9 @@ def predict_stock_recovery(symbol):
         current_price = sophisticated_result.get('current_price', 0)
         
         for target_name in priority_targets:
-            if target_name in timeframe_predictions:
-                target_data = timeframe_predictions[target_name]
-                if target_data['upside_percent'] > 0:  # Only positive upside targets
+            if target_name in short_term_predictions:
+                target_data = short_term_predictions[target_name]
+                if target_data.get('upside_percent', 0) > 0:  # Only positive upside targets
                     primary_target = target_data
                     target_price = target_data['target_price']
                     upside_percent = target_data['upside_percent']
@@ -3567,9 +3570,9 @@ def predict_stock_recovery(symbol):
             sophisticated_result.get('sector_context', {})
         )
         
-        # Use enhanced recovery score calculation
+        # Use enhanced recovery score calculation (pass short-term predictions to match expected format)
         recovery_score, score_breakdown = sophisticated_predictor._calculate_enhanced_recovery_score(
-            targets, market_conditions, technical_momentum, sector_analysis, market_breadth
+            short_term_predictions, market_conditions, technical_momentum, sector_analysis, market_breadth
         )
         
         # Store breakdown for UI transparency
