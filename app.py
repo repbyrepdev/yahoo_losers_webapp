@@ -3144,19 +3144,39 @@ def predict_stock_recovery(symbol):
         # Convert sophisticated results back to format expected by existing app
         timeframe_predictions = sophisticated_result.get('timeframe_predictions', {})
         
-        # Determine primary recovery target and timeframe
+        # Determine primary recovery target and timeframe with detailed explanation
         primary_target = None
         primary_timeframe = "uncertain"  # default for unclear situations
+        target_description = "Unknown target"
         
         # Priority order: previous_close -> 5day_high -> 20day_ma -> others
         priority_targets = ['previous_close', '5day_high', '20day_ma', 'support_bounce', 'analyst_target', 'fair_value']
+        target_names = {
+            'previous_close': "previous close",
+            '5day_high': "5-day high", 
+            '20day_ma': "20-day moving average",
+            'support_bounce': "support level",
+            'analyst_target': "analyst target",
+            'fair_value': "fair value estimate"
+        }
+        
+        # Get current price from sophisticated analysis
+        current_price = sophisticated_result.get('current_price', 0)
         
         for target_name in priority_targets:
             if target_name in timeframe_predictions:
                 target_data = timeframe_predictions[target_name]
                 if target_data['upside_percent'] > 0:  # Only positive upside targets
                     primary_target = target_data
-                    primary_timeframe = target_data['timeframe']
+                    target_price = target_data['target_price']
+                    upside_percent = target_data['upside_percent']
+                    upside_dollars = target_price - current_price if current_price > 0 else 0
+                    timeframe = target_data['timeframe']
+                    probability = target_data.get('probability', 0)
+                    
+                    # Create detailed timeframe description
+                    target_description = target_names.get(target_name, target_name.replace('_', ' '))
+                    primary_timeframe = f"{timeframe} to reach {target_description} (${target_price:.2f}, +{upside_percent:.1f}% or +${upside_dollars:.2f}) - {probability}% probability"
                     break
         
         # Calculate overall recovery score based on multiple target probabilities
@@ -3207,20 +3227,20 @@ def predict_stock_recovery(symbol):
             recommendation = "🔴 AVOID - Unfavorable recovery outlook across multiple targets"
         
         # Adjust timeframe based on recommendation to ensure logical consistency
-        # This prevents confusing scenarios like "AVOID" + "1 day" 
+        # This prevents confusing scenarios like "AVOID" + short timeframes
         if recommendation.startswith("🔴 AVOID"):
-            # For AVOID recommendations, either show uncertainty or longer timeframes
+            # For AVOID recommendations, add cautionary language
             if primary_target and primary_target.get('probability', 0) < 50:
-                primary_timeframe = "uncertain conditions - Low probability"
-            elif primary_timeframe in ["1 days", "2 days", "3 days"]:
-                # Convert short timeframes to more realistic ones for AVOID recommendations
-                primary_timeframe = "7-14 days (if conditions improve)"
+                if "to reach" in primary_timeframe:
+                    primary_timeframe = primary_timeframe.replace("to reach", "potential recovery to")
+                    primary_timeframe += " - NOT RECOMMENDED due to low probability"
+                else:
+                    primary_timeframe = "uncertain conditions - Low probability recovery"
         elif recommendation.startswith("🟡 WAIT"):
             # For WAIT recommendations, add conditional language
-            if primary_timeframe in ["1 days", "2 days"]:
-                primary_timeframe = f"{primary_timeframe} (monitor closely)"
-            else:
-                primary_timeframe = f"{primary_timeframe} (evaluate conditions)"
+            if "to reach" in primary_timeframe:
+                primary_timeframe = primary_timeframe.replace("to reach", "potential recovery to")
+                primary_timeframe += " - Monitor conditions before acting"
         
         # Build factors from sophisticated analysis
         technical_factors = []
