@@ -1115,13 +1115,21 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .then(response => response.json())
                 .then(data => {
                     // Transform sophisticated timeframe data to recovery prediction format
+                    const analysis = data.analysis || {};
+                    const timeframePreds = analysis.timeframe_predictions || [];
+                    const primaryTarget = timeframePreds.length > 0 ? timeframePreds[0] : null;
+                    const confidence = analysis.confidence_level || 'Low';
+                    const confidenceValue = confidence === 'High' ? 0.8 : confidence === 'Medium' ? 0.6 : 0.4;
+                    
                     const recoveryData = {
-                        recovery_score: Math.round(data.overall_confidence * 100) || 50,
-                        recommendation: data.primary_target?.recommendation || '🟡 WAIT & WATCH - Analysis in progress',
-                        confidence: data.overall_confidence_level || 'moderate',
-                        risk_level: data.overall_confidence > 0.7 ? 'low' : 'moderate',
-                        timeframe: data.primary_target?.timeframe || 'Analyzing...',
-                        factors: data.technical_momentum || {},
+                        recovery_score: Math.round(confidenceValue * 100),
+                        recommendation: primaryTarget ? 
+                            `🎯 ${primaryTarget.target_name} - ${primaryTarget.timeframe}` : 
+                            '🟡 WAIT & WATCH - Analysis in progress',
+                        confidence: confidence.toLowerCase(),
+                        risk_level: confidenceValue > 0.7 ? 'low' : 'moderate',
+                        timeframe: primaryTarget?.timeframe || 'Analyzing...',
+                        factors: analysis.technical_momentum || {},
                         breakdown: {
                             technical_score: 25,
                             fundamental_score: 25,
