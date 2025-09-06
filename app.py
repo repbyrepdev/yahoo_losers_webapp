@@ -102,6 +102,7 @@ def add_security_headers(response):
         "font-src 'self' https://cdnjs.cloudflare.com; "
         "img-src 'self' data: https:; "
         "connect-src 'self' https:; "
+        "frame-src https://www.tradingview.com; "
         "frame-ancestors 'none';"
     )
     # Strict Transport Security (if HTTPS)
