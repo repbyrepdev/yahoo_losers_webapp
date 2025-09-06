@@ -2654,16 +2654,37 @@ def get_sophisticated_timeframe(symbol):
             response.headers['ETag'] = etag
             return response
             
-        response = make_response(json.dumps(api_response, indent=2))
+        # Custom JSON encoder to handle NumPy types
+        def json_serializer(obj):
+            if hasattr(obj, 'item'):  # NumPy types
+                return obj.item()
+            elif hasattr(obj, 'tolist'):  # NumPy arrays
+                return obj.tolist()
+            raise TypeError(f'Object of type {type(obj)} is not JSON serializable')
+        
+        response = make_response(json.dumps(api_response, indent=2, default=json_serializer))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
         return add_cache_headers(response, max_age=1800)  # 30 min cache
         
     except Exception as e:
         logger.error(f"Sophisticated timeframe API error for {symbol}: {str(e)}")
+        
+        # Provide both prediction (frontend format) and analysis (detailed format) even on error
+        fallback_prediction = {
+            "recovery_score": 0,
+            "confidence": "low",
+            "timeframe": "unknown",
+            "risk_level": "high",
+            "recommendation": "Analysis unavailable",
+            "factors": {"technical": [], "historical": [], "fundamental": [], "news": []},
+            "current_drop": 0
+        }
+        
         return json.dumps({
             "symbol": symbol.upper(),
-            "analysis": {
+            "prediction": fallback_prediction,  # Frontend compatible format
+            "sophisticated_analysis": {  # Detailed format
                 "symbol": symbol.upper(),
                 "current_price": 0,
                 "targets": {},
@@ -2671,6 +2692,7 @@ def get_sophisticated_timeframe(symbol):
                 "confidence_level": "Low",
                 "error": str(e)
             },
+            "api_version": "2.0",
             "error": "Analysis failed - using fallback data"
         })
 
