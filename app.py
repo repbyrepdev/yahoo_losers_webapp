@@ -3433,14 +3433,14 @@ def predict_stock_recovery(symbol):
         primary_timeframe = "uncertain"  # default for unclear situations
         target_description = "Unknown target"
         
-        # Priority order: Short-term technical targets only (analyst targets moved to Long Term Projections)
-        priority_targets = ['previous_close', '5day_high', '20day_ma', 'support_bounce', 'fair_value']
+        # Priority order: TRUE short-term technical targets only (1-5 days max)
+        priority_targets = ['previous_close', '5day_high', '10day_ma', 'intraday_resistance', 'gap_fill']
         target_names = {
             'previous_close': "previous close",
             '5day_high': "5-day high", 
-            '20day_ma': "20-day moving average",
-            'support_bounce': "support level",
-            'fair_value': "fair value estimate"
+            '10day_ma': "10-day moving average",
+            'intraday_resistance': "intraday resistance",
+            'gap_fill': "gap fill level"
         }
         
         # Get current price from sophisticated analysis

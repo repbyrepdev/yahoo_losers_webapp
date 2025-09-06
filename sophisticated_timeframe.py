@@ -140,40 +140,42 @@ class SophisticatedTimeframePredictor:
             'description': '5-day high recovery'
         }
         
-        # Target 3: 20-day moving average (Technical recovery)
-        ma_20 = hist['Close'].tail(20).mean()
-        targets['20day_ma'] = {
-            'price': round(ma_20, 2),
-            'upside_percent': round(((ma_20 - current_price) / current_price) * 100, 2),
-            'description': '20-day moving average'
+        # Target 3: 10-day moving average (Short-term technical recovery)
+        ma_10 = hist['Close'].tail(10).mean()
+        targets['10day_ma'] = {
+            'price': round(ma_10, 2),
+            'upside_percent': round(((ma_10 - current_price) / current_price) * 100, 2),
+            'description': '10-day moving average bounce'
         }
         
-        # Target 4: Support level (Technical bounce)
-        support_level = hist['Low'].tail(30).min() * 1.02  # 2% above 30-day low
-        targets['support_bounce'] = {
-            'price': round(support_level, 2),
-            'upside_percent': round(((support_level - current_price) / current_price) * 100, 2),
-            'description': 'Support level bounce'
+        # Target 4: Intraday resistance (Very short-term bounce)
+        # Use recent 5-day high/low range for quick reversals
+        recent_high = hist['High'].tail(3).max()
+        recent_low = hist['Low'].tail(3).min()
+        intraday_resistance = recent_low + ((recent_high - recent_low) * 0.618)  # 61.8% Fibonacci
+        targets['intraday_resistance'] = {
+            'price': round(intraday_resistance, 2),
+            'upside_percent': round(((intraday_resistance - current_price) / current_price) * 100, 2),
+            'description': 'Short-term resistance level'
         }
         
-        # Target 5: [REMOVED] Analyst targets moved to Long Term Projections
-        # This keeps short-term recovery focused on technical/momentum targets
-        
-        # Target 6: Fair value (using P/E comparison to sector)
-        try:
-            pe_ratio = info.get('trailingPE', 0)
-            if pe_ratio and pe_ratio > 0:
-                # Estimate fair value based on sector average P/E (simplified)
-                sector_avg_pe = 18  # Market average approximation
-                fair_value = (current_price / pe_ratio) * sector_avg_pe
-                if fair_value > current_price:
-                    targets['fair_value'] = {
-                        'price': round(fair_value, 2),
-                        'upside_percent': round(((fair_value - current_price) / current_price) * 100, 2),
-                        'description': 'Estimated fair value'
-                    }
-        except:
-            pass
+        # Target 5: Gap fill (Technical gap closure)
+        # Look for recent price gaps in the last 5 days that could fill quickly
+        if len(hist) >= 5:
+            for i in range(1, min(5, len(hist))):
+                gap_up = hist['Low'].iloc[-i] > hist['High'].iloc[-i-1]  # Gap up
+                gap_down = hist['High'].iloc[-i] < hist['Low'].iloc[-i-1]  # Gap down
+                
+                if gap_down and current_price < hist['Low'].iloc[-i-1]:
+                    # Current price is below the gap - gap fill opportunity
+                    gap_fill_level = hist['Low'].iloc[-i-1]
+                    if gap_fill_level > current_price:
+                        targets['gap_fill'] = {
+                            'price': round(gap_fill_level, 2),
+                            'upside_percent': round(((gap_fill_level - current_price) / current_price) * 100, 2),
+                            'description': f'Gap fill from {i} days ago'
+                        }
+                        break
         
         return targets
     
@@ -504,13 +506,13 @@ class SophisticatedTimeframePredictor:
         """Calculate sophisticated timeframes for each recovery target"""
         
         predictions = {}
+        # TRUE SHORT-TERM recovery timeframes (all under 1 week)
         base_recovery_days = {
-            'previous_close': 1,
-            '5day_high': 3,
-            '20day_ma': 7,
-            'support_bounce': 2,
-            'analyst_target': 30,
-            'fair_value': 45
+            'previous_close': 1,           # Same day/next day recovery
+            '5day_high': 2,               # 2-3 days to retest recent high  
+            '10day_ma': 3,                # 3-5 days for MA reversion
+            'intraday_resistance': 1,     # Intraday to next day
+            'gap_fill': 1                 # Gaps typically fill quickly (1-2 days)
         }
         
         for target_name, target_data in targets.items():
