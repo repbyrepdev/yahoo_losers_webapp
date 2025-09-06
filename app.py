@@ -2150,7 +2150,7 @@ def index():
             cached_results['cache_info'] = cache_status
             
             # Update timestamp to show cache time
-            cached_results['timestamp'] = f"{cache_data['timestamp'].astimezone(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S EST')} (cached)"
+            cached_results['timestamp'] = f"{cache_data['timestamp'].astimezone(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %I:%M:%S %p EST')} (cached)"
             
             # Add current market status (always fresh)
             cached_results['market_status'] = get_market_status()
@@ -2201,7 +2201,7 @@ def index():
         
         # Prepare template variables
         template_vars = {
-            'timestamp': datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %H:%M:%S EST'),
+            'timestamp': datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %I:%M:%S %p EST'),
             'total_losers': len(losers_data),
             'detailed_count': len(details_data),
             'all_analysis_count': len(all_analysis),
