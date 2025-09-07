@@ -2614,37 +2614,16 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <span class="status-badge" style="font-size: 13px; font-weight: 500;">
                         📊 {{ total_losers }} Stocks Analyzed
                     </span>
-                </div>
-                <div class="timestamp" style="font-size: 12px; color: var(--text-secondary); margin: 0;">{{ timestamp }}</div>
-                
-                <!-- Data Controls -->
-                <div style="text-align: center; margin: 15px 0;">
-                    <a href="/refresh" style="background-color: #007bff; color: white; padding: 8px 16px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 5px; font-size: 12px;">
+                    <a href="/refresh" style="background-color: #007bff; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 8px;">
                         🔄 Force Refresh
                     </a>
-                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 8px 16px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 5px; font-size: 12px;">
+                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
                         📊 Export CSV
                     </a>
                 </div>
+                <div class="timestamp" style="font-size: 12px; color: var(--text-secondary); margin: 0;">{{ timestamp }}</div>
             </div>
             
-            <!-- Streamlined Analysis Summary -->
-            <div class="section" style="text-align: center; padding: 16px 24px;">
-                <div style="display: flex; justify-content: center; align-items: center; gap: 24px; flex-wrap: wrap;">
-                    <div class="stat-item">
-                        <div style="font-size: 24px; font-weight: 700; color: var(--positive-color);">{{ recommendations_count }}</div>
-                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">AI RECOMMENDATIONS</div>
-                    </div>
-                    <div class="stat-item">
-                        <div style="font-size: 20px; font-weight: 600;">🤖📱🔮</div>
-                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">ULTIMATE ANALYSIS</div>
-                    </div>
-                    <div class="stat-item">
-                        <div style="font-size: 20px; font-weight: 600;">📈</div>
-                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">LIVE CHARTS</div>
-                    </div>
-                </div>
-            </div>
                 
 
             <!-- Clean Market Overview -->
