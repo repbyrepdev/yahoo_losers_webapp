@@ -2611,17 +2611,26 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <span class="status-badge" style="font-size: 13px; font-weight: 500;">
                         ⚡ Auto-refresh: 3hrs
                     </span>
+                    <span class="status-badge" style="font-size: 13px; font-weight: 500;">
+                        📊 {{ total_losers }} Stocks Analyzed
+                    </span>
                 </div>
                 <div class="timestamp" style="font-size: 12px; color: var(--text-secondary); margin: 0;">{{ timestamp }}</div>
+                
+                <!-- Data Controls -->
+                <div style="text-align: center; margin: 15px 0;">
+                    <a href="/refresh" style="background-color: #007bff; color: white; padding: 8px 16px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 5px; font-size: 12px;">
+                        🔄 Force Refresh
+                    </a>
+                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 8px 16px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 5px; font-size: 12px;">
+                        📊 Export CSV
+                    </a>
+                </div>
             </div>
             
             <!-- Streamlined Analysis Summary -->
             <div class="section" style="text-align: center; padding: 16px 24px;">
                 <div style="display: flex; justify-content: center; align-items: center; gap: 24px; flex-wrap: wrap;">
-                    <div class="stat-item">
-                        <div style="font-size: 24px; font-weight: 700; color: var(--accent-blue);">{{ total_losers }}</div>
-                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">STOCKS ANALYZED</div>
-                    </div>
                     <div class="stat-item">
                         <div style="font-size: 24px; font-weight: 700; color: var(--positive-color);">{{ recommendations_count }}</div>
                         <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">AI RECOMMENDATIONS</div>
@@ -2657,48 +2666,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
             </div>
                 
-                <!-- AI Recommendation Logic Explanation -->
-                <div style="background: #6c757d; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                    <h3 style="margin: 0 0 15px 0;">🤖 {{ market_analysis.recommendation_logic.title }}</h3>
-                    
-                    <div style="margin-bottom: 15px;">
-                        <strong>Our AI uses strict criteria to ensure only high-quality opportunities are recommended:</strong>
-                    </div>
-                    
-                    {% for criterion in market_analysis.recommendation_logic.criteria %}
-                    <div style="margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; border-left: 4px solid #ffc107;">
-                        <div style="font-weight: bold; margin-bottom: 5px;">{{ criterion.requirement }}</div>
-                        <div style="font-size: 14px; margin: 3px 0;"><strong>Required:</strong> {{ criterion.threshold }}</div>
-                        <div style="font-size: 14px; margin: 3px 0;"><strong>Today's Status:</strong> {{ criterion.current_status }}</div>
-                        <div style="font-size: 13px; opacity: 0.9; font-style: italic;">{{ criterion.explanation }}</div>
-                    </div>
-                    {% endfor %}
-                    
-                    <div style="margin-top: 15px; padding: 15px; background: rgba(255,255,255,0.15); border-radius: 5px; border: 1px solid rgba(255,255,255,0.3);">
-                        <strong>Bottom Line:</strong> {{ market_analysis.recommendation_logic.summary }}
-                    </div>
-                </div>
-                
-                <!-- AI Insights -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                    <h3 style="margin: 0 0 15px 0;">💡 AI Market Insights</h3>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
-                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                            <strong>Current Regime Impact:</strong> {{ market_analysis.ai_insights.market_regime_impact }}
-                        </div>
-                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                            <strong>Opportunity Outlook:</strong> {{ market_analysis.ai_insights.opportunity_outlook }}
-                        </div>
-                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                            <strong>Quality Philosophy:</strong> {{ market_analysis.ai_insights.quality_over_quantity }}
-                        </div>
-                        <div style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                            <strong>When to Expect Strong Signals:</strong> {{ market_analysis.ai_insights.when_to_expect_signals }}
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <div class="section">
                 <h2>🔍 Short Term Recovery Recommendations</h2>
@@ -2826,65 +2793,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
 
 
-            <div class="section">
-                <h3>🔧 Technical Status</h3>
-                <ul>
-                    <li><strong>Data Source:</strong> 
-                        {% if status.data_source == 'cached' %}
-                            <span style="color: blue;">📁 Cached Data (Fast Loading)</span>
-                        {% elif status.data_source == 'live' %}
-                            <span style="color: green;">✅ Live Yahoo Finance Data</span>
-                        {% elif status.data_source == 'sample' %}
-                            <span style="color: orange;">⚠️ Sample/Demo Data</span>
-                        {% elif status.data_source == 'error' %}
-                            <span style="color: red;">❌ Error/Fallback Data</span>
-                        {% endif %}
-                    </li>
-                    <li><strong>Status:</strong> {{ status.message }}</li>
-                    <li><strong>Cache Info:</strong>
-                        {% if status.data_source == 'cached' %}
-                            Using cached results for faster loading (updates every 24 hours)
-                        {% else %}
-                            Fresh analysis performed - results cached for 24 hours
-                        {% endif %}
-                    </li>
-                    <li><strong>Analysis Method:</strong> 
-                        {% if status.data_source == 'cached' %}
-                            Cached results from previous scraping session
-                        {% elif status.data_source == 'live' %}
-                            Real-time web scraping from Yahoo Finance
-                        {% else %}
-                            Using demonstration data (Yahoo Finance may be blocking requests)
-                        {% endif %}
-                    </li>
-                    <li><strong>Next Steps:</strong> 
-                        {% if status.data_source == 'cached' %}
-                            Cache will auto-refresh after 24 hours, or you can wait and refresh manually
-                        {% elif status.data_source != 'live' %}
-                            Try refreshing in a few minutes - Yahoo Finance temporarily blocks automated requests
-                        {% else %}
-                            Data is live and current - cached for faster future loading
-                        {% endif %}
-                    </li>
-                </ul>
-            </div>
 
-            <!-- Refresh Button -->
-            <div class="section">
-                <h3>🔄 Data Controls</h3>
-                <div style="text-align: center; margin: 20px 0;">
-                    <a href="/refresh" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 10px;">
-                        🔄 Force Refresh Data
-                    </a>
-                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin: 0 10px;">
-                        📊 Export to CSV
-                    </a>
-                    <p style="margin-top: 15px; font-size: 14px; color: #666;">
-                        <strong>Refresh:</strong> Fetch fresh data from Yahoo Finance (bypasses 24-hour cache)<br>
-                        <strong>Export:</strong> Download all data as CSV for spreadsheet analysis
-                    </p>
-                </div>
-            </div>
 
             <div class="section">
                 <h3>⚠️ Disclaimer</h3>
