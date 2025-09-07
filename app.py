@@ -1954,20 +1954,26 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 
                 <!-- Recovery Analysis Tab -->
                 <div id="recovery-tab" class="ultimate-tab-content" style="display: none;">
-                    <div style="background: ${recoveryColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                        <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Recovery Potential</h4>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
-                            <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                    <div style="background: linear-gradient(135deg, #fd7e14, #f39c12); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Short Term Recovery (1-7 days)</h4>
+                        <div id="recovery-data">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
+                                <div>
+                                    <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
+                                    <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 18px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
+                                    <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 18px; font-weight: bold;">${recovery.time_frame || '1-7 days'}</div>
+                                    <div style="font-size: 14px; opacity: 0.9;">Time Frame</div>
+                                </div>
                             </div>
-                            <div>
-                                <div style="font-size: 18px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                            <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
+                                ${recovery.recommendation || 'Analysis unavailable'}
                             </div>
-                        </div>
-                        <div style="text-align: center; margin-top: 15px; font-size: 16px; font-weight: bold;">
-                            ${recovery.recommendation || 'Analysis unavailable'}
                         </div>
                         ${recovery.timeframe ? `<div style="text-align: center; margin-top: 5px; font-size: 14px; opacity: 0.9;">
                             Expected timeframe: ${recovery.timeframe}
@@ -2024,6 +2030,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
                             </div>
                         </div>
+                        
+                        <!-- Mathematical Breakdown Section for Medium Term -->
+                        <div id="mediumterm-breakdown" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2); display: none;">
+                            <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
+                            <div id="mediumterm-breakdown-content" style="font-size: 14px; line-height: 1.6; color: #ffffff;">
+                                <!-- Content will be populated by JavaScript -->
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -2034,6 +2048,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <div id="longterm-data">
                             <div style="text-align: center; color: rgba(255,255,255,0.8);">
                                 <div style="font-size: 16px; margin: 20px 0;">⏳ Loading analyst data...</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Mathematical Breakdown Section for Long Term -->
+                        <div id="longterm-breakdown" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2); display: none;">
+                            <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
+                            <div id="longterm-breakdown-content" style="font-size: 14px; line-height: 1.6; color: #ffffff;">
+                                <!-- Content will be populated by JavaScript -->
                             </div>
                         </div>
                     </div>
@@ -2153,17 +2175,42 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         return;
                     }
                     
-                    let mediumTermHtml = `
-                        <div style="display: grid; gap: 15px;">
+                    // Calculate overall confidence and score for header
+                    const predictions = Object.values(mediumTermPredictions);
+                    const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
+                    const avgConfidence = predictions.some(p => p.confidence === 'High') ? 'High' : 
+                                         predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
+                    
+                    // Header with confidence levels matching other sections
+                    mediumtermData.innerHTML = `
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
+                            <div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round(avgProbability)}%</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">${avgConfidence}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">1-4 weeks</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Time Frame</div>
+                            </div>
+                        </div>
+                        <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
+                            Medium-term recovery analysis based on technical patterns and market conditions
+                        </div>
+                        <div style="display: grid; gap: 15px; margin-top: 20px;">
                     `;
                     
+                    let mediumTermTargets = '';
                     Object.entries(mediumTermPredictions).forEach(([targetName, prediction]) => {
                         const confidence = prediction.confidence || 'Low';
                         const probability = Math.round(prediction.probability || 0);
                         const confidenceColor = confidence === 'High' ? '#28a745' : 
                                               confidence === 'Medium' ? '#ffc107' : '#dc3545';
                         
-                        mediumTermHtml += `
+                        mediumTermTargets += `
                             <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
                                 <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
                                     <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
@@ -2191,8 +2238,31 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         `;
                     });
                     
-                    mediumTermHtml += `</div>`;
-                    mediumtermData.innerHTML = mediumTermHtml;
+                    mediumtermData.innerHTML += mediumTermTargets + '</div>';
+                    
+                    // Add mathematical breakdown
+                    const breakdownElement = document.getElementById('mediumterm-breakdown');
+                    const breakdownContent = document.getElementById('mediumterm-breakdown-content');
+                    if (breakdownElement && breakdownContent) {
+                        const totalTargets = predictions.length;
+                        const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
+                        const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
+                        
+                        breakdownContent.innerHTML = `
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round(avgProbability * 10) / 10}%
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of ${totalTargets} target probabilities)</span>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #ffffff;">High Confidence Targets:</strong> ${highConfTargets}/${totalTargets}
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${Math.round(highConfTargets/totalTargets*100)}% of targets)</span>
+                            </div>
+                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
+                                <strong style="color: #ffffff;">Average Upside:</strong> +${Math.round(avgUpside * 10) / 10}%
+                            </div>
+                        `;
+                        breakdownElement.style.display = 'block';
+                    }
                 })
                 .catch(error => {
                     console.error('Medium-term data error:', error);
@@ -2263,35 +2333,62 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         return;
                     }
                     
-                    let longTermHtml = `<div style="display: grid; gap: 15px;">`;
+                    // Calculate overall confidence and score for header
+                    const predictions = Object.values(longTermPredictions);
+                    const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
+                    const avgConfidence = predictions.some(p => p.confidence === 'High') ? 'High' : 
+                                         predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
+                    // Header with confidence levels matching other sections
+                    longtermData.innerHTML = `
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
+                            <div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round(avgProbability)}%</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">${avgConfidence}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">6-12 months</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Time Frame</div>
+                            </div>
+                        </div>
+                        <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
+                            Long-term analyst projections and fundamental analysis targets
+                        </div>
+                        <div style="display: grid; gap: 15px; margin-top: 20px;">
+                    `;
+                    
+                    let longTermTargets = '';
                     Object.entries(longTermPredictions).forEach(([targetName, prediction]) => {
                         const confidence = prediction.confidence || 'Low';
                         const probability = Math.round(prediction.probability || 0);
                         const confidenceColor = confidence === 'High' ? '#28a745' : 
                                               confidence === 'Medium' ? '#ffc107' : '#dc3545';
                         
-                        longTermHtml += `
+                        longTermTargets += `
                             <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
                                 <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
                                     <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
                                         ${prediction.description || targetName}
                                     </div>
-                                    <div style="font-size: 14px; color: rgba(255,255,255,0.8);">
-                                        ${confidence} (${probability}%)
+                                    <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
+                                        ${probability}% probability
                                     </div>
                                 </div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center;">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                     <div>
-                                        <div style="font-size: 18px; font-weight: bold;">${Math.round(prediction.upside_percent || 0)}%</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside Potential</div>
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffffff;">$${prediction.target_price || 'N/A'}</div>
+                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Target Price</div>
                                     </div>
                                     <div>
-                                        <div style="font-size: 14px; font-weight: bold;">${prediction.target_price || 'N/A'}</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Price Target</div>
+                                        <div style="font-size: 18px; font-weight: bold; color: #28a745;">+${prediction.upside_percent || 0}%</div>
+                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside</div>
                                     </div>
                                     <div>
-                                        <div style="font-size: 14px; font-weight: bold;">${prediction.timeframe || 'N/A'}</div>
+                                        <div style="font-size: 18px; font-weight: bold; color: #ffc107;">${prediction.timeframe || 'N/A'}</div>
                                         <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Timeframe</div>
                                     </div>
                                 </div>
@@ -2299,8 +2396,31 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         `;
                     });
                     
-                    longTermHtml += `</div>`;
-                    longtermData.innerHTML = longTermHtml;
+                    longtermData.innerHTML += longTermTargets + '</div>';
+                    
+                    // Add mathematical breakdown
+                    const breakdownElement = document.getElementById('longterm-breakdown');
+                    const breakdownContent = document.getElementById('longterm-breakdown-content');
+                    if (breakdownElement && breakdownContent) {
+                        const totalTargets = predictions.length;
+                        const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
+                        const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
+                        
+                        breakdownContent.innerHTML = `
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round(avgProbability * 10) / 10}%
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of ${totalTargets} analyst targets)</span>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #ffffff;">High Confidence Targets:</strong> ${highConfTargets}/${totalTargets}
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${Math.round(highConfTargets/totalTargets*100)}% analyst consensus)</span>
+                            </div>
+                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
+                                <strong style="color: #ffffff;">Average Upside:</strong> +${Math.round(avgUpside * 10) / 10}%
+                            </div>
+                        `;
+                        breakdownElement.style.display = 'block';
+                    }
                 })
                 .catch(error => {
                     console.error('Long-term data error:', error);
