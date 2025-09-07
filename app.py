@@ -1121,7 +1121,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 10000; display: flex; justify-content: center; align-items: center;';
             
             const chartContainer = document.createElement('div');
-            chartContainer.style.cssText = 'background: white; border-radius: 10px; padding: 20px; width: 90%; max-width: 900px; height: 80%; position: relative;';
+            chartContainer.style.cssText = 'background: white; border-radius: 10px; padding: 20px; width: 95%; max-width: 1200px; height: 90%; position: relative;';
             
             // Create close button
             const closeBtn = document.createElement('button');
@@ -1316,7 +1316,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         
         function createModalContainer() {
             const container = document.createElement('div');
-            container.style.cssText = 'background: white; border-radius: 10px; padding: 20px; width: 90%; max-width: 600px; max-height: 80%; overflow-y: auto; position: relative;';
+            container.style.cssText = 'background: white; border-radius: 10px; padding: 20px; width: 95%; max-width: 900px; max-height: 90%; overflow-y: auto; position: relative;';
             return container;
         }
         
