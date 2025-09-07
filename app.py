@@ -1813,7 +1813,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 recoveryCache[symbol] = recoveryData.prediction;
                 
                 // Store recovery data globally for medium/long-term breakdowns
-                window.currentRecoveryData = recoveryData.prediction;
+                window.currentRecoveryData = recoveryData;
                 
                 displayUltimateModal(symbol, aiData.analysis, sentimentData.sentiment, recoveryData.prediction, companyName);
             }).catch(error => {
@@ -2485,10 +2485,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
-                        // Build detailed mathematical breakdown for medium-term
-                        const recovery = window.currentRecoveryData || {};
-                        const mediumTermData = recovery.sophisticated_analysis?.timeframe_predictions?.medium_term || {};
-                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                        // Build detailed mathematical breakdown for medium-term using window data
+                        const recoveryData = window.currentRecoveryData || {};
+                        const mediumTermData = recoveryData.sophisticated_analysis?.timeframe_predictions?.medium_term || {};
+                        const enhancedSignals = recoveryData.sophisticated_analysis?.enhanced_signals || {};
                         let mediumTargetsBreakdown = '';
                         let mediumTotalWeightedScore = 0;
                         let mediumTotalWeight = 0;
@@ -2730,7 +2730,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
                         // Build detailed mathematical breakdown for long-term (analyst targets)
-                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                        const recoveryData = window.currentRecoveryData || {};
+                        const enhancedSignals = recoveryData.sophisticated_analysis?.enhanced_signals || {};
                         let longTermTargetsBreakdown = '';
                         let longTermTotalWeightedScore = 0;
                         let longTermTotalWeight = 0;
