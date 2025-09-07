@@ -2137,7 +2137,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                          targets.some(t => t.confidence === 'Medium') ? 'Medium' : 'Low';
                     
                     // Calculate recovery score from short-term targets
-                    const recoveryScore = recovery.sophisticated_analysis?.overall_recovery_probability || 0;
+                    const recoveryScore = recovery.recovery_score || 0;
                     
                     // Header with confidence levels matching other sections
                     recoveryData.innerHTML = `
