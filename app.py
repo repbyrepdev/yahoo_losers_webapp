@@ -2464,11 +2464,51 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     const avgConfidence = predictions.some(p => p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
+                    // Calculate final score with signal multipliers for header (matching mathematical breakdown)
+                    const recoveryData = window.currentRecoveryData || {};
+                    const enhancedSignals = recoveryData.sophisticated_analysis?.enhanced_signals || {};
+                    let mediumSignalMultiplier = 1.0;
+                    
+                    if (enhancedSignals.volume_surge?.surge_detected) {
+                        const volumeBoost = 1.0 + ((enhancedSignals.volume_surge.surge_multiplier - 1.0) * 0.5);
+                        mediumSignalMultiplier *= volumeBoost;
+                    }
+                    if (enhancedSignals.rsi_reversion?.oversold_detected) {
+                        const rsiBoost = 1.0 + ((enhancedSignals.rsi_reversion.reversion_multiplier - 1.0) * 0.7);
+                        mediumSignalMultiplier *= rsiBoost;
+                    }
+                    if (enhancedSignals.economic_regime?.regime) {
+                        const regimeBoost = enhancedSignals.economic_regime.medium_term_multiplier || 1.0;
+                        mediumSignalMultiplier *= regimeBoost;
+                    }
+                    if (enhancedSignals.money_flow_index?.oversold_detected) {
+                        const mfiBoost = 1.0 + ((enhancedSignals.money_flow_index.recovery_multiplier - 1.0) * 0.5);
+                        mediumSignalMultiplier *= mfiBoost;
+                    }
+                    if (enhancedSignals.macd_histogram?.momentum_shift) {
+                        const macdBoost = 1.0 + ((enhancedSignals.macd_histogram.recovery_multiplier - 1.0) * 0.7);
+                        mediumSignalMultiplier *= macdBoost;
+                    }
+                    if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                        const bbBoost = 1.0 + ((enhancedSignals.bollinger_squeeze.recovery_multiplier - 1.0) * 0.6);
+                        mediumSignalMultiplier *= bbBoost;
+                    }
+                    if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                        const pcBoost = 1.0 + ((enhancedSignals.put_call_ratio.recovery_multiplier - 1.0) * 0.4);
+                        mediumSignalMultiplier *= pcBoost;
+                    }
+                    if (enhancedSignals.short_interest?.squeeze_potential) {
+                        const siBoost = 1.0 + ((enhancedSignals.short_interest.recovery_multiplier - 1.0) * 0.3);
+                        mediumSignalMultiplier *= siBoost;
+                    }
+                    
+                    const mediumFinalScore = Math.min(90, avgProbability * mediumSignalMultiplier);
+                    
                     // Header with confidence levels matching other sections
                     mediumtermData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round(avgProbability)}%</div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round(mediumFinalScore)}%</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                             </div>
                             <div>
@@ -2754,11 +2794,51 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     const avgConfidence = predictions.some(p => p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
+                    // Calculate final score with signal multipliers for header (matching mathematical breakdown)
+                    const recoveryData = window.currentRecoveryData || {};
+                    const enhancedSignals = recoveryData.sophisticated_analysis?.enhanced_signals || {};
+                    let longTermSignalMultiplier = 1.0;
+                    
+                    if (enhancedSignals.volume_surge?.surge_detected) {
+                        const volumeBoost = 1.0 + ((enhancedSignals.volume_surge.surge_multiplier - 1.0) * 0.25);
+                        longTermSignalMultiplier *= volumeBoost;
+                    }
+                    if (enhancedSignals.rsi_reversion?.oversold_detected) {
+                        const rsiBoost = 1.0 + ((enhancedSignals.rsi_reversion.reversion_multiplier - 1.0) * 0.4);
+                        longTermSignalMultiplier *= rsiBoost;
+                    }
+                    if (enhancedSignals.economic_regime?.regime) {
+                        const regimeBoost = enhancedSignals.economic_regime.long_term_multiplier || 1.0;
+                        longTermSignalMultiplier *= regimeBoost;
+                    }
+                    if (enhancedSignals.money_flow_index?.oversold_detected) {
+                        const mfiBoost = 1.0 + ((enhancedSignals.money_flow_index.recovery_multiplier - 1.0) * 0.25);
+                        longTermSignalMultiplier *= mfiBoost;
+                    }
+                    if (enhancedSignals.macd_histogram?.momentum_shift) {
+                        const macdBoost = 1.0 + ((enhancedSignals.macd_histogram.recovery_multiplier - 1.0) * 0.4);
+                        longTermSignalMultiplier *= macdBoost;
+                    }
+                    if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                        const bbBoost = 1.0 + ((enhancedSignals.bollinger_squeeze.recovery_multiplier - 1.0) * 0.3);
+                        longTermSignalMultiplier *= bbBoost;
+                    }
+                    if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                        const pcBoost = 1.0 + ((enhancedSignals.put_call_ratio.recovery_multiplier - 1.0) * 0.2);
+                        longTermSignalMultiplier *= pcBoost;
+                    }
+                    if (enhancedSignals.short_interest?.squeeze_potential) {
+                        const siBoost = 1.0 + ((enhancedSignals.short_interest.recovery_multiplier - 1.0) * 0.15);
+                        longTermSignalMultiplier *= siBoost;
+                    }
+                    
+                    const longTermFinalScore = Math.min(85, avgProbability * longTermSignalMultiplier);
+                    
                     // Header with confidence levels matching other sections
                     longtermData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round(avgProbability)}%</div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round(longTermFinalScore)}%</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                             </div>
                             <div>
