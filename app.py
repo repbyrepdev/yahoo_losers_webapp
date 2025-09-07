@@ -2595,6 +2595,52 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 </div>`;
                         }
                         
+                        // NEW HIGH-ACCURACY INDICATORS (Medium-term with reduced impact)
+                        if (enhancedSignals.money_flow_index?.oversold_detected) {
+                            const mfiBoost = 1.0 + ((enhancedSignals.money_flow_index.recovery_multiplier - 1.0) * 0.5); // 50% impact
+                            mediumSignalMultiplier *= mfiBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #17a2b8;">
+                                    ✓ Money Flow Index: ${mfiBoost.toFixed(2)}x multiplier (50% medium-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.macd_histogram?.momentum_shift) {
+                            const macdBoost = 1.0 + ((enhancedSignals.macd_histogram.recovery_multiplier - 1.0) * 0.7); // 70% impact
+                            mediumSignalMultiplier *= macdBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #dc3545;">
+                                    ✓ MACD Histogram: ${macdBoost.toFixed(2)}x multiplier (70% medium-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                            const bbBoost = 1.0 + ((enhancedSignals.bollinger_squeeze.recovery_multiplier - 1.0) * 0.6); // 60% impact
+                            mediumSignalMultiplier *= bbBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #6610f2;">
+                                    ✓ Bollinger Bands: ${bbBoost.toFixed(2)}x multiplier (60% medium-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                            const pcBoost = 1.0 + ((enhancedSignals.put_call_ratio.recovery_multiplier - 1.0) * 0.4); // 40% impact
+                            mediumSignalMultiplier *= pcBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #fd7e14;">
+                                    ✓ Put/Call Ratio: ${pcBoost.toFixed(2)}x multiplier (40% medium-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.short_interest?.squeeze_potential) {
+                            const siBoost = 1.0 + ((enhancedSignals.short_interest.recovery_multiplier - 1.0) * 0.3); // 30% impact
+                            mediumSignalMultiplier *= siBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #e83e8c;">
+                                    ✓ Short Squeeze: ${siBoost.toFixed(2)}x multiplier (30% medium-term impact)
+                                </div>`;
+                        }
+                        
                         const mediumFinalScore = Math.min(90, mediumBaseScore * mediumSignalMultiplier);
                         
                         breakdownContent.innerHTML = `
@@ -2834,6 +2880,52 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             longTermSignalEffects += `
                                 <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
                                     ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
+                                </div>`;
+                        }
+                        
+                        // NEW HIGH-ACCURACY INDICATORS (Long-term with minimal impact)
+                        if (enhancedSignals.money_flow_index?.oversold_detected) {
+                            const mfiBoost = 1.0 + ((enhancedSignals.money_flow_index.recovery_multiplier - 1.0) * 0.25); // 25% impact
+                            longTermSignalMultiplier *= mfiBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #17a2b8;">
+                                    ✓ Money Flow Index: ${mfiBoost.toFixed(2)}x multiplier (25% long-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.macd_histogram?.momentum_shift) {
+                            const macdBoost = 1.0 + ((enhancedSignals.macd_histogram.recovery_multiplier - 1.0) * 0.4); // 40% impact
+                            longTermSignalMultiplier *= macdBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #dc3545;">
+                                    ✓ MACD Histogram: ${macdBoost.toFixed(2)}x multiplier (40% long-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                            const bbBoost = 1.0 + ((enhancedSignals.bollinger_squeeze.recovery_multiplier - 1.0) * 0.3); // 30% impact
+                            longTermSignalMultiplier *= bbBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #6610f2;">
+                                    ✓ Bollinger Bands: ${bbBoost.toFixed(2)}x multiplier (30% long-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                            const pcBoost = 1.0 + ((enhancedSignals.put_call_ratio.recovery_multiplier - 1.0) * 0.2); // 20% impact
+                            longTermSignalMultiplier *= pcBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #fd7e14;">
+                                    ✓ Put/Call Ratio: ${pcBoost.toFixed(2)}x multiplier (20% long-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.short_interest?.squeeze_potential) {
+                            const siBoost = 1.0 + ((enhancedSignals.short_interest.recovery_multiplier - 1.0) * 0.15); // 15% impact
+                            longTermSignalMultiplier *= siBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #e83e8c;">
+                                    ✓ Short Squeeze: ${siBoost.toFixed(2)}x multiplier (15% long-term impact)
                                 </div>`;
                         }
                         

@@ -230,7 +230,11 @@ def analyze_stock_news(symbol):
         reason = f"Earnings miss - reported {earnings_surprise:.1%} below expectations"
 ```
 
-### **🎯 ENHANCED MARKET SIGNALS SYSTEM**
+### **🚀 SUPER-ENHANCED MARKET SIGNALS SYSTEM (8 INDICATORS)**
+
+*Comprehensive real-data indicator system for maximum recovery prediction accuracy*
+
+### **📊 PHASE 1: ORIGINAL ENHANCED SIGNALS**
 
 #### **Volume Surge Analysis (Real Data)**
 ```python
@@ -330,7 +334,109 @@ def _calculate_economic_regime_filter(self, market_conditions):
 - **Impact**: Different multipliers for each timeframe based on market regime
 - **Reasoning**: High volatility = stronger short-term bounces, stable markets = better long-term recovery
 
-#### **Signal Integration Across Timeframes**
+#### ### **🎯 PHASE 2: HIGH-ACCURACY INDICATORS (NEW!)**
+
+#### **Money Flow Index - Volume-Weighted RSI**
+```python
+def _calculate_money_flow_index(self, hist):
+    """Volume-weighted RSI - more reliable than standard RSI"""
+    # Calculate typical price (HLC/3)
+    typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
+    money_flow = typical_price * hist['Volume']
+    
+    # 14-period MFI calculation with volume weighting
+    # MFI <= 20 = Strong oversold (60% recovery boost)
+    # MFI <= 30 = Moderate oversold (40% recovery boost)
+```
+
+**Why MFI > RSI**: Unlike RSI, MFI includes volume data, making it superior for detecting institutional accumulation during price drops.
+
+**Data Source**: Real OHLCV data from Yahoo Finance
+**Reliability**: High - combines price AND volume momentum
+**Best For**: Detecting smart money accumulation in oversold stocks
+
+#### **MACD Histogram + Signal Divergence**
+```python
+def _calculate_macd_histogram_signal(self, hist):
+    """MACD histogram crossovers and bullish divergence detection"""
+    # Standard MACD calculation (12,26,9)
+    ema_12 = close_prices.ewm(span=12).mean()
+    ema_26 = close_prices.ewm(span=26).mean()
+    macd_line = ema_12 - ema_26
+    signal_line = macd_line.ewm(span=9).mean()
+    histogram = macd_line - signal_line
+    
+    # Bullish crossover = 50% boost
+    # Bullish divergence = 40% boost  
+    # Momentum acceleration = 20% boost
+```
+
+**Research Validation**: Studies show MACD-based strategies are "safest and most effective" for 2024
+**Best Signals**: Histogram crossing above zero + bullish divergence
+**Timeframe Impact**: Strongest on short-term, moderate on medium/long-term
+
+#### **Bollinger Band Squeeze + Expansion**
+```python
+def _calculate_bollinger_squeeze_signal(self, hist):
+    """Volatility squeeze detection and breakout prediction"""
+    # 20-period Bollinger Bands (2 std dev)
+    sma_20 = close_prices.rolling(window=20).mean()
+    upper_band = sma_20 + (2 * std_20)
+    lower_band = sma_20 - (2 * std_20)
+    
+    # %B position and squeeze detection
+    percent_b = (close_prices - lower_band) / (upper_band - lower_band)
+    squeeze_detected = current_bandwidth < avg_bandwidth * 0.8
+    
+    # %B <= 0.1 + volume spike = 50% boost (oversold bounce)
+    # Squeeze + %B < 0.2 = 30% boost (breakout setup)
+```
+
+**Market Validation**: Bollinger Bands are "one of the most trusted indicators"
+**Squeeze Logic**: Low volatility periods (squeeze) precede high volatility breakouts
+**Volume Confirmation**: Combines price position with volume confirmation
+
+#### **Put/Call Ratio - Contrarian Sentiment**
+```python
+def _calculate_put_call_ratio_signal(self, symbol):
+    """Options sentiment extremes as contrarian indicators"""
+    # Get real options data from Yahoo Finance
+    option_chain = stock.option_chain(next_expiration)
+    
+    # Calculate volume and open interest ratios
+    pc_volume_ratio = total_put_volume / total_call_volume
+    pc_oi_ratio = total_put_oi / total_call_oi
+    combined_ratio = (pc_volume_ratio * 0.7) + (pc_oi_ratio * 0.3)
+    
+    # P/C >= 1.5 = Extreme bearish (40% contrarian boost)
+    # P/C >= 1.2 = High bearish (25% contrarian boost)
+```
+
+**Contrarian Logic**: Extreme bearish sentiment often marks bottoms
+**Real Data**: Uses actual options volume and open interest from Yahoo Finance
+**Weighting**: 70% volume (immediate) + 30% open interest (positioning)
+
+#### **Short Interest + Squeeze Potential**
+```python
+def _calculate_short_interest_signal(self, symbol, info):
+    """Short squeeze risk assessment"""
+    short_percent = info.get('shortPercentOfFloat')
+    shares_short = info.get('sharesShort') 
+    avg_volume = info.get('averageVolume')
+    days_to_cover = shares_short / avg_volume
+    
+    # High squeeze potential: >=20% short + >=7 days to cover = 40% boost
+    # Moderate risk: >=15% short + >=5 days = 25% boost
+    # Some risk: >=10% short = 10% boost
+```
+
+**Squeeze Logic**: High short interest + low liquidity = potential explosive moves
+**Real Data**: Yahoo Finance short interest and float data
+**Days to Cover**: Time for shorts to exit = squeeze duration indicator
+
+### **⚡ ADVANCED SIGNAL INTEGRATION**
+
+**Signal Integration Across Timeframes**
 ```python
 def _calculate_sophisticated_timeframes(self, ..., volume_signal, rsi_signal, regime_filter):
     # Apply signals with timeframe-specific weighting
@@ -632,7 +738,8 @@ This application uses **EXCLUSIVELY REAL financial data**:
 ✅ **Earnings Data**: Actual earnings dates and surprise data  
 ✅ **Economic Calendar**: Real Fed, CPI, and jobs report schedules  
 ✅ **Institutional Flow**: Volume-based estimates from real market data  
-✅ **Enhanced Market Signals**: Volume Surge Analysis, RSI Mean Reversion, VIX-based Economic Regime Filtering
+✅ **Original Enhanced Signals**: Volume Surge, RSI Mean Reversion, Economic Regime Filter
+✅ **NEW High-Accuracy Indicators**: Money Flow Index, MACD Histogram, Bollinger Squeeze, Put/Call Ratio, Short Interest
 
 🚫 **NO fake, simulated, random, or demonstration data used**
 
