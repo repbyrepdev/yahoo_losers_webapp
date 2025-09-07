@@ -2774,12 +2774,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
 
 
-            <div class="section">
-                <h3>⚠️ Disclaimer</h3>
-                <p><em>This analysis is for informational purposes only and should not be considered as financial advice. 
-                Stock investments carry risk, and past performance does not guarantee future results. 
-                Always consult with a qualified financial advisor before making investment decisions.</em></p>
-            </div>
 
             <!-- Footer -->
             <footer style="background-color: #343a40; color: white; padding: 30px 20px; margin-top: 40px; text-align: center; border-radius: 8px;">
@@ -2813,6 +2807,15 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                            style="background-color: #17a2b8; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block; margin: 0 10px;">
                             🔗 My GitHub Profile
                         </a>
+                    </div>
+                    
+                    <!-- Disclaimer -->
+                    <div style="background: rgba(255,193,7,0.1); border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 20px 0;">
+                        <p style="margin: 0; font-size: 13px; color: #fff8dc; line-height: 1.5;">
+                            <strong>⚠️ Disclaimer:</strong> This analysis is for informational purposes only and should not be considered as financial advice. 
+                            Stock investments carry risk, and past performance does not guarantee future results. 
+                            Always consult with a qualified financial advisor before making investment decisions.
+                        </p>
                     </div>
                     
                     <p style="margin-top: 15px; font-size: 12px; color: #adb5bd;">
