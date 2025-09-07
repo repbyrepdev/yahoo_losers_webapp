@@ -1165,7 +1165,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Create title with exchange indicator
             const title = document.createElement('h3');
             title.textContent = symbol + ' - Live Chart (Auto-detect)';
-            title.style.cssText = 'margin-top: 0; text-align: center; color: #333;';
+            title.style.cssText = 'margin-top: 0; text-align: left; color: var(--text-primary);';
             
             // Update title when switching exchanges
             const updateTitle = (exchange) => {
@@ -1264,7 +1264,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ai-analysis-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖 AI News Detective</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">🤖 AI News Detective</h3>
                 <div style="text-align: center; padding: 40px;">
                     <div style="font-size: 48px; animation: spin 1s linear infinite;">🔍</div>
                     <h4>Analyzing ${symbol}...</h4>
@@ -1303,7 +1303,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ai-analysis-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖 AI News Analysis: ${symbol}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">🤖 AI News Analysis: ${symbol}</h3>
                 
                 <div style="background: ${style.bg}; border: 1px solid ${style.color}; border-radius: 8px; padding: 20px; margin: 20px 0;">
                     <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
@@ -1319,7 +1319,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     </div>
                     
                     <div style="background: white; padding: 15px; border-radius: 5px; border-left: 4px solid ${style.color};">
-                        <h4 style="margin: 0 0 10px 0; color: #333;">Why ${symbol} is falling:</h4>
+                        <h4 style="margin: 0 0 10px 0; color: var(--text-primary);">Why ${symbol} is falling:</h4>
                         <p style="margin: 0; font-size: 16px; line-height: 1.5;">${analysis.reason}</p>
                     </div>
                 </div>
@@ -1391,7 +1391,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('recovery-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🔮 Recovery Predictor</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">🔮 Recovery Predictor</h3>
                 <div style="text-align: center; padding: 40px;">
                     <div style="font-size: 48px; animation: spin 1s linear infinite;">🔮</div>
                     <h4>Analyzing ${symbol} Recovery Potential...</h4>
@@ -1456,7 +1456,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('recovery-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🔮 Recovery Prediction: ${symbol}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">🔮 Recovery Prediction: ${symbol}</h3>
                 
                 <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 10px; margin: 15px 0;">
                     <div style="font-size: 48px; margin-bottom: 10px;">
@@ -1533,7 +1533,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('sentiment-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">📱 Social Sentiment Radar</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">📱 Social Sentiment Radar</h3>
                 <div style="text-align: center; padding: 40px;">
                     <div style="font-size: 48px; animation: pulse 1.5s ease-in-out infinite;">📊</div>
                     <h4>Scanning Social Media for ${symbol}...</h4>
@@ -1576,7 +1576,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('sentiment-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">📱 Social Sentiment: ${symbol}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">📱 Social Sentiment: ${symbol}</h3>
                 
                 <div style="text-align: center; padding: 25px; background: ${panicColor}; color: white; border-radius: 10px; margin: 15px 0;">
                     <div style="font-size: 36px; font-weight: bold; margin-bottom: 10px;">
@@ -1671,7 +1671,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('comprehensive-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🔮📱 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">🔮📱 Complete Analysis: ${symbol}</h3>
                 <div style="text-align: center; padding: 40px;">
                     <div style="font-size: 48px; animation: spin 1s linear infinite;">🔮</div>
                     <div style="margin-top: 20px; font-size: 16px; color: #666;">
@@ -1721,7 +1721,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('comprehensive-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🔮📱 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">🔮📱 Complete Analysis: ${symbol}</h3>
                 
                 <!-- Social Sentiment Section -->
                 <div style="background: ${panicColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
@@ -1828,7 +1828,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">📊 Complete Analysis: ${displayName}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">📊 Complete Analysis: ${displayName}</h3>
                 <div style="text-align: center; padding: 40px;">
                     <div style="font-size: 48px; animation: spin 1s linear infinite;">🤖</div>
                     <div style="margin-top: 20px; font-size: 16px; color: #666;">
@@ -1892,7 +1892,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">📊 Complete Analysis: ${displayName}</h3>
+                <h3 style="text-align: left; color: var(--text-primary); margin-top: 0;">📊 Complete Analysis: ${displayName}</h3>
                 
                 <!-- Tab Navigation -->
                 <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee; flex-wrap: wrap;">
@@ -2628,7 +2628,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
             <!-- Clean Market Overview -->
             <div class="section">
-                <h3 style="margin-bottom: 20px;">📈 Market Overview</h3>
+                <h2 style="margin-bottom: 20px; text-align: left;">📈 Market Overview</h2>
                 <div style="display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; gap: 20px;">
                     <div class="market-stat">
                         <div style="font-size: 20px; font-weight: 600; color: {{ market_analysis.vix_analysis.color }};">{{ market_analysis.vix_analysis.current_vix }}</div>
@@ -2647,7 +2647,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 
 
             <div class="section">
-                <h2>🔍 Short Term Recovery Recommendations</h2>
+                <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
                 {% if recommendations %}
                     <table>
                         <thead>
@@ -2683,40 +2683,40 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         </tbody>
                     </table>
                 {% else %}
-                    <div style="background: #f8f9fa; border: 2px solid #6c757d; border-radius: 10px; padding: 25px; text-align: center;">
+                    <div style="background: var(--bg-secondary); border: 2px solid var(--border-color); border-radius: 10px; padding: 25px; text-align: center;">
                         <div style="font-size: 48px; margin-bottom: 15px;">🤖</div>
-                        <h3 style="color: #6c757d; margin-bottom: 15px;">No Strong Buy Recommendations Today</h3>
-                        <p style="font-size: 16px; color: #495057; margin-bottom: 20px;">
+                        <h3 style="color: var(--text-primary); margin-bottom: 15px; text-align: left;">No Strong Buy Recommendations Today</h3>
+                        <p style="font-size: 16px; color: var(--text-secondary); margin-bottom: 20px;">
                             This is actually <strong>good news</strong> - our AI is being appropriately conservative in current market conditions.
                         </p>
                         
-                        <div style="background: white; border-radius: 8px; padding: 20px; margin: 15px 0; text-align: left;">
-                            <h4 style="color: #6c757d; margin-bottom: 10px;">📊 Current Market Snapshot:</h4>
-                            <ul style="margin: 0; color: #495057;">
+                        <div style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; margin: 15px 0; text-align: left;">
+                            <h4 style="color: var(--text-primary); margin-bottom: 10px;">📊 Current Market Snapshot:</h4>
+                            <ul style="margin: 0; color: var(--text-secondary);">
                                 <li><strong>VIX Level:</strong> {{ market_analysis.vix_analysis.current_vix }} ({{ market_analysis.vix_analysis.regime }})</li>
                                 <li><strong>Market Trend:</strong> {{ market_analysis.market_trend.trend }} (SPY {{ market_analysis.market_trend.week_change|round(2) if market_analysis.market_trend.week_change != 'N/A' else 'N/A' }}%)</li>
                                 <li><strong>Recovery Environment:</strong> {{ market_analysis.vix_analysis.recovery_impact }}</li>
                             </ul>
                         </div>
                         
-                        <div style="background: #e3f2fd; border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left;">
-                            <h4 style="color: #1976d2; margin-bottom: 10px;">🎯 What We're Looking For:</h4>
-                            <div style="color: #1565c0; font-size: 14px;">
+                        <div style="background: var(--bg-tertiary); border: 1px solid var(--accent-blue); border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left;">
+                            <h4 style="color: var(--accent-blue); margin-bottom: 10px;">🎯 What We're Looking For:</h4>
+                            <div style="color: var(--text-secondary); font-size: 14px;">
                                 <strong>Strong Buy Signals:</strong> Recovery scores ≥75% with "STRONG BUY" recommendations<br>
                                 <strong>Market Catalyst:</strong> VIX >25 or significant market corrections (SPY -3%+)<br>
                                 <strong>Technical Oversold:</strong> Multiple stocks showing extreme oversold conditions simultaneously
                             </div>
                         </div>
                         
-                        <div style="background: #fff3cd; border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left;">
-                            <h4 style="color: #856404; margin-bottom: 10px;">💡 Why This Approach Works:</h4>
-                            <p style="color: #6c5914; font-size: 14px; margin: 0;">
+                        <div style="background: var(--bg-tertiary); border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left;">
+                            <h4 style="color: #ffc107; margin-bottom: 10px;">💡 Why This Approach Works:</h4>
+                            <p style="color: var(--text-secondary); font-size: 14px; margin: 0;">
                                 By waiting for high-conviction opportunities, we avoid the trap of mediocre recommendations during uncertain periods. 
                                 Quality over quantity means better risk-adjusted returns when opportunities do arise.
                             </p>
                         </div>
                         
-                        <p style="font-style: italic; color: #6c757d; margin-top: 20px;">
+                        <p style="font-style: italic; color: var(--text-secondary); margin-top: 20px;">
                             Check back during periods of market stress or volatility for potential opportunities!
                         </p>
                     </div>
@@ -2724,7 +2724,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
 
             <div class="section">
-                <h2>📊 Complete Analysis (All Daily Losers)</h2>
+                <h2 style="text-align: left;">📊 Complete Analysis (All Daily Losers)</h2>
                 <p><em>Comprehensive analysis of all daily losers with AI recovery predictions and market insights.</em></p>
                 {% if all_analysis %}
                     <table>
