@@ -1812,6 +1812,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 sentimentCache[symbol] = sentimentData.sentiment;
                 recoveryCache[symbol] = recoveryData.prediction;
                 
+                // Store recovery data globally for medium/long-term breakdowns
+                window.currentRecoveryData = recoveryData.prediction;
+                
                 displayUltimateModal(symbol, aiData.analysis, sentimentData.sentiment, recoveryData.prediction, companyName);
             }).catch(error => {
                 console.error('Ultimate analysis error:', error);
@@ -2348,52 +2351,63 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Load medium-term recovery data
         function loadMediumTermData() {
             const mediumtermData = document.getElementById('mediumterm-data');
-            // Try multiple ways to get the symbol
-            const h3Element = document.querySelector('#ultimate-modal h3');
-            console.log('DEBUG: h3 element:', h3Element);
-            console.log('DEBUG: h3 textContent:', h3Element?.textContent);
             
+            // Get the recovery data that was already loaded in the ultimate modal
+            const h3Element = document.querySelector('#ultimate-modal h3');
             let symbol = null;
             if (h3Element && h3Element.textContent) {
-                // Try different regex patterns
                 const patterns = [
-                    /: ([A-Z]+)(?:\s|$)/,  // Standard pattern with word boundary
-                    /Analysis:\s*([A-Z]+)/,  // "Analysis: SYMBOL"
-                    /([A-Z]{2,5})$/,        // 2-5 uppercase letters at end
-                    /([A-Z]+)/              // Any uppercase letters
+                    /: ([A-Z]+)(?:\s|$)/,
+                    /Analysis:\s*([A-Z]+)/,
+                    /([A-Z]{2,5})$/,
+                    /([A-Z]+)/
                 ];
                 
                 for (let pattern of patterns) {
                     const match = h3Element.textContent.match(pattern);
                     if (match && match[1]) {
                         symbol = match[1];
-                        console.log('DEBUG: Found symbol using pattern:', pattern, 'Symbol:', symbol);
                         break;
                     }
                 }
             }
             
-            console.log('DEBUG: Final extracted symbol:', symbol);
-            
             if (!symbol) {
-                console.error('No symbol found in h3 element');
                 mediumtermData.innerHTML = `<div style="text-align: center; color: rgba(255,255,255,0.8);"><div style="font-size: 16px; margin: 20px 0;">❌ No symbol found</div></div>`;
                 return;
             }
             
-            // Show loading state
-            mediumtermData.innerHTML = `
-                <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                    <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
-                </div>
-            `;
-            
-            fetch('/api/sophisticated-timeframe/' + symbol)
+            // Use the recovery data already loaded from the ultimate modal
+            const recovery = window.currentRecoveryData;
+            if (!recovery || !recovery.sophisticated_analysis) {
+                // If not available in memory, make the API call
+                mediumtermData.innerHTML = `
+                    <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                        <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
+                    </div>
+                `;
+                
+                fetch('/api/sophisticated-timeframe/' + symbol)
                 .then(response => response.json())
                 .then(data => {
-                    const sophisticatedAnalysis = data.sophisticated_analysis;
-                    const mediumTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.medium_term || {};
-                    const mediumTargets = sophisticatedAnalysis?.medium_targets || {};
+                    processMediumTermData(data.sophisticated_analysis);
+                })
+                .catch(error => {
+                    console.error('Medium-term data error:', error);
+                    mediumtermData.innerHTML = `
+                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading medium-term data</div>
+                        </div>
+                    `;
+                });
+            } else {
+                // Use already loaded data
+                processMediumTermData(recovery.sophisticated_analysis);
+            }
+            
+            function processMediumTermData(sophisticatedAnalysis) {
+                const mediumTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.medium_term || {};
+                const mediumTargets = sophisticatedAnalysis?.medium_targets || {};
                     
                     if (Object.keys(mediumTermPredictions).length === 0) {
                         mediumtermData.innerHTML = `
@@ -2479,6 +2493,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
                         // Build detailed mathematical breakdown for medium-term
+                        const recovery = window.currentRecoveryData || {};
                         const mediumTermData = recovery.sophisticated_analysis?.timeframe_predictions?.medium_term || {};
                         const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
                         let mediumTargetsBreakdown = '';
@@ -2574,65 +2589,69 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         `;
                         breakdownElement.style.display = 'block';
                     }
-                })
-                .catch(error => {
-                    console.error('Medium-term data error:', error);
-                    mediumtermData.innerHTML = `
-                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading medium-term data</div>
-                        </div>
-                    `;
-                });
+                }
+            }
         }
         
         // Load long-term analyst data
         function loadLongTermData() {
             const longtermData = document.getElementById('longterm-data');
-            // Try multiple ways to get the symbol
-            const h3Element = document.querySelector('#ultimate-modal h3');
-            console.log('DEBUG LONG: h3 element:', h3Element);
-            console.log('DEBUG LONG: h3 textContent:', h3Element?.textContent);
             
+            // Get the recovery data that was already loaded in the ultimate modal
+            const h3Element = document.querySelector('#ultimate-modal h3');
             let symbol = null;
             if (h3Element && h3Element.textContent) {
-                // Try different regex patterns
                 const patterns = [
-                    /: ([A-Z]+)(?:\s|$)/,  // Standard pattern with word boundary
-                    /Analysis:\s*([A-Z]+)/,  // "Analysis: SYMBOL"
-                    /([A-Z]{2,5})$/,        // 2-5 uppercase letters at end
-                    /([A-Z]+)/              // Any uppercase letters
+                    /: ([A-Z]+)(?:\s|$)/,
+                    /Analysis:\s*([A-Z]+)/,
+                    /([A-Z]{2,5})$/,
+                    /([A-Z]+)/
                 ];
                 
                 for (let pattern of patterns) {
                     const match = h3Element.textContent.match(pattern);
                     if (match && match[1]) {
                         symbol = match[1];
-                        console.log('DEBUG LONG: Found symbol using pattern:', pattern, 'Symbol:', symbol);
                         break;
                     }
                 }
             }
             
-            console.log('DEBUG LONG: Final extracted symbol:', symbol);
-            
             if (!symbol) {
-                console.error('No symbol found in h3 element for long-term');
                 longtermData.innerHTML = `<div style="text-align: center; color: rgba(255,255,255,0.8);"><div style="font-size: 16px; margin: 20px 0;">❌ No symbol found</div></div>`;
                 return;
             }
             
-            // Show loading state
-            longtermData.innerHTML = `
-                <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                    <div style="font-size: 16px; margin: 20px 0;">⏳ Loading analyst projections...</div>
-                </div>
-            `;
-            
-            fetch('/api/sophisticated-timeframe/' + symbol)
+            // Use the recovery data already loaded from the ultimate modal
+            const recovery = window.currentRecoveryData;
+            if (!recovery || !recovery.sophisticated_analysis) {
+                // If not available in memory, make the API call
+                longtermData.innerHTML = `
+                    <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                        <div style="font-size: 16px; margin: 20px 0;">⏳ Loading analyst projections...</div>
+                    </div>
+                `;
+                
+                fetch('/api/sophisticated-timeframe/' + symbol)
                 .then(response => response.json())
                 .then(data => {
-                    const sophisticatedAnalysis = data.sophisticated_analysis;
-                    const longTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.long_term || {};
+                    processLongTermData(data.sophisticated_analysis);
+                })
+                .catch(error => {
+                    console.error('Long-term data error:', error);
+                    longtermData.innerHTML = `
+                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading analyst data</div>
+                        </div>
+                    `;
+                });
+            } else {
+                // Use already loaded data
+                processLongTermData(recovery.sophisticated_analysis);
+            }
+            
+            function processLongTermData(sophisticatedAnalysis) {
+                const longTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.long_term || {};
                     
                     if (Object.keys(longTermPredictions).length === 0) {
                         longtermData.innerHTML = `
@@ -2817,15 +2836,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         `;
                         breakdownElement.style.display = 'block';
                     }
-                })
-                .catch(error => {
-                    console.error('Long-term data error:', error);
-                    longtermData.innerHTML = `
-                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading analyst data</div>
-                        </div>
-                    `;
-                });
+                }
+            }
         }
         
         // Theme Toggle Functionality
