@@ -2304,6 +2304,52 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 </div>`;
                         }
                         
+                        // NEW HIGH-ACCURACY SIGNALS
+                        if (enhancedSignals.money_flow_index?.oversold_detected) {
+                            const mfiBoost = enhancedSignals.money_flow_index.recovery_multiplier;
+                            signalMultiplier *= mfiBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #17a2b8;">
+                                    ✓ Money Flow Index: ${mfiBoost.toFixed(2)}x multiplier (MFI ${enhancedSignals.money_flow_index.mfi_value} - volume confirmed)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.macd_histogram?.momentum_shift) {
+                            const macdBoost = enhancedSignals.macd_histogram.recovery_multiplier;
+                            signalMultiplier *= macdBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #dc3545;">
+                                    ✓ MACD Histogram: ${macdBoost.toFixed(2)}x multiplier (${enhancedSignals.macd_histogram.signal_type.replace('_', ' ')})
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                            const bbBoost = enhancedSignals.bollinger_squeeze.recovery_multiplier;
+                            signalMultiplier *= bbBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #6610f2;">
+                                    ✓ Bollinger Bands: ${bbBoost.toFixed(2)}x multiplier (${enhancedSignals.bollinger_squeeze.signal_type.replace('_', ' ')})
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                            const pcBoost = enhancedSignals.put_call_ratio.recovery_multiplier;
+                            signalMultiplier *= pcBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #fd7e14;">
+                                    ✓ Put/Call Ratio: ${pcBoost.toFixed(2)}x multiplier (P/C ${enhancedSignals.put_call_ratio.pc_ratio} - contrarian)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.short_interest?.squeeze_potential) {
+                            const siBoost = enhancedSignals.short_interest.recovery_multiplier;
+                            signalMultiplier *= siBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #e83e8c;">
+                                    ✓ Short Squeeze: ${siBoost.toFixed(2)}x multiplier (${enhancedSignals.short_interest.short_percent}% short interest)
+                                </div>`;
+                        }
+                        
                         const finalScore = Math.min(95, baseScore * signalMultiplier);
                         
                         breakdownContent.innerHTML = `

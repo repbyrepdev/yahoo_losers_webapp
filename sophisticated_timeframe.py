@@ -98,16 +98,24 @@ class SophisticatedTimeframePredictor:
             # 6. SECTOR PERFORMANCE CONTEXT
             sector_context = self._analyze_sector_performance(info)
             
-            # 7. NEW ENHANCED SIGNALS
+            # 7. NEW ENHANCED SIGNALS (EXPANDED WITH HIGH-ACCURACY INDICATORS)
             volume_signal = self._calculate_volume_surge_signal(hist)
             rsi_signal = self._calculate_rsi_mean_reversion_signal(hist)
             regime_filter = self._calculate_economic_regime_filter(market_conditions)
             
-            # 8. CALCULATE SOPHISTICATED TIMEFRAMES (with new signals)
+            # NEW HIGH-ACCURACY INDICATORS
+            mfi_signal = self._calculate_money_flow_index(hist)
+            macd_signal = self._calculate_macd_histogram_signal(hist)
+            bollinger_signal = self._calculate_bollinger_squeeze_signal(hist)
+            put_call_signal = self._calculate_put_call_ratio_signal(symbol)
+            short_interest_signal = self._calculate_short_interest_signal(symbol, info)
+            
+            # 8. CALCULATE SOPHISTICATED TIMEFRAMES (with all enhanced signals)
             timeframe_predictions = self._calculate_sophisticated_timeframes(
                 targets, medium_targets, market_conditions, historical_patterns, 
                 catalysts, technical_momentum, sector_context, current_price,
-                volume_signal, rsi_signal, regime_filter
+                volume_signal, rsi_signal, regime_filter,
+                mfi_signal, macd_signal, bollinger_signal, put_call_signal, short_interest_signal
             )
             
             return {
@@ -124,11 +132,17 @@ class SophisticatedTimeframePredictor:
                 'confidence_level': self._calculate_confidence_level(
                     historical_patterns, market_conditions, technical_momentum
                 ),
-                # NEW ENHANCED SIGNALS
+                # ENHANCED SIGNALS (EXPANDED WITH HIGH-ACCURACY INDICATORS)
                 'enhanced_signals': {
                     'volume_surge': volume_signal,
                     'rsi_reversion': rsi_signal,
-                    'economic_regime': regime_filter
+                    'economic_regime': regime_filter,
+                    # NEW HIGH-ACCURACY SIGNALS
+                    'money_flow_index': mfi_signal,
+                    'macd_histogram': macd_signal,
+                    'bollinger_squeeze': bollinger_signal,
+                    'put_call_ratio': put_call_signal,
+                    'short_interest': short_interest_signal
                 }
             }
             
@@ -710,7 +724,10 @@ class SophisticatedTimeframePredictor:
                                          historical_patterns: Dict, catalysts: Dict,
                                          technical_momentum: Dict, sector_context: Dict,
                                          current_price: float, volume_signal: Dict = None,
-                                         rsi_signal: Dict = None, regime_filter: Dict = None) -> Dict:
+                                         rsi_signal: Dict = None, regime_filter: Dict = None,
+                                         mfi_signal: Dict = None, macd_signal: Dict = None, 
+                                         bollinger_signal: Dict = None, put_call_signal: Dict = None,
+                                         short_interest_signal: Dict = None) -> Dict:
         """Calculate sophisticated timeframes for each recovery target"""
         
         predictions = {}
@@ -793,6 +810,36 @@ class SophisticatedTimeframePredictor:
                 adjusted_days *= (2.0 - regime_boost)  # Convert multiplier to time reduction  
                 signal_multiplier *= regime_boost
             
+            # 4. Money Flow Index Signal (volume-weighted RSI - more reliable)
+            if mfi_signal and mfi_signal.get('oversold_detected', False):
+                mfi_boost = mfi_signal.get('recovery_multiplier', 1.0)
+                adjusted_days *= (2.0 - mfi_boost)  # MFI affects time to recovery
+                signal_multiplier *= mfi_boost
+            
+            # 5. MACD Histogram Signal (momentum shift detection)
+            if macd_signal and macd_signal.get('momentum_shift', False):
+                macd_boost = macd_signal.get('recovery_multiplier', 1.0)
+                adjusted_days *= (2.0 - macd_boost)  # Momentum affects recovery speed
+                signal_multiplier *= macd_boost
+            
+            # 6. Bollinger Band Squeeze Signal (breakout prediction)
+            if bollinger_signal and bollinger_signal.get('signal_type') in ['oversold_bounce', 'squeeze_setup', 'oversold']:
+                bb_boost = bollinger_signal.get('recovery_multiplier', 1.0)
+                adjusted_days *= (2.0 - bb_boost)  # Bollinger signals affect timing
+                signal_multiplier *= bb_boost
+            
+            # 7. Put/Call Ratio Signal (contrarian sentiment)
+            if put_call_signal and put_call_signal.get('extreme_sentiment', False):
+                pc_boost = put_call_signal.get('recovery_multiplier', 1.0)
+                adjusted_days *= (2.0 - pc_boost)  # Sentiment extremes affect recovery
+                signal_multiplier *= pc_boost
+            
+            # 8. Short Interest Signal (squeeze potential)
+            if short_interest_signal and short_interest_signal.get('squeeze_potential', False):
+                si_boost = short_interest_signal.get('recovery_multiplier', 1.0)
+                adjusted_days *= (2.0 - si_boost)  # Short squeeze affects recovery speed
+                signal_multiplier *= si_boost
+            
             # Calculate probability based on multiple factors (including new signals)
             probability = self._calculate_recovery_probability(
                 upside_percent, historical_patterns, market_conditions,
@@ -865,6 +912,37 @@ class SophisticatedTimeframePredictor:
                 regime_boost = regime_filter.get('regime_multipliers', {}).get('medium', 1.0)
                 adjusted_days *= (2.0 - regime_boost)
                 med_signal_multiplier *= regime_boost
+            
+            # NEW INDICATORS (Medium-term with reduced impact)
+            # Money Flow Index (50% impact for medium-term)
+            if mfi_signal and mfi_signal.get('oversold_detected', False):
+                mfi_boost = 1.0 + ((mfi_signal.get('recovery_multiplier', 1.0) - 1.0) * 0.5)
+                adjusted_days *= (2.0 - mfi_boost)
+                med_signal_multiplier *= mfi_boost
+            
+            # MACD Histogram (70% impact for medium-term)
+            if macd_signal and macd_signal.get('momentum_shift', False):
+                macd_boost = 1.0 + ((macd_signal.get('recovery_multiplier', 1.0) - 1.0) * 0.7)
+                adjusted_days *= (2.0 - macd_boost)
+                med_signal_multiplier *= macd_boost
+            
+            # Bollinger Bands (60% impact for medium-term)
+            if bollinger_signal and bollinger_signal.get('signal_type') in ['oversold_bounce', 'squeeze_setup', 'oversold']:
+                bb_boost = 1.0 + ((bollinger_signal.get('recovery_multiplier', 1.0) - 1.0) * 0.6)
+                adjusted_days *= (2.0 - bb_boost)
+                med_signal_multiplier *= bb_boost
+            
+            # Put/Call Ratio (40% impact for medium-term)
+            if put_call_signal and put_call_signal.get('extreme_sentiment', False):
+                pc_boost = 1.0 + ((put_call_signal.get('recovery_multiplier', 1.0) - 1.0) * 0.4)
+                adjusted_days *= (2.0 - pc_boost)
+                med_signal_multiplier *= pc_boost
+            
+            # Short Interest (30% impact for medium-term)
+            if short_interest_signal and short_interest_signal.get('squeeze_potential', False):
+                si_boost = 1.0 + ((short_interest_signal.get('recovery_multiplier', 1.0) - 1.0) * 0.3)
+                adjusted_days *= (2.0 - si_boost)
+                med_signal_multiplier *= si_boost
             
             # Calculate probability for medium-term targets
             probability = self._calculate_recovery_probability(
@@ -1169,6 +1247,368 @@ class SophisticatedTimeframePredictor:
         except Exception as e:
             logger.error(f"Error calculating enhanced recovery score: {e}")
             return 25.0, {}
+    
+    def _calculate_money_flow_index(self, hist: pd.DataFrame) -> Dict:
+        """
+        SIGNAL 4: Money Flow Index - Volume-weighted RSI for institutional activity detection
+        More reliable than RSI as it includes volume - catches smart money accumulation
+        """
+        try:
+            if len(hist) < 14:
+                return None
+            
+            # Calculate typical price (HLC/3)
+            typical_price = (hist['High'] + hist['Low'] + hist['Close']) / 3
+            
+            # Calculate money flow (typical price * volume)
+            money_flow = typical_price * hist['Volume']
+            
+            # Positive and negative money flow
+            positive_mf = []
+            negative_mf = []
+            
+            for i in range(1, len(typical_price)):
+                if typical_price.iloc[i] > typical_price.iloc[i-1]:
+                    positive_mf.append(money_flow.iloc[i])
+                    negative_mf.append(0)
+                elif typical_price.iloc[i] < typical_price.iloc[i-1]:
+                    positive_mf.append(0)
+                    negative_mf.append(money_flow.iloc[i])
+                else:
+                    positive_mf.append(0)
+                    negative_mf.append(0)
+            
+            # Calculate 14-period positive and negative money flow
+            positive_mf = pd.Series([0] + positive_mf)  # Add initial 0
+            negative_mf = pd.Series([0] + negative_mf)  # Add initial 0
+            
+            pos_mf_14 = positive_mf.rolling(window=14).sum()
+            neg_mf_14 = negative_mf.rolling(window=14).sum()
+            
+            # Calculate Money Flow Index
+            money_ratio = pos_mf_14 / neg_mf_14.replace(0, 1)  # Avoid division by zero
+            mfi = 100 - (100 / (1 + money_ratio))
+            
+            current_mfi = mfi.iloc[-1]
+            
+            # MFI signals (more reliable than RSI due to volume)
+            if current_mfi <= 20:  # Strong oversold with volume confirmation
+                return {
+                    'oversold_detected': True,
+                    'mfi_value': round(current_mfi, 1),
+                    'signal_strength': 'strong',
+                    'volume_confirmed': True,
+                    'recovery_multiplier': 1.6,  # 60% boost - stronger than RSI
+                    'description': f'MFI oversold at {current_mfi:.1f} with volume confirmation'
+                }
+            elif current_mfi <= 30:  # Moderate oversold with volume
+                return {
+                    'oversold_detected': True,
+                    'mfi_value': round(current_mfi, 1),
+                    'signal_strength': 'moderate',
+                    'volume_confirmed': True,
+                    'recovery_multiplier': 1.4,  # 40% boost
+                    'description': f'MFI oversold at {current_mfi:.1f}'
+                }
+            else:
+                return {
+                    'oversold_detected': False,
+                    'mfi_value': round(current_mfi, 1),
+                    'signal_strength': 'neutral',
+                    'volume_confirmed': False,
+                    'recovery_multiplier': 1.0,
+                    'description': f'MFI neutral at {current_mfi:.1f}'
+                }
+                
+        except Exception as e:
+            logger.warning(f"Error calculating Money Flow Index: {e}")
+            return None
+    
+    def _calculate_macd_histogram_signal(self, hist: pd.DataFrame) -> Dict:
+        """
+        SIGNAL 5: MACD Histogram + Signal Line Divergence
+        Research shows MACD-based strategies are "safest and most effective" for 2024
+        """
+        try:
+            if len(hist) < 26:
+                return None
+            
+            close_prices = hist['Close']
+            
+            # Calculate MACD components
+            ema_12 = close_prices.ewm(span=12).mean()
+            ema_26 = close_prices.ewm(span=26).mean()
+            macd_line = ema_12 - ema_26
+            signal_line = macd_line.ewm(span=9).mean()
+            histogram = macd_line - signal_line
+            
+            current_histogram = histogram.iloc[-1]
+            prev_histogram = histogram.iloc[-2]
+            current_macd = macd_line.iloc[-1]
+            current_signal = signal_line.iloc[-1]
+            
+            # Check for bullish divergence (price declining, MACD improving)
+            price_trend = (close_prices.iloc[-1] - close_prices.iloc[-5]) / close_prices.iloc[-5]
+            macd_trend = (current_macd - macd_line.iloc[-5]) / abs(macd_line.iloc[-5])
+            
+            bullish_divergence = price_trend < -0.02 and macd_trend > 0.05  # Price down 2%+, MACD improving
+            
+            # MACD signals
+            if current_histogram > 0 and prev_histogram <= 0:  # Histogram crossing above zero
+                return {
+                    'momentum_shift': True,
+                    'macd_value': round(current_macd, 4),
+                    'histogram_value': round(current_histogram, 4),
+                    'signal_type': 'bullish_crossover',
+                    'recovery_multiplier': 1.5,  # 50% boost
+                    'description': 'MACD histogram bullish crossover - momentum shift detected'
+                }
+            elif bullish_divergence:  # Bullish divergence
+                return {
+                    'momentum_shift': True,
+                    'macd_value': round(current_macd, 4),
+                    'histogram_value': round(current_histogram, 4),
+                    'signal_type': 'bullish_divergence',
+                    'recovery_multiplier': 1.4,  # 40% boost
+                    'description': 'MACD bullish divergence - price/momentum disconnect'
+                }
+            elif current_histogram > prev_histogram and current_histogram > 0:  # Strengthening momentum
+                return {
+                    'momentum_shift': True,
+                    'macd_value': round(current_macd, 4),
+                    'histogram_value': round(current_histogram, 4),
+                    'signal_type': 'momentum_acceleration',
+                    'recovery_multiplier': 1.2,  # 20% boost
+                    'description': 'MACD histogram strengthening - positive momentum'
+                }
+            else:
+                return {
+                    'momentum_shift': False,
+                    'macd_value': round(current_macd, 4),
+                    'histogram_value': round(current_histogram, 4),
+                    'signal_type': 'neutral',
+                    'recovery_multiplier': 1.0,
+                    'description': 'MACD neutral - no clear momentum signal'
+                }
+                
+        except Exception as e:
+            logger.warning(f"Error calculating MACD histogram signal: {e}")
+            return None
+    
+    def _calculate_bollinger_squeeze_signal(self, hist: pd.DataFrame) -> Dict:
+        """
+        SIGNAL 6: Bollinger Band Squeeze + Expansion signals
+        "One of the most trusted indicators" - predicts breakout direction and timing
+        """
+        try:
+            if len(hist) < 20:
+                return None
+            
+            close_prices = hist['Close']
+            
+            # Calculate Bollinger Bands (20-period, 2 std dev)
+            sma_20 = close_prices.rolling(window=20).mean()
+            std_20 = close_prices.rolling(window=20).std()
+            upper_band = sma_20 + (2 * std_20)
+            lower_band = sma_20 - (2 * std_20)
+            
+            # Calculate %B (position within bands)
+            percent_b = (close_prices - lower_band) / (upper_band - lower_band)
+            
+            # Calculate band width
+            band_width = (upper_band - lower_band) / sma_20
+            avg_bandwidth = band_width.rolling(window=20).mean()
+            
+            current_bandwidth = band_width.iloc[-1]
+            current_percent_b = percent_b.iloc[-1]
+            current_price = close_prices.iloc[-1]
+            current_lower = lower_band.iloc[-1]
+            current_upper = upper_band.iloc[-1]
+            
+            # Squeeze detection (bandwidth below average)
+            squeeze_ratio = current_bandwidth / avg_bandwidth.iloc[-1] if avg_bandwidth.iloc[-1] > 0 else 1
+            is_squeeze = squeeze_ratio < 0.8  # Bands tighter than 80% of average
+            
+            # Bollinger signals
+            if current_percent_b <= 0.1 and hist['Volume'].iloc[-1] > hist['Volume'].rolling(20).mean().iloc[-1] * 1.5:
+                # Price near lower band + volume spike = bounce signal
+                return {
+                    'squeeze_detected': is_squeeze,
+                    'percent_b': round(current_percent_b, 3),
+                    'squeeze_ratio': round(squeeze_ratio, 2),
+                    'signal_type': 'oversold_bounce',
+                    'recovery_multiplier': 1.5,  # 50% boost
+                    'description': f'Bollinger oversold bounce - %B at {current_percent_b:.2f} with volume'
+                }
+            elif is_squeeze and current_percent_b < 0.2:  # Squeeze + oversold setup
+                return {
+                    'squeeze_detected': True,
+                    'percent_b': round(current_percent_b, 3),
+                    'squeeze_ratio': round(squeeze_ratio, 2),
+                    'signal_type': 'squeeze_setup',
+                    'recovery_multiplier': 1.3,  # 30% boost
+                    'description': f'Bollinger squeeze setup - breakout likely, %B at {current_percent_b:.2f}'
+                }
+            elif current_percent_b <= 0.15:  # Near lower band
+                return {
+                    'squeeze_detected': is_squeeze,
+                    'percent_b': round(current_percent_b, 3),
+                    'squeeze_ratio': round(squeeze_ratio, 2),
+                    'signal_type': 'oversold',
+                    'recovery_multiplier': 1.2,  # 20% boost
+                    'description': f'Bollinger oversold - %B at {current_percent_b:.2f}'
+                }
+            else:
+                return {
+                    'squeeze_detected': is_squeeze,
+                    'percent_b': round(current_percent_b, 3),
+                    'squeeze_ratio': round(squeeze_ratio, 2),
+                    'signal_type': 'neutral',
+                    'recovery_multiplier': 1.0,
+                    'description': f'Bollinger neutral - %B at {current_percent_b:.2f}'
+                }
+                
+        except Exception as e:
+            logger.warning(f"Error calculating Bollinger Band squeeze signal: {e}")
+            return None
+    
+    def _calculate_put_call_ratio_signal(self, symbol: str) -> Dict:
+        """
+        SIGNAL 7: Put/Call Ratio Analysis from real options data
+        Contrarian indicator - extreme bearish sentiment = buying opportunity
+        """
+        try:
+            import yfinance as yf
+            
+            # Get options data from Yahoo Finance
+            stock = yf.Ticker(symbol)
+            
+            try:
+                # Get next expiration date
+                exp_dates = stock.options
+                if not exp_dates:
+                    return None
+                
+                next_exp = exp_dates[0]  # Nearest expiration
+                option_chain = stock.option_chain(next_exp)
+                
+                calls = option_chain.calls
+                puts = option_chain.puts
+                
+                # Calculate put/call ratio by volume and open interest
+                total_call_volume = calls['volume'].fillna(0).sum()
+                total_put_volume = puts['volume'].fillna(0).sum()
+                total_call_oi = calls['openInterest'].fillna(0).sum()
+                total_put_oi = puts['openInterest'].fillna(0).sum()
+                
+                # Volume-based P/C ratio (more immediate)
+                pc_volume_ratio = total_put_volume / max(total_call_volume, 1)
+                # Open Interest-based P/C ratio (longer-term positioning)
+                pc_oi_ratio = total_put_oi / max(total_call_oi, 1)
+                
+                # Combined ratio (weighted toward volume for immediate sentiment)
+                combined_pc_ratio = (pc_volume_ratio * 0.7) + (pc_oi_ratio * 0.3)
+                
+                # Put/Call ratio signals (contrarian)
+                if combined_pc_ratio >= 1.5:  # Extreme bearish sentiment
+                    return {
+                        'extreme_sentiment': True,
+                        'pc_ratio': round(combined_pc_ratio, 2),
+                        'pc_volume_ratio': round(pc_volume_ratio, 2),
+                        'pc_oi_ratio': round(pc_oi_ratio, 2),
+                        'sentiment_type': 'extreme_bearish',
+                        'recovery_multiplier': 1.4,  # 40% boost - contrarian signal
+                        'description': f'Extreme bearish sentiment P/C {combined_pc_ratio:.2f} - contrarian buy'
+                    }
+                elif combined_pc_ratio >= 1.2:  # High bearish sentiment
+                    return {
+                        'extreme_sentiment': True,
+                        'pc_ratio': round(combined_pc_ratio, 2),
+                        'pc_volume_ratio': round(pc_volume_ratio, 2),
+                        'pc_oi_ratio': round(pc_oi_ratio, 2),
+                        'sentiment_type': 'high_bearish',
+                        'recovery_multiplier': 1.25,  # 25% boost
+                        'description': f'High bearish sentiment P/C {combined_pc_ratio:.2f} - potential reversal'
+                    }
+                else:
+                    return {
+                        'extreme_sentiment': False,
+                        'pc_ratio': round(combined_pc_ratio, 2),
+                        'pc_volume_ratio': round(pc_volume_ratio, 2),
+                        'pc_oi_ratio': round(pc_oi_ratio, 2),
+                        'sentiment_type': 'neutral',
+                        'recovery_multiplier': 1.0,
+                        'description': f'Neutral options sentiment P/C {combined_pc_ratio:.2f}'
+                    }
+                    
+            except Exception as e:
+                logger.warning(f"Could not get options data for {symbol}: {e}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"Error calculating Put/Call ratio signal: {e}")
+            return None
+    
+    def _calculate_short_interest_signal(self, symbol: str, info: Dict) -> Dict:
+        """
+        SIGNAL 8: Short Interest + Days to Cover Analysis
+        High short interest with low volume = potential short squeeze
+        """
+        try:
+            import yfinance as yf
+            
+            # Get short interest data from Yahoo Finance info
+            short_percent = info.get('shortPercentOfFloat')
+            shares_short = info.get('sharesShort')
+            avg_volume = info.get('averageVolume')
+            
+            if not all([short_percent, shares_short, avg_volume]):
+                return None
+            
+            # Calculate days to cover (shares short / average daily volume)
+            days_to_cover = shares_short / max(avg_volume, 1)
+            
+            # Short interest thresholds
+            if short_percent >= 20 and days_to_cover >= 7:  # High short interest + high days to cover
+                return {
+                    'squeeze_potential': True,
+                    'short_percent': round(short_percent, 1),
+                    'days_to_cover': round(days_to_cover, 1),
+                    'squeeze_risk': 'high',
+                    'recovery_multiplier': 1.4,  # 40% boost - potential squeeze
+                    'description': f'High short squeeze risk: {short_percent}% short, {days_to_cover:.1f} days to cover'
+                }
+            elif short_percent >= 15 and days_to_cover >= 5:  # Moderate short interest
+                return {
+                    'squeeze_potential': True,
+                    'short_percent': round(short_percent, 1),
+                    'days_to_cover': round(days_to_cover, 1),
+                    'squeeze_risk': 'moderate',
+                    'recovery_multiplier': 1.25,  # 25% boost
+                    'description': f'Moderate short squeeze risk: {short_percent}% short, {days_to_cover:.1f} days to cover'
+                }
+            elif short_percent >= 10:  # Some short interest
+                return {
+                    'squeeze_potential': False,
+                    'short_percent': round(short_percent, 1),
+                    'days_to_cover': round(days_to_cover, 1),
+                    'squeeze_risk': 'low',
+                    'recovery_multiplier': 1.1,  # 10% boost
+                    'description': f'Low short interest: {short_percent}% short, {days_to_cover:.1f} days to cover'
+                }
+            else:
+                return {
+                    'squeeze_potential': False,
+                    'short_percent': round(short_percent, 1) if short_percent else 0,
+                    'days_to_cover': round(days_to_cover, 1),
+                    'squeeze_risk': 'minimal',
+                    'recovery_multiplier': 1.0,
+                    'description': f'Minimal short interest: {short_percent or 0}% short'
+                }
+                
+        except Exception as e:
+            logger.warning(f"Error calculating short interest signal: {e}")
+            return None
     
     def _fallback_prediction(self, symbol: str) -> Dict:
         """Fallback prediction when data is insufficient"""
