@@ -2136,11 +2136,46 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     const avgConfidence = targets.some(t => t.confidence === 'High') ? 'High' : 
                                          targets.some(t => t.confidence === 'Medium') ? 'Medium' : 'Low';
                     
+                    // Calculate overall score from short-term targets (consistent with medium/long-term)
+                    const avgProbability = targets.length > 0 ? targets.reduce((sum, t) => sum + (t.probability || 0), 0) / targets.length : 0;
+                    
+                    // Calculate final score with signal multipliers for header (matching medium/long-term pattern)
+                    const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                    let shortTermSignalMultiplier = 1.0;
+                    
+                    if (enhancedSignals.volume_surge?.surge_detected) {
+                        shortTermSignalMultiplier *= enhancedSignals.volume_surge.surge_multiplier;
+                    }
+                    if (enhancedSignals.rsi_reversion?.oversold_detected) {
+                        shortTermSignalMultiplier *= enhancedSignals.rsi_reversion.reversion_multiplier;
+                    }
+                    if (enhancedSignals.economic_regime?.regime) {
+                        const regimeBoost = enhancedSignals.economic_regime.short_term_multiplier || 1.0;
+                        shortTermSignalMultiplier *= regimeBoost;
+                    }
+                    if (enhancedSignals.money_flow_index?.oversold_detected) {
+                        shortTermSignalMultiplier *= enhancedSignals.money_flow_index.recovery_multiplier;
+                    }
+                    if (enhancedSignals.macd_histogram?.momentum_shift) {
+                        shortTermSignalMultiplier *= enhancedSignals.macd_histogram.recovery_multiplier;
+                    }
+                    if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                        shortTermSignalMultiplier *= enhancedSignals.bollinger_squeeze.recovery_multiplier;
+                    }
+                    if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                        shortTermSignalMultiplier *= enhancedSignals.put_call_ratio.recovery_multiplier;
+                    }
+                    if (enhancedSignals.short_interest?.squeeze_potential) {
+                        shortTermSignalMultiplier *= enhancedSignals.short_interest.recovery_multiplier;
+                    }
+                    
+                    const shortTermFinalScore = Math.min(95, avgProbability * shortTermSignalMultiplier);
+                    
                     // Header with confidence levels matching other sections
                     recoveryData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.prediction?.recovery_score || 0) * 10) / 10}%</div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round(shortTermFinalScore)}%</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                             </div>
                             <div>
@@ -2203,8 +2238,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Add mathematical breakdown
                     const breakdownElement = document.getElementById('recovery-breakdown');
                     const breakdownContent = document.getElementById('recovery-breakdown-content');
-                    if (breakdownElement && breakdownContent && recovery.score_breakdown) {
-                        const breakdown = recovery.score_breakdown;
+                    if (breakdownElement && breakdownContent && Object.keys(shortTermData).length > 0) {
                         
                         // Check for enhanced signals
                         const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
