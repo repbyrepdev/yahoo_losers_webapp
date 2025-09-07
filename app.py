@@ -1795,9 +1795,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         }
         
         // Ultimate Complete Analysis functionality (AI + Social + Recovery)
-        function showUltimateAnalysis(symbol) {
+        function showUltimateAnalysis(symbol, companyName = '') {
             // Create loading modal first
-            showUltimateLoading(symbol);
+            showUltimateLoading(symbol, companyName);
             
             // Fetch ALL THREE REAL analysis types in parallel for comprehensive stock analysis
             // Data Sources: Yahoo Finance analyst data + Reddit/StockTwits APIs + Sophisticated multi-target recovery
@@ -1812,21 +1812,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 sentimentCache[symbol] = sentimentData.sentiment;
                 recoveryCache[symbol] = recoveryData.prediction;
                 
-                displayUltimateModal(symbol, aiData.analysis, sentimentData.sentiment, recoveryData.prediction);
+                displayUltimateModal(symbol, aiData.analysis, sentimentData.sentiment, recoveryData.prediction, companyName);
             }).catch(error => {
                 console.error('Ultimate analysis error:', error);
-                displayUltimateModal(symbol, null, null, null);
+                displayUltimateModal(symbol, null, null, null, companyName);
             });
         }
         
-        function showUltimateLoading(symbol) {
+        function showUltimateLoading(symbol, companyName = '') {
             const modal = createModal('ultimate-modal');
             const container = createModalContainer();
+            
+            const displayName = companyName ? `${symbol} - ${companyName}` : symbol;
             
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">📊 Complete Analysis: ${displayName}</h3>
                 <div style="text-align: center; padding: 40px;">
                     <div style="font-size: 48px; animation: spin 1s linear infinite;">🤖</div>
                     <div style="margin-top: 20px; font-size: 16px; color: #666;">
@@ -1842,7 +1844,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             document.body.appendChild(modal);
         }
         
-        function displayUltimateModal(symbol, aiAnalysis, sentiment, recovery) {
+        function displayUltimateModal(symbol, aiAnalysis, sentiment, recovery, companyName = '') {
             const existingModal = document.getElementById('ultimate-modal');
             if (existingModal) existingModal.remove();
             
@@ -1885,11 +1887,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 }
             };
             const aiCategory = getCategoryFromSentiment(aiAnalysis.sentiment);
+            const displayName = companyName ? `${symbol} - ${companyName}` : symbol;
             
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">📊🔮⏰📊 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">📊 Complete Analysis: ${displayName}</h3>
                 
                 <!-- Tab Navigation -->
                 <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee; flex-wrap: wrap;">
@@ -2490,7 +2493,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
                                 <td>
-                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}', '{{ stock.Name }}')" 
                                             style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">
                                         🤖📱🔮 Analysis
                                     </button>
@@ -2576,7 +2579,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
                                 <td>
-                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">🤖📱🔮 Analysis</button>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}', '{{ stock.Name }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">🤖📱🔮 Analysis</button>
                                 </td>
                             </tr>
                             {% endfor %}
