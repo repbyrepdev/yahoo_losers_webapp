@@ -2115,12 +2115,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
             `;
             
-            fetch('/api/recovery-prediction/' + symbol)
+            fetch('/api/sophisticated-timeframe/' + symbol)
                 .then(response => response.json())
                 .then(data => {
-                    const recovery = data.prediction;
+                    const recovery = data;
                     
-                    if (!recovery || !recovery.recovery_score) {
+                    if (!recovery || !recovery.prediction || !recovery.prediction.recovery_score) {
                         recoveryData.innerHTML = `
                             <div style="text-align: center; color: rgba(255,255,255,0.8);">
                                 <div style="font-size: 16px; margin: 20px 0;">📊 No recovery data available</div>
@@ -2140,7 +2140,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     recoveryData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.prediction?.recovery_score || 0) * 10) / 10}%</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                             </div>
                             <div>
