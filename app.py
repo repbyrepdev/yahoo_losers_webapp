@@ -2377,35 +2377,28 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return;
             }
             
-            // Use the recovery data already loaded from the ultimate modal
+            // Show loading state
+            mediumtermData.innerHTML = `
+                <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                    <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
+                </div>
+            `;
+            
+            // Use the recovery data already loaded or fetch it
             const recovery = window.currentRecoveryData;
-            if (!recovery || !recovery.sophisticated_analysis) {
-                // If not available in memory, make the API call
-                mediumtermData.innerHTML = `
-                    <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                        <div style="font-size: 16px; margin: 20px 0;">⏳ Loading medium-term analysis...</div>
-                    </div>
-                `;
-                
-                fetch('/api/sophisticated-timeframe/' + symbol)
-                .then(response => response.json())
-                .then(data => {
-                    processMediumTermData(data.sophisticated_analysis);
-                })
-                .catch(error => {
-                    console.error('Medium-term data error:', error);
-                    mediumtermData.innerHTML = `
-                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading medium-term data</div>
-                        </div>
-                    `;
-                });
-            } else {
+            let dataPromise;
+            
+            if (recovery && recovery.sophisticated_analysis) {
                 // Use already loaded data
-                processMediumTermData(recovery.sophisticated_analysis);
+                dataPromise = Promise.resolve(recovery.sophisticated_analysis);
+            } else {
+                // Fetch the data
+                dataPromise = fetch('/api/sophisticated-timeframe/' + symbol)
+                    .then(response => response.json())
+                    .then(data => data.sophisticated_analysis);
             }
             
-            function processMediumTermData(sophisticatedAnalysis) {
+            dataPromise.then(sophisticatedAnalysis => {
                 const mediumTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.medium_term || {};
                 const mediumTargets = sophisticatedAnalysis?.medium_targets || {};
                     
@@ -2589,8 +2582,15 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         `;
                         breakdownElement.style.display = 'block';
                     }
-                }
-            }
+                })
+                .catch(error => {
+                    console.error('Medium-term data error:', error);
+                    mediumtermData.innerHTML = `
+                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading medium-term data</div>
+                        </div>
+                    `;
+                });
         }
         
         // Load long-term analyst data
@@ -2622,35 +2622,28 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return;
             }
             
-            // Use the recovery data already loaded from the ultimate modal
+            // Show loading state
+            longtermData.innerHTML = `
+                <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                    <div style="font-size: 16px; margin: 20px 0;">⏳ Loading analyst projections...</div>
+                </div>
+            `;
+            
+            // Use the recovery data already loaded or fetch it
             const recovery = window.currentRecoveryData;
-            if (!recovery || !recovery.sophisticated_analysis) {
-                // If not available in memory, make the API call
-                longtermData.innerHTML = `
-                    <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                        <div style="font-size: 16px; margin: 20px 0;">⏳ Loading analyst projections...</div>
-                    </div>
-                `;
-                
-                fetch('/api/sophisticated-timeframe/' + symbol)
-                .then(response => response.json())
-                .then(data => {
-                    processLongTermData(data.sophisticated_analysis);
-                })
-                .catch(error => {
-                    console.error('Long-term data error:', error);
-                    longtermData.innerHTML = `
-                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
-                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading analyst data</div>
-                        </div>
-                    `;
-                });
-            } else {
+            let dataPromise;
+            
+            if (recovery && recovery.sophisticated_analysis) {
                 // Use already loaded data
-                processLongTermData(recovery.sophisticated_analysis);
+                dataPromise = Promise.resolve(recovery.sophisticated_analysis);
+            } else {
+                // Fetch the data
+                dataPromise = fetch('/api/sophisticated-timeframe/' + symbol)
+                    .then(response => response.json())
+                    .then(data => data.sophisticated_analysis);
             }
             
-            function processLongTermData(sophisticatedAnalysis) {
+            dataPromise.then(sophisticatedAnalysis => {
                 const longTermPredictions = sophisticatedAnalysis?.timeframe_predictions?.long_term || {};
                     
                     if (Object.keys(longTermPredictions).length === 0) {
@@ -2836,8 +2829,15 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         `;
                         breakdownElement.style.display = 'block';
                     }
-                }
-            }
+                })
+                .catch(error => {
+                    console.error('Long-term data error:', error);
+                    longtermData.innerHTML = `
+                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading analyst data</div>
+                        </div>
+                    `;
+                });
         }
         
         // Theme Toggle Functionality
