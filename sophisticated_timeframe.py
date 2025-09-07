@@ -98,10 +98,16 @@ class SophisticatedTimeframePredictor:
             # 6. SECTOR PERFORMANCE CONTEXT
             sector_context = self._analyze_sector_performance(info)
             
-            # 7. CALCULATE SOPHISTICATED TIMEFRAMES
+            # 7. NEW ENHANCED SIGNALS
+            volume_signal = self._calculate_volume_surge_signal(hist)
+            rsi_signal = self._calculate_rsi_mean_reversion_signal(hist)
+            regime_filter = self._calculate_economic_regime_filter(market_conditions)
+            
+            # 8. CALCULATE SOPHISTICATED TIMEFRAMES (with new signals)
             timeframe_predictions = self._calculate_sophisticated_timeframes(
                 targets, medium_targets, market_conditions, historical_patterns, 
-                catalysts, technical_momentum, sector_context, current_price
+                catalysts, technical_momentum, sector_context, current_price,
+                volume_signal, rsi_signal, regime_filter
             )
             
             return {
@@ -117,7 +123,13 @@ class SophisticatedTimeframePredictor:
                 'timeframe_predictions': timeframe_predictions,
                 'confidence_level': self._calculate_confidence_level(
                     historical_patterns, market_conditions, technical_momentum
-                )
+                ),
+                # NEW ENHANCED SIGNALS
+                'enhanced_signals': {
+                    'volume_surge': volume_signal,
+                    'rsi_reversion': rsi_signal,
+                    'economic_regime': regime_filter
+                }
             }
             
         except Exception as e:
@@ -553,10 +565,152 @@ class SophisticatedTimeframePredictor:
         }
         return contexts.get(sector_performance, 'Sector impact unclear')
     
+    def _calculate_volume_surge_signal(self, hist: pd.DataFrame) -> Dict:
+        """
+        SIGNAL 1: Volume Surge Analysis - Detect institutional activity
+        High reliability predictor of short-term reversals
+        """
+        try:
+            if len(hist) < 20:
+                return {'surge_detected': False, 'surge_multiplier': 1.0, 'volume_percentile': 50}
+            
+            current_volume = hist['Volume'].iloc[-1]
+            avg_20_volume = hist['Volume'].tail(20).mean()
+            volume_ratio = current_volume / avg_20_volume if avg_20_volume > 0 else 1.0
+            
+            # Calculate volume percentile over last 60 days
+            volume_60d = hist['Volume'].tail(60)
+            volume_percentile = (volume_60d < current_volume).sum() / len(volume_60d) * 100
+            
+            # Volume surge thresholds
+            surge_detected = False
+            surge_multiplier = 1.0
+            
+            if volume_ratio >= 3.0:  # 3x average volume
+                surge_detected = True
+                surge_multiplier = 1.4  # 40% boost to recovery probability
+            elif volume_ratio >= 2.0:  # 2x average volume  
+                surge_detected = True
+                surge_multiplier = 1.25  # 25% boost
+            elif volume_ratio >= 1.5:  # 1.5x average volume
+                surge_detected = True
+                surge_multiplier = 1.15  # 15% boost
+            
+            return {
+                'surge_detected': surge_detected,
+                'volume_ratio': round(volume_ratio, 2),
+                'surge_multiplier': surge_multiplier,
+                'volume_percentile': round(volume_percentile, 1),
+                'signal_strength': 'strong' if volume_ratio >= 2.5 else 'moderate' if volume_ratio >= 1.8 else 'weak'
+            }
+        except Exception as e:
+            return {'surge_detected': False, 'surge_multiplier': 1.0, 'volume_percentile': 50}
+    
+    def _calculate_rsi_mean_reversion_signal(self, hist: pd.DataFrame) -> Dict:
+        """
+        SIGNAL 2: RSI Mean Reversion - Detect oversold conditions with improving momentum
+        Applies to all timeframes with different thresholds
+        """
+        try:
+            if len(hist) < 14:
+                return {'oversold': False, 'rsi': 50, 'reversion_multiplier': 1.0}
+            
+            # Calculate RSI
+            delta = hist['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs)).iloc[-1]
+            
+            # RSI momentum (compare last 3 days)
+            rsi_series = 100 - (100 / (1 + rs))
+            rsi_momentum = rsi_series.iloc[-1] - rsi_series.iloc[-4] if len(rsi_series) >= 4 else 0
+            
+            # Mean reversion thresholds
+            oversold = False
+            reversion_multiplier = 1.0
+            timeframe_multipliers = {'short': 1.0, 'medium': 1.0, 'long': 1.0}
+            
+            if rsi <= 25:  # Extremely oversold
+                oversold = True
+                timeframe_multipliers = {'short': 1.5, 'medium': 1.3, 'long': 1.2}
+            elif rsi <= 30:  # Oversold
+                oversold = True  
+                timeframe_multipliers = {'short': 1.3, 'medium': 1.2, 'long': 1.1}
+            elif rsi <= 35:  # Approaching oversold
+                timeframe_multipliers = {'short': 1.15, 'medium': 1.1, 'long': 1.05}
+            
+            # Boost if RSI is improving (momentum up)
+            if rsi_momentum > 2:  # RSI rising
+                for key in timeframe_multipliers:
+                    timeframe_multipliers[key] *= 1.1
+            
+            return {
+                'oversold': oversold,
+                'rsi': round(rsi, 1),
+                'rsi_momentum': round(rsi_momentum, 2),
+                'timeframe_multipliers': timeframe_multipliers,
+                'signal_strength': 'strong' if rsi <= 25 else 'moderate' if rsi <= 30 else 'weak'
+            }
+        except Exception as e:
+            return {'oversold': False, 'rsi': 50, 'reversion_multiplier': 1.0}
+    
+    def _calculate_economic_regime_filter(self, market_conditions: Dict) -> Dict:
+        """
+        SIGNAL 3: Economic Regime Filter - VIX-based recovery probability multipliers  
+        Applies to all timeframes as market structure determines recovery speed
+        """
+        try:
+            vix_level = market_conditions.get('vix', 20)
+            
+            # Economic regime classification
+            if vix_level < 15:
+                regime = 'ultra_low_vol'
+                regime_multipliers = {'short': 0.8, 'medium': 0.9, 'long': 1.0}  # Harder to get sharp reversals
+                recovery_environment = 'Complacent market - limited reversal opportunities'
+            elif vix_level < 20:
+                regime = 'low_vol'
+                regime_multipliers = {'short': 0.9, 'medium': 0.95, 'long': 1.0}
+                recovery_environment = 'Calm conditions - gradual recovery patterns'
+            elif vix_level < 25:
+                regime = 'normal_vol'
+                regime_multipliers = {'short': 1.0, 'medium': 1.0, 'long': 1.0}  # Base case
+                recovery_environment = 'Normal volatility - balanced recovery potential'
+            elif vix_level < 35:
+                regime = 'elevated_vol'
+                regime_multipliers = {'short': 1.3, 'medium': 1.2, 'long': 1.1}  # Better reversal conditions
+                recovery_environment = 'Elevated fear - good reversal opportunities'
+            else:
+                regime = 'high_vol'  
+                regime_multipliers = {'short': 1.5, 'medium': 1.3, 'long': 1.15}  # Excellent reversal potential
+                recovery_environment = 'High fear environment - strong reversal potential'
+            
+            # Market regime impact on different timeframes
+            regime_impact = {
+                'short': 'VIX impacts short-term reversals most strongly',
+                'medium': 'Elevated volatility supports medium-term recoveries', 
+                'long': 'Economic uncertainty affects long-term valuations'
+            }
+            
+            return {
+                'regime': regime,
+                'vix_level': vix_level,
+                'regime_multipliers': regime_multipliers,
+                'recovery_environment': recovery_environment,
+                'regime_impact': regime_impact
+            }
+        except Exception as e:
+            return {
+                'regime': 'normal_vol',
+                'regime_multipliers': {'short': 1.0, 'medium': 1.0, 'long': 1.0},
+                'recovery_environment': 'Normal market conditions'
+            }
+    
     def _calculate_sophisticated_timeframes(self, targets: Dict, medium_targets: Dict, market_conditions: Dict, 
                                          historical_patterns: Dict, catalysts: Dict,
                                          technical_momentum: Dict, sector_context: Dict,
-                                         current_price: float) -> Dict:
+                                         current_price: float, volume_signal: Dict = None,
+                                         rsi_signal: Dict = None, regime_filter: Dict = None) -> Dict:
         """Calculate sophisticated timeframes for each recovery target"""
         
         predictions = {}
@@ -617,11 +771,36 @@ class SophisticatedTimeframePredictor:
             elif sector_perf == 'weak':
                 adjusted_days *= 1.3
             
-            # Calculate probability based on multiple factors
+            # APPLY NEW ENHANCED SIGNALS
+            signal_multiplier = 1.0
+            
+            # 1. Volume Surge Signal (strongest for short-term)
+            if volume_signal and volume_signal.get('surge_detected', False):
+                volume_boost = volume_signal.get('surge_multiplier', 1.0)
+                adjusted_days *= (2.0 - volume_boost)  # Convert multiplier to time reduction
+                signal_multiplier *= volume_boost
+            
+            # 2. RSI Mean Reversion Signal (all timeframes)
+            if rsi_signal and rsi_signal.get('oversold', False):
+                timeframe_key = 'short'  # This section is for short-term
+                rsi_boost = rsi_signal.get('timeframe_multipliers', {}).get(timeframe_key, 1.0)
+                adjusted_days *= (2.0 - rsi_boost)  # Convert multiplier to time reduction
+                signal_multiplier *= rsi_boost
+            
+            # 3. Economic Regime Filter (affects all timeframes)
+            if regime_filter:
+                regime_boost = regime_filter.get('regime_multipliers', {}).get('short', 1.0)
+                adjusted_days *= (2.0 - regime_boost)  # Convert multiplier to time reduction  
+                signal_multiplier *= regime_boost
+            
+            # Calculate probability based on multiple factors (including new signals)
             probability = self._calculate_recovery_probability(
                 upside_percent, historical_patterns, market_conditions,
                 technical_momentum, sector_context
             )
+            
+            # Apply signal multiplier to probability (capped at 95%)
+            probability = min(probability * signal_multiplier, 95.0)
             
             # Format timeframe
             timeframe_str = self._format_timeframe(adjusted_days)
@@ -665,6 +844,28 @@ class SophisticatedTimeframePredictor:
                 historical_factor = min(1.8, max(0.6, historical_factor))
                 adjusted_days *= historical_factor
             
+            # APPLY NEW ENHANCED SIGNALS (Medium-term)
+            med_signal_multiplier = 1.0
+            
+            # Volume surge has moderate impact on medium-term
+            if volume_signal and volume_signal.get('surge_detected', False):
+                volume_boost = volume_signal.get('surge_multiplier', 1.0)
+                med_volume_boost = 1.0 + ((volume_boost - 1.0) * 0.7)  # Reduce impact for medium-term
+                adjusted_days *= (2.0 - med_volume_boost)
+                med_signal_multiplier *= med_volume_boost
+            
+            # RSI signal for medium-term
+            if rsi_signal:
+                rsi_boost = rsi_signal.get('timeframe_multipliers', {}).get('medium', 1.0)
+                adjusted_days *= (2.0 - rsi_boost)
+                med_signal_multiplier *= rsi_boost
+            
+            # Economic regime filter (medium-term)
+            if regime_filter:
+                regime_boost = regime_filter.get('regime_multipliers', {}).get('medium', 1.0)
+                adjusted_days *= (2.0 - regime_boost)
+                med_signal_multiplier *= regime_boost
+            
             # Calculate probability for medium-term targets
             probability = self._calculate_recovery_probability(
                 upside_percent, historical_patterns, market_conditions,
@@ -672,6 +873,9 @@ class SophisticatedTimeframePredictor:
             )
             # Medium-term targets are generally more reliable, so boost probability slightly
             probability = min(85, probability + 5)
+            
+            # Apply medium-term signal multiplier
+            probability = min(probability * med_signal_multiplier, 90.0)
             
             # Format timeframe
             timeframe_str = self._format_timeframe(adjusted_days)

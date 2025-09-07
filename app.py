@@ -2203,6 +2203,42 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     if (breakdownElement && breakdownContent && recovery.score_breakdown) {
                         const breakdown = recovery.score_breakdown;
                         
+                        // Check for enhanced signals
+                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                        let signalsDisplay = '';
+                        
+                        // Volume Surge Signal
+                        if (enhancedSignals.volume_surge?.surge_detected) {
+                            const volumeData = enhancedSignals.volume_surge;
+                            signalsDisplay += `
+                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,255,0,0.1); border-radius: 4px; border-left: 3px solid #28a745;">
+                                    <strong style="color: #28a745;">📈 Volume Surge:</strong> ${volumeData.volume_ratio}x average
+                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(+${Math.round((volumeData.surge_multiplier - 1) * 100)}% probability boost)</span>
+                                </div>`;
+                        }
+                        
+                        // RSI Oversold Signal
+                        if (enhancedSignals.rsi_reversion?.oversold) {
+                            const rsiData = enhancedSignals.rsi_reversion;
+                            signalsDisplay += `
+                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,193,7,0.1); border-radius: 4px; border-left: 3px solid #ffc107;">
+                                    <strong style="color: #ffc107;">🎯 RSI Oversold:</strong> ${rsiData.rsi} (${rsiData.signal_strength})
+                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(mean reversion likely)</span>
+                                </div>`;
+                        }
+                        
+                        // Economic Regime Signal  
+                        if (enhancedSignals.economic_regime?.regime) {
+                            const regimeData = enhancedSignals.economic_regime;
+                            const regimeBoost = regimeData.regime_multipliers?.short || 1.0;
+                            const regimeColor = regimeBoost > 1.2 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
+                            signalsDisplay += `
+                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(128,128,128,0.1); border-radius: 4px; border-left: 3px solid ${regimeColor};">
+                                    <strong style="color: ${regimeColor};">🌡️ Market Regime:</strong> VIX ${regimeData.vix_level} (${regimeData.regime.replace('_', ' ')})
+                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${regimeData.recovery_environment})</span>
+                                </div>`;
+                        }
+
                         breakdownContent.innerHTML = `
                             <div style="margin-bottom: 10px;">
                                 <strong style="color: #ffffff;">Base Score:</strong> ${Math.round((breakdown.base_score || 0) * 10) / 10}%
@@ -2212,6 +2248,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <strong style="color: #ffffff;">Market Adjustment:</strong> ${breakdown.market_adjustment || 0}%
                                 <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${breakdown.volatility_regime || 'standard'} volatility regime)</span>
                             </div>
+                            ${signalsDisplay ? `<div style="margin: 15px 0; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);"><strong style="color: #ffffff;">🎯 Enhanced Signals:</strong></div>${signalsDisplay}` : ''}
                             <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
                                 <strong style="color: #ffffff;">Final Score:</strong> ${Math.round((recovery.recovery_score || 0) * 10) / 10}%
                             </div>
