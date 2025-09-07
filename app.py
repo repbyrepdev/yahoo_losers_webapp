@@ -2471,27 +2471,31 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th>Symbol</th>
-                                <th>Company Name</th>
                                 <th>Current Price</th>
                                 <th>Recovery Score</th>
                                 <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
+                                <th>Analysis</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for stock in recommendations %}
                             <tr class="highlight">
                                 <td>
-                                    <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮📊 Complete Analysis</button>
+                                    <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
-                                <td>{{ stock.Name }}</td>
                                 <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
                                 <td class="positive"><strong>{{ stock.get('Recovery Score', 'Loading...') }}{% if stock.get('Recovery Score') %}%{% endif %}</strong></td>
                                 <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
+                                <td>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
+                                            style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">
+                                        🤖📱🔮 Analysis
+                                    </button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -2545,22 +2549,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th>Symbol</th>
-                                <th>Company Name</th>
                                 <th>Current Price</th>
                                 <th>Recovery Score</th>
                                 <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
+                                <th>Analysis</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for stock in all_analysis %}
                             <tr>
                                 <td>
-                                    <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">🤖📱🔮📊 Complete Analysis</button>
+                                    <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
-                                <td>{{ stock.Name }}</td>
                                 <td>
                                     {% if stock['Current Price'] == 'N/A' %}
                                         {{ stock['Current Price'] }}
@@ -2574,6 +2576,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
+                                <td>
+                                    <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">🤖📱🔮 Analysis</button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -2627,28 +2632,29 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <thead>
                         <tr>
                             <th>Symbol</th>
-                            <th>Company Name</th>
                             <th>Price</th>
                             <th>Change</th>
                             <th>% Change</th>
                             <th>Market Cap</th>
+                            <th>Analysis</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for stock in losers_data %}
                         <tr>
                             <td>
-                                <span class="stock-symbol">{{ stock.Symbol }}</span>
-                                <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
-                                        style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold;">
-                                    🤖📱🔮 Complete Analysis
-                                </button>
+                                <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                             </td>
-                            <td>{{ stock.Name }}</td>
                             <td>{{ stock.Price }}</td>
                             <td class="negative">{{ stock.Change }}</td>
                             <td class="negative">{{ stock['Percent Change'] }}</td>
                             <td>{{ stock['Market Cap'] }}</td>
+                            <td>
+                                <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}')" 
+                                        style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">
+                                    🤖📱🔮 Analysis
+                                </button>
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
