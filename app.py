@@ -2112,10 +2112,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
             `;
             
-            fetch('/api/sophisticated-recovery/' + symbol)
+            fetch('/api/recovery-prediction/' + symbol)
                 .then(response => response.json())
                 .then(data => {
-                    const recovery = data.recovery;
+                    const recovery = data.prediction;
                     
                     if (!recovery || !recovery.recovery_score) {
                         recoveryData.innerHTML = `
