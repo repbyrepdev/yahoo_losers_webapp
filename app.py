@@ -1957,68 +1957,19 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <div style="background: linear-gradient(135deg, #fd7e14, #f39c12); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
                         <h4 style="margin: 0 0 15px 0; text-align: center;">🔮 Short Term Recovery (1-7 days)</h4>
                         <div id="recovery-data">
-                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
-                                <div>
-                                    <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
-                                    <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 18px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
-                                    <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
-                                </div>
-                                <div>
-                                    <div style="font-size: 18px; font-weight: bold;">${recovery.time_frame || '1-7 days'}</div>
-                                    <div style="font-size: 14px; opacity: 0.9;">Time Frame</div>
-                                </div>
-                            </div>
-                            <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
-                                ${recovery.recommendation || 'Analysis unavailable'}
-                            </div>
-                        </div>
-                        ${recovery.timeframe ? `<div style="text-align: center; margin-top: 5px; font-size: 14px; opacity: 0.9;">
-                            Expected timeframe: ${recovery.timeframe}
-                        </div>` : ''}
-                    </div>
-                    
-                    ${recovery.score_breakdown ? `
-                    <!-- Mathematical Breakdown Section -->
-                    <div style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2);">
-                        <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
-                        <div style="font-size: 14px; line-height: 1.6; color: #ffffff;">
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round((recovery.score_breakdown.base_score || 0) * 10) / 10}%
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of all target probabilities)</span>
-                            </div>
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">Market Adjustment:</strong> ${recovery.score_breakdown.market_adjustment || 0}%
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${recovery.score_breakdown.volatility_regime || 'standard'} volatility regime)</span>
-                            </div>
-                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
-                                <strong style="color: #ffffff;">Final Score:</strong> ${Math.round((recovery.recovery_score || 0) * 10) / 10}%
+                            <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                                <div style="font-size: 16px; margin: 20px 0;">⏳ Loading short-term analysis...</div>
                             </div>
                         </div>
                         
-                        ${recovery.score_breakdown.target_details && recovery.score_breakdown.target_details.length > 0 ? `
-                        <div style="margin-top: 15px;">
-                            <h6 style="margin: 0 0 10px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">📊 Individual Target Analysis</h6>
-                            <div style="max-height: 200px; overflow-y: auto;">
-                                ${recovery.score_breakdown.target_details.map(target => `
-                                    <div style="background: rgba(0,0,0,0.2); border-radius: 5px; padding: 10px; margin: 5px 0; font-size: 12px; border: 1px solid rgba(255,255,255,0.1);">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; color: #ffffff;">
-                                            <strong>${target.target_type || 'Previous Close'}: ${target.probability}%</strong>
-                                            <span style="color: rgba(255,255,255,0.8);">+${target.upside_percent}%</span>
-                                        </div>
-                                        <div style="color: rgba(255,255,255,0.8); margin-bottom: 3px;">
-                                            Weight: ${target.weight_factor}x → Contribution: ${target.weighted_contribution}%
-                                        </div>
-                                        <div style="color: rgba(255,255,255,0.7); font-size: 11px; font-style: italic;">
-                                            ${target.reasoning}
-                                        </div>
-                                    </div>
-                                `).join('')}
+                        <!-- Mathematical Breakdown Section for Short Term -->
+                        <div id="recovery-breakdown" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2); display: none;">
+                            <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
+                            <div id="recovery-breakdown-content" style="font-size: 14px; line-height: 1.6; color: #ffffff;">
+                                <!-- Content will be populated by JavaScript -->
                             </div>
-                        </div>` : ''}
-                    </div>` : ''}
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Medium Term Recovery Tab -->
@@ -2106,13 +2057,127 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             activeBtn.style.fontWeight = 'bold';
             
             // Load data for specific tabs when clicked
-            if (tabId === 'mediumterm-tab') {
+            if (tabId === 'recovery-tab') {
+                console.log('DEBUG: Recovery tab clicked, calling loadRecoveryData()');
+                loadRecoveryData();
+            } else if (tabId === 'mediumterm-tab') {
                 console.log('DEBUG: Medium-term tab clicked, calling loadMediumTermData()');
                 loadMediumTermData();
             } else if (tabId === 'longterm-tab') {
                 console.log('DEBUG: Long-term tab clicked, calling loadLongTermData()');
                 loadLongTermData();
             }
+        }
+        
+        // Load short-term recovery data
+        function loadRecoveryData() {
+            const recoveryData = document.getElementById('recovery-data');
+            // Try multiple ways to get the symbol
+            const h3Element = document.querySelector('#ultimate-modal h3');
+            console.log('DEBUG: h3 element:', h3Element);
+            console.log('DEBUG: h3 textContent:', h3Element?.textContent);
+            
+            let symbol = null;
+            if (h3Element && h3Element.textContent) {
+                // Try different regex patterns
+                const patterns = [
+                    /: ([A-Z]+)(?:\s|$)/,  // Standard pattern with word boundary
+                    /Analysis:\s*([A-Z]+)/,  // "Analysis: SYMBOL"
+                    /([A-Z]{2,5})$/,        // 2-5 uppercase letters at end
+                    /([A-Z]+)/              // Any uppercase letters
+                ];
+                
+                for (let pattern of patterns) {
+                    const match = h3Element.textContent.match(pattern);
+                    if (match && match[1]) {
+                        symbol = match[1];
+                        console.log('DEBUG: Found symbol using pattern:', pattern, 'Symbol:', symbol);
+                        break;
+                    }
+                }
+            }
+            
+            console.log('DEBUG: Final extracted symbol:', symbol);
+            
+            if (!symbol) {
+                console.error('No symbol found in h3 element for recovery');
+                recoveryData.innerHTML = `<div style="text-align: center; color: rgba(255,255,255,0.8);"><div style="font-size: 16px; margin: 20px 0;">❌ No symbol found</div></div>`;
+                return;
+            }
+            
+            // Show loading state
+            recoveryData.innerHTML = `
+                <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                    <div style="font-size: 16px; margin: 20px 0;">⏳ Loading recovery analysis...</div>
+                </div>
+            `;
+            
+            fetch('/api/sophisticated-recovery/' + symbol)
+                .then(response => response.json())
+                .then(data => {
+                    const recovery = data.recovery;
+                    
+                    if (!recovery || !recovery.recovery_score) {
+                        recoveryData.innerHTML = `
+                            <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                                <div style="font-size: 16px; margin: 20px 0;">📊 No recovery data available</div>
+                                <div style="font-size: 14px; opacity: 0.7;">Unable to calculate recovery targets for this stock</div>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    // Header with confidence levels matching other sections
+                    recoveryData.innerHTML = `
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
+                            <div>
+                                <div style="font-size: 28px; font-weight: bold;">${Math.round((recovery.recovery_score || 0) * 10) / 10}%</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 18px; font-weight: bold;">1-7 days</div>
+                                <div style="font-size: 14px; opacity: 0.9;">Time Frame</div>
+                            </div>
+                        </div>
+                        <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
+                            ${recovery.recommendation || 'Short-term recovery analysis based on technical indicators and market momentum'}
+                        </div>
+                    `;
+                    
+                    // Add mathematical breakdown
+                    const breakdownElement = document.getElementById('recovery-breakdown');
+                    const breakdownContent = document.getElementById('recovery-breakdown-content');
+                    if (breakdownElement && breakdownContent && recovery.score_breakdown) {
+                        const breakdown = recovery.score_breakdown;
+                        
+                        breakdownContent.innerHTML = `
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round((breakdown.base_score || 0) * 10) / 10}%
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of all target probabilities)</span>
+                            </div>
+                            <div style="margin-bottom: 10px;">
+                                <strong style="color: #ffffff;">Market Adjustment:</strong> ${breakdown.market_adjustment || 0}%
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${breakdown.volatility_regime || 'standard'} volatility regime)</span>
+                            </div>
+                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
+                                <strong style="color: #ffffff;">Final Score:</strong> ${Math.round((recovery.recovery_score || 0) * 10) / 10}%
+                            </div>
+                        `;
+                        breakdownElement.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('Recovery data error:', error);
+                    recoveryData.innerHTML = `
+                        <div style="text-align: center; color: rgba(255,255,255,0.8);">
+                            <div style="font-size: 16px; margin: 20px 0;">⚠️ Error loading recovery data</div>
+                        </div>
+                    `;
+                });
         }
         
         // Load medium-term recovery data
