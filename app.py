@@ -2620,8 +2620,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <a href="/export/csv" style="background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
                         📊 Export CSV
                     </a>
+                    <span style="font-size: 12px; color: var(--text-secondary); margin-left: 15px;">{{ timestamp.split(' (')[0] }}</span>
                 </div>
-                <div class="timestamp" style="font-size: 12px; color: var(--text-secondary); margin: 0;">{{ timestamp }}</div>
             </div>
             
                 
