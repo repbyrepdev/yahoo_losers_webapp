@@ -230,6 +230,148 @@ def analyze_stock_news(symbol):
         reason = f"Earnings miss - reported {earnings_surprise:.1%} below expectations"
 ```
 
+### **🎯 ENHANCED MARKET SIGNALS SYSTEM**
+
+#### **Volume Surge Analysis (Real Data)**
+```python
+def _calculate_volume_surge_signal(self, hist):
+    """Detect institutional activity via unusual volume spikes"""
+    current_volume = hist['Volume'].iloc[-1]
+    avg_volume = hist['Volume'][-20:].mean()  # 20-day average
+    volume_ratio = current_volume / avg_volume
+    
+    # Real Yahoo Finance volume data analysis
+    if volume_ratio >= 3.0:  # 3x average volume = strong institutional activity
+        return {
+            'surge_detected': True,
+            'volume_ratio': round(volume_ratio, 1),
+            'surge_multiplier': min(1.4, 1.0 + (volume_ratio - 3) * 0.1),  # Up to 40% boost
+            'confidence': 'high' if volume_ratio >= 5.0 else 'medium'
+        }
+```
+
+**Signal Logic:**
+- **Data Source**: Real trading volume from Yahoo Finance API
+- **Detection Threshold**: 3x average volume indicates institutional activity
+- **Impact**: 40% probability boost for short-term recovery (strongest effect)
+- **Timeframe Scaling**: Full impact on 1-7 days, 50% on 1-6 months, 25% on 6-18 months
+
+#### **RSI Mean Reversion Signal (Technical Analysis)**
+```python
+def _calculate_rsi_mean_reversion_signal(self, hist):
+    """Calculate RSI oversold conditions for mean reversion plays"""
+    # Calculate 14-period RSI using real price data
+    close_prices = hist['Close']
+    delta = close_prices.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    current_rsi = rsi.iloc[-1]
+    
+    # Oversold thresholds with graduated multipliers
+    if current_rsi <= 25:  # Severely oversold
+        return {
+            'oversold_detected': True,
+            'rsi_value': round(current_rsi, 1),
+            'reversion_multiplier': 1.5,  # 50% boost
+            'strength': 'strong'
+        }
+    elif current_rsi <= 30:  # Standard oversold
+        return {
+            'oversold_detected': True,
+            'rsi_value': round(current_rsi, 1),
+            'reversion_multiplier': 1.3,  # 30% boost
+            'strength': 'moderate'
+        }
+```
+
+**Signal Logic:**
+- **Data Source**: Calculated from real Yahoo Finance OHLC data
+- **RSI Calculation**: Standard 14-period RSI using closing prices
+- **Thresholds**: RSI ≤25 (severe oversold), RSI ≤30 (oversold)
+- **Impact**: 50% boost for RSI ≤25, 30% boost for RSI ≤30
+- **Timeframe Scaling**: Strongest on short-term, graduated decline on longer timeframes
+
+#### **Economic Regime Filter (VIX-Based)**
+```python
+def _calculate_economic_regime_filter(self, market_conditions):
+    """Apply VIX-based probability multipliers based on market regime"""
+    vix = market_conditions.get('vix', 20)
+    spy_trend = market_conditions.get('spy_trend', 0)
+    
+    # High volatility regime (VIX > 25)
+    if vix > 25:
+        return {
+            'regime': 'high_volatility',
+            'vix_level': vix,
+            'short_term_multiplier': 1.5,   # Oversold bounces stronger in volatile markets
+            'medium_term_multiplier': 0.9,  # Uncertainty hurts medium-term
+            'long_term_multiplier': 0.8,    # Extended uncertainty
+            'reasoning': f'High volatility (VIX {vix}) favors short-term oversold bounces'
+        }
+    
+    # Low volatility regime (VIX < 18)  
+    elif vix < 18:
+        return {
+            'regime': 'low_volatility',
+            'vix_level': vix,
+            'short_term_multiplier': 0.9,   # Fewer dramatic bounces
+            'medium_term_multiplier': 1.2,  # Stable environment
+            'long_term_multiplier': 1.1,    # Favorable for long-term
+            'reasoning': f'Low volatility (VIX {vix}) supports steady recovery'
+        }
+```
+
+**Signal Logic:**
+- **Data Source**: VIX (volatility index) and SPY trend data from market conditions
+- **Regimes**: High volatility (VIX >25), Normal (18-25), Low volatility (VIX <18)
+- **Impact**: Different multipliers for each timeframe based on market regime
+- **Reasoning**: High volatility = stronger short-term bounces, stable markets = better long-term recovery
+
+#### **Signal Integration Across Timeframes**
+```python
+def _calculate_sophisticated_timeframes(self, ..., volume_signal, rsi_signal, regime_filter):
+    # Apply signals with timeframe-specific weighting
+    timeframe_adjustments = {
+        'short_term': {
+            'volume_weight': 1.0,    # Full volume signal impact
+            'rsi_weight': 1.0,       # Full RSI impact
+            'regime_key': 'short_term_multiplier'
+        },
+        'medium_term': {
+            'volume_weight': 0.5,    # Reduced volume impact
+            'rsi_weight': 0.7,       # Moderate RSI impact
+            'regime_key': 'medium_term_multiplier'
+        },
+        'long_term': {
+            'volume_weight': 0.25,   # Minimal volume impact
+            'rsi_weight': 0.4,       # Reduced RSI impact
+            'regime_key': 'long_term_multiplier'
+        }
+    }
+    
+    # Compound signal effects
+    for timeframe in ['short_term', 'medium_term', 'long_term']:
+        base_probability = timeframe_data[timeframe]['probability']
+        
+        # Apply volume surge signal
+        if volume_signal and volume_signal.get('surge_detected'):
+            volume_boost = (volume_signal['surge_multiplier'] - 1) * adjustments['volume_weight']
+            base_probability *= (1 + volume_boost)
+        
+        # Apply RSI mean reversion signal
+        if rsi_signal and rsi_signal.get('oversold_detected'):
+            rsi_boost = (rsi_signal['reversion_multiplier'] - 1) * adjustments['rsi_weight']
+            base_probability *= (1 + rsi_boost)
+        
+        # Apply economic regime filter
+        if regime_filter:
+            regime_multiplier = regime_filter.get(adjustments['regime_key'], 1.0)
+            base_probability *= regime_multiplier
+```
+
 ### **📊 PREDICTION ALGORITHM LOGIC**
 
 #### **Multi-Target Weighted Scoring System**
@@ -490,6 +632,7 @@ This application uses **EXCLUSIVELY REAL financial data**:
 ✅ **Earnings Data**: Actual earnings dates and surprise data  
 ✅ **Economic Calendar**: Real Fed, CPI, and jobs report schedules  
 ✅ **Institutional Flow**: Volume-based estimates from real market data  
+✅ **Enhanced Market Signals**: Volume Surge Analysis, RSI Mean Reversion, VIX-based Economic Regime Filtering
 
 🚫 **NO fake, simulated, random, or demonstration data used**
 

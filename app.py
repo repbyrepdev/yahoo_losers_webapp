@@ -2239,18 +2239,97 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 </div>`;
                         }
 
+                        // Build detailed mathematical breakdown for short-term
+                        const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
+                        let targetsBreakdown = '';
+                        let totalWeightedScore = 0;
+                        let totalWeight = 0;
+                        
+                        // Show each target's calculation
+                        Object.entries(shortTermData).forEach(([targetName, target]) => {
+                            const displayName = targetName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            const weight = targetName === 'previous_close' ? 1.0 : 
+                                          targetName === '5day_high' ? 0.9 : 
+                                          targetName === '10day_ma' ? 0.8 : 0.7;
+                            
+                            totalWeightedScore += (target.probability || 0) * weight;
+                            totalWeight += weight;
+                            
+                            targetsBreakdown += `
+                                <div style="margin: 6px 0; padding: 6px; background: rgba(255,255,255,0.05); border-radius: 3px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: #ffffff; font-weight: 500;">${displayName}:</span>
+                                        <span style="color: #28a745;">${Math.round(target.probability || 0)}%</span>
+                                    </div>
+                                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
+                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%) • Weight: ${weight.toFixed(1)}x
+                                    </div>
+                                </div>`;
+                        });
+                        
+                        const baseScore = totalWeight > 0 ? totalWeightedScore / totalWeight : 0;
+                        
+                        // Calculate signal effects for short-term
+                        let signalEffects = '';
+                        let signalMultiplier = 1.0;
+                        
+                        if (enhancedSignals.volume_surge?.surge_detected) {
+                            const volumeBoost = enhancedSignals.volume_surge.surge_multiplier;
+                            signalMultiplier *= volumeBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #28a745;">
+                                    ✓ Volume Surge: ${volumeBoost.toFixed(2)}x multiplier (${Math.round((volumeBoost - 1) * 100)}% boost)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.rsi_reversion?.oversold_detected) {
+                            const rsiBoost = enhancedSignals.rsi_reversion.reversion_multiplier;
+                            signalMultiplier *= rsiBoost;
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #ffc107;">
+                                    ✓ RSI Oversold: ${rsiBoost.toFixed(2)}x multiplier (RSI ${enhancedSignals.rsi_reversion.rsi_value})
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.economic_regime?.regime) {
+                            const regimeBoost = enhancedSignals.economic_regime.short_term_multiplier || 1.0;
+                            signalMultiplier *= regimeBoost;
+                            const regimeColor = regimeBoost > 1.1 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
+                            signalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
+                                    ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
+                                </div>`;
+                        }
+                        
+                        const finalScore = Math.min(95, baseScore * signalMultiplier);
+                        
                         breakdownContent.innerHTML = `
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round((breakdown.base_score || 0) * 10) / 10}%
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of all target probabilities)</span>
+                            <div style="margin-bottom: 12px;">
+                                <strong style="color: #ffffff; font-size: 14px;">📊 Target Analysis:</strong>
+                                ${targetsBreakdown}
                             </div>
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">Market Adjustment:</strong> ${breakdown.market_adjustment || 0}%
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${breakdown.volatility_regime || 'standard'} volatility regime)</span>
+                            
+                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 500;">Step 1: Base Weighted Score</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;">
+                                    (${totalWeightedScore.toFixed(1)} weighted points) ÷ (${totalWeight.toFixed(1)} total weight) = <strong>${Math.round(baseScore * 10) / 10}%</strong>
+                                </div>
                             </div>
-                            ${signalsDisplay ? `<div style="margin: 15px 0; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);"><strong style="color: #ffffff;">🎯 Enhanced Signals:</strong></div>${signalsDisplay}` : ''}
-                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
-                                <strong style="color: #ffffff;">Final Score:</strong> ${Math.round((recovery.recovery_score || 0) * 10) / 10}%
+                            
+                            ${signalEffects ? `
+                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 500;">Step 2: Enhanced Signal Multipliers</div>
+                                ${signalEffects}
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">
+                                    Combined multiplier: <strong>${signalMultiplier.toFixed(2)}x</strong>
+                                </div>
+                            </div>` : ''}
+                            
+                            <div style="padding: 8px; background: rgba(40,167,69,0.15); border-radius: 4px; margin: 10px 0; border: 1px solid rgba(40,167,69,0.3);">
+                                <div style="color: #ffffff; font-weight: 500;">Final Calculation:</div>
+                                <div style="font-size: 14px; color: #28a745; margin-top: 4px;">
+                                    ${Math.round(baseScore * 10) / 10}% × ${signalMultiplier.toFixed(2)} = <strong>${Math.round(finalScore * 10) / 10}%</strong>
+                                </div>
                             </div>
                         `;
                         breakdownElement.style.display = 'block';
@@ -2399,17 +2478,98 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
+                        // Build detailed mathematical breakdown for medium-term
+                        const mediumTermData = recovery.sophisticated_analysis?.timeframe_predictions?.medium_term || {};
+                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                        let mediumTargetsBreakdown = '';
+                        let mediumTotalWeightedScore = 0;
+                        let mediumTotalWeight = 0;
+                        
+                        // Show each medium-term target's calculation
+                        Object.entries(mediumTermData).forEach(([targetName, target]) => {
+                            const displayName = targetName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            const weight = targetName === '20day_ma' ? 1.0 : 
+                                          targetName === 'support_bounce' ? 0.9 : 
+                                          targetName === 'fair_value' ? 0.8 : 0.7;
+                            
+                            mediumTotalWeightedScore += (target.probability || 0) * weight;
+                            mediumTotalWeight += weight;
+                            
+                            mediumTargetsBreakdown += `
+                                <div style="margin: 6px 0; padding: 6px; background: rgba(255,255,255,0.05); border-radius: 3px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: #ffffff; font-weight: 500;">${displayName}:</span>
+                                        <span style="color: #17a2b8;">${Math.round(target.probability || 0)}%</span>
+                                    </div>
+                                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
+                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%) • Weight: ${weight.toFixed(1)}x
+                                    </div>
+                                </div>`;
+                        });
+                        
+                        const mediumBaseScore = mediumTotalWeight > 0 ? mediumTotalWeightedScore / mediumTotalWeight : avgProbability;
+                        
+                        // Calculate medium-term signal effects (reduced impact)
+                        let mediumSignalEffects = '';
+                        let mediumSignalMultiplier = 1.0;
+                        
+                        if (enhancedSignals.volume_surge?.surge_detected) {
+                            const volumeBoost = 1.0 + ((enhancedSignals.volume_surge.surge_multiplier - 1.0) * 0.5); // 50% impact for medium-term
+                            mediumSignalMultiplier *= volumeBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #28a745;">
+                                    ✓ Volume Surge: ${volumeBoost.toFixed(2)}x multiplier (50% medium-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.rsi_reversion?.oversold_detected) {
+                            const rsiBoost = 1.0 + ((enhancedSignals.rsi_reversion.reversion_multiplier - 1.0) * 0.7); // 70% impact for medium-term
+                            mediumSignalMultiplier *= rsiBoost;
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #ffc107;">
+                                    ✓ RSI Oversold: ${rsiBoost.toFixed(2)}x multiplier (70% medium-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.economic_regime?.regime) {
+                            const regimeBoost = enhancedSignals.economic_regime.medium_term_multiplier || 1.0;
+                            mediumSignalMultiplier *= regimeBoost;
+                            const regimeColor = regimeBoost > 1.1 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
+                            mediumSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
+                                    ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
+                                </div>`;
+                        }
+                        
+                        const mediumFinalScore = Math.min(90, mediumBaseScore * mediumSignalMultiplier);
+                        
                         breakdownContent.innerHTML = `
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round(avgProbability * 10) / 10}%
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of ${totalTargets} target probabilities)</span>
+                            <div style="margin-bottom: 12px;">
+                                <strong style="color: #ffffff; font-size: 14px;">📊 Medium-Term Target Analysis:</strong>
+                                ${mediumTargetsBreakdown}
                             </div>
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">High Confidence Targets:</strong> ${highConfTargets}/${totalTargets}
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${Math.round(highConfTargets/totalTargets*100)}% of targets)</span>
+                            
+                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 500;">Step 1: Base Weighted Score</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;">
+                                    (${mediumTotalWeightedScore.toFixed(1)} weighted points) ÷ (${mediumTotalWeight.toFixed(1)} total weight) = <strong>${Math.round(mediumBaseScore * 10) / 10}%</strong>
+                                </div>
                             </div>
-                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
-                                <strong style="color: #ffffff;">Average Upside:</strong> +${Math.round(avgUpside * 10) / 10}%
+                            
+                            ${mediumSignalEffects ? `
+                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 500;">Step 2: Enhanced Signal Multipliers (Reduced Impact)</div>
+                                ${mediumSignalEffects}
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">
+                                    Combined multiplier: <strong>${mediumSignalMultiplier.toFixed(2)}x</strong>
+                                </div>
+                            </div>` : ''}
+                            
+                            <div style="padding: 8px; background: rgba(23,162,184,0.15); border-radius: 4px; margin: 10px 0; border: 1px solid rgba(23,162,184,0.3);">
+                                <div style="color: #ffffff; font-weight: 500;">Final Calculation:</div>
+                                <div style="font-size: 14px; color: #17a2b8; margin-top: 4px;">
+                                    ${Math.round(mediumBaseScore * 10) / 10}% × ${mediumSignalMultiplier.toFixed(2)} = <strong>${Math.round(mediumFinalScore * 10) / 10}%</strong>
+                                </div>
                             </div>
                         `;
                         breakdownElement.style.display = 'block';
@@ -2557,17 +2717,102 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
+                        // Build detailed mathematical breakdown for long-term (analyst targets)
+                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                        let longTermTargetsBreakdown = '';
+                        let longTermTotalWeightedScore = 0;
+                        let longTermTotalWeight = 0;
+                        
+                        // Show each analyst target's calculation
+                        predictions.forEach((target, index) => {
+                            const weight = target.confidence === 'High' ? 1.0 : 
+                                          target.confidence === 'Medium' ? 0.8 : 0.6;
+                            const probability = parseFloat(target.probability || 0);
+                            
+                            longTermTotalWeightedScore += probability * weight;
+                            longTermTotalWeight += weight;
+                            
+                            longTermTargetsBreakdown += `
+                                <div style="margin: 6px 0; padding: 6px; background: rgba(255,255,255,0.05); border-radius: 3px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: #ffffff; font-weight: 500;">${target.target_type || 'Analyst Target'}:</span>
+                                        <span style="color: #8b5cf6;">${Math.round(probability)}%</span>
+                                    </div>
+                                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
+                                        Target: $${target.target_price} (+${Math.round((parseFloat(target.upside_percent) || 0) * 10) / 10}%) • ${target.confidence} confidence (${weight.toFixed(1)}x weight)
+                                    </div>
+                                </div>`;
+                        });
+                        
+                        const longTermBaseScore = longTermTotalWeight > 0 ? longTermTotalWeightedScore / longTermTotalWeight : avgProbability;
+                        
+                        // Calculate long-term signal effects (minimal impact)
+                        let longTermSignalEffects = '';
+                        let longTermSignalMultiplier = 1.0;
+                        
+                        if (enhancedSignals.volume_surge?.surge_detected) {
+                            const volumeBoost = 1.0 + ((enhancedSignals.volume_surge.surge_multiplier - 1.0) * 0.25); // 25% impact for long-term
+                            longTermSignalMultiplier *= volumeBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #28a745;">
+                                    ✓ Volume Surge: ${volumeBoost.toFixed(2)}x multiplier (25% long-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.rsi_reversion?.oversold_detected) {
+                            const rsiBoost = 1.0 + ((enhancedSignals.rsi_reversion.reversion_multiplier - 1.0) * 0.4); // 40% impact for long-term
+                            longTermSignalMultiplier *= rsiBoost;
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: #ffc107;">
+                                    ✓ RSI Oversold: ${rsiBoost.toFixed(2)}x multiplier (40% long-term impact)
+                                </div>`;
+                        }
+                        
+                        if (enhancedSignals.economic_regime?.regime) {
+                            const regimeBoost = enhancedSignals.economic_regime.long_term_multiplier || 1.0;
+                            longTermSignalMultiplier *= regimeBoost;
+                            const regimeColor = regimeBoost > 1.1 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
+                            longTermSignalEffects += `
+                                <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
+                                    ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
+                                </div>`;
+                        }
+                        
+                        const longTermFinalScore = Math.min(85, longTermBaseScore * longTermSignalMultiplier);
+                        
                         breakdownContent.innerHTML = `
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">Base Score:</strong> ${Math.round(avgProbability * 10) / 10}%
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(weighted average of ${totalTargets} analyst targets)</span>
+                            <div style="margin-bottom: 12px;">
+                                <strong style="color: #ffffff; font-size: 14px;">📊 Long-Term Analyst Target Analysis:</strong>
+                                ${longTermTargetsBreakdown}
                             </div>
-                            <div style="margin-bottom: 10px;">
-                                <strong style="color: #ffffff;">High Confidence Targets:</strong> ${highConfTargets}/${totalTargets}
-                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${Math.round(highConfTargets/totalTargets*100)}% analyst consensus)</span>
+                            
+                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 500;">Step 1: Base Weighted Score</div>
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;">
+                                    (${longTermTotalWeightedScore.toFixed(1)} weighted points) ÷ (${longTermTotalWeight.toFixed(1)} total weight) = <strong>${Math.round(longTermBaseScore * 10) / 10}%</strong>
+                                </div>
+                                <div style="font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px;">
+                                    High confidence targets weighted 1.0x, Medium 0.8x, Low 0.6x
+                                </div>
                             </div>
-                            <div style="margin-bottom: 15px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
-                                <strong style="color: #ffffff;">Average Upside:</strong> +${Math.round(avgUpside * 10) / 10}%
+                            
+                            ${longTermSignalEffects ? `
+                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 500;">Step 2: Enhanced Signal Multipliers (Minimal Impact)</div>
+                                ${longTermSignalEffects}
+                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">
+                                    Combined multiplier: <strong>${longTermSignalMultiplier.toFixed(2)}x</strong>
+                                </div>
+                                <div style="font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px;">
+                                    Signals have reduced impact on fundamental long-term targets
+                                </div>
+                            </div>` : ''}
+                            
+                            <div style="padding: 8px; background: rgba(139,92,246,0.15); border-radius: 4px; margin: 10px 0; border: 1px solid rgba(139,92,246,0.3);">
+                                <div style="color: #ffffff; font-weight: 500;">Final Calculation:</div>
+                                <div style="font-size: 14px; color: #8b5cf6; margin-top: 4px;">
+                                    ${Math.round(longTermBaseScore * 10) / 10}% × ${longTermSignalMultiplier.toFixed(2)} = <strong>${Math.round(longTermFinalScore * 10) / 10}%</strong>
+                                </div>
                             </div>
                         `;
                         breakdownElement.style.display = 'block';
