@@ -2203,47 +2203,106 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         recoveryData.innerHTML += '</div>';
                     }
                     
+                    // Calculate and display enhanced signals FIRST
+                    const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                    let signalsDisplay = '';
+                    
+                    // Volume Surge Signal
+                    if (enhancedSignals.volume_surge?.surge_detected) {
+                        const volumeData = enhancedSignals.volume_surge;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,255,0,0.1); border-radius: 4px; border-left: 3px solid #28a745;">
+                                <strong style="color: #28a745;">📈 Volume Surge:</strong> ${volumeData.volume_ratio}x average
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(+${Math.round((volumeData.surge_multiplier - 1) * 100)}% probability boost)</span>
+                            </div>`;
+                    }
+                    
+                    // Money Flow Index Signal
+                    if (enhancedSignals.money_flow_index?.oversold_detected) {
+                        const mfiData = enhancedSignals.money_flow_index;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(23,162,184,0.1); border-radius: 4px; border-left: 3px solid #17a2b8;">
+                                <strong style="color: #17a2b8;">💎 Money Flow Index:</strong> ${mfiData.mfi_value} (oversold)
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${mfiData.recovery_multiplier}x recovery boost)</span>
+                            </div>`;
+                    }
+                    
+                    // MACD Histogram Signal
+                    if (enhancedSignals.macd_histogram?.momentum_shift) {
+                        const macdData = enhancedSignals.macd_histogram;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(220,53,69,0.1); border-radius: 4px; border-left: 3px solid #dc3545;">
+                                <strong style="color: #dc3545;">📊 MACD Histogram:</strong> ${macdData.signal_type.replace('_', ' ')}
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${macdData.recovery_multiplier}x momentum boost)</span>
+                            </div>`;
+                    }
+                    
+                    // Bollinger Squeeze Signal  
+                    if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
+                        const bbData = enhancedSignals.bollinger_squeeze;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(102,16,242,0.1); border-radius: 4px; border-left: 3px solid #6610f2;">
+                                <strong style="color: #6610f2;">🎯 Bollinger Squeeze:</strong> ${bbData.signal_type.replace('_', ' ')}
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${bbData.recovery_multiplier}x volatility boost)</span>
+                            </div>`;
+                    }
+                    
+                    // Put/Call Ratio Signal
+                    if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
+                        const pcData = enhancedSignals.put_call_ratio;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(253,126,20,0.1); border-radius: 4px; border-left: 3px solid #fd7e14;">
+                                <strong style="color: #fd7e14;">🔄 Put/Call Ratio:</strong> ${pcData.pc_ratio} (contrarian)
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${pcData.recovery_multiplier}x sentiment boost)</span>
+                            </div>`;
+                    }
+                    
+                    // Short Interest Signal
+                    if (enhancedSignals.short_interest?.squeeze_potential) {
+                        const siData = enhancedSignals.short_interest;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(232,62,140,0.1); border-radius: 4px; border-left: 3px solid #e83e8c;">
+                                <strong style="color: #e83e8c;">🚀 Short Squeeze:</strong> ${siData.short_percent}% short interest
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${siData.recovery_multiplier}x squeeze boost)</span>
+                            </div>`;
+                    }
+                    
+                    // RSI Oversold Signal
+                    if (enhancedSignals.rsi_reversion?.oversold) {
+                        const rsiData = enhancedSignals.rsi_reversion;
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,193,7,0.1); border-radius: 4px; border-left: 3px solid #ffc107;">
+                                <strong style="color: #ffc107;">🎯 RSI Oversold:</strong> ${rsiData.rsi} (${rsiData.signal_strength})
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(mean reversion likely)</span>
+                            </div>`;
+                    }
+                    
+                    // Economic Regime Signal  
+                    if (enhancedSignals.economic_regime?.regime) {
+                        const regimeData = enhancedSignals.economic_regime;
+                        const regimeBoost = regimeData.regime_multipliers?.short || 1.0;
+                        const regimeColor = regimeBoost > 1.2 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
+                        signalsDisplay += `
+                            <div style="margin-bottom: 8px; padding: 8px; background: rgba(128,128,128,0.1); border-radius: 4px; border-left: 3px solid ${regimeColor};">
+                                <strong style="color: ${regimeColor};">🌡️ Market Regime:</strong> VIX ${regimeData.vix_level} (${regimeData.regime.replace('_', ' ')})
+                                <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${regimeData.recovery_environment})</span>
+                            </div>`;
+                    }
+                    
+                    // Add the enhanced signals to the display if any exist
+                    if (signalsDisplay) {
+                        recoveryData.innerHTML += `
+                            <div style="margin-top: 15px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px;">
+                                <h5 style="margin: 0 0 12px 0; color: #ffffff; font-size: 14px;">🎯 Enhanced Market Signals:</h5>
+                                ${signalsDisplay}
+                            </div>
+                        `;
+                    }
+                    
                     // Add mathematical breakdown
                     const breakdownElement = document.getElementById('recovery-breakdown');
                     const breakdownContent = document.getElementById('recovery-breakdown-content');
-                    if (breakdownElement && breakdownContent && recovery.score_breakdown) {
-                        const breakdown = recovery.score_breakdown;
-                        
-                        // Check for enhanced signals
-                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
-                        let signalsDisplay = '';
-                        
-                        // Volume Surge Signal
-                        if (enhancedSignals.volume_surge?.surge_detected) {
-                            const volumeData = enhancedSignals.volume_surge;
-                            signalsDisplay += `
-                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,255,0,0.1); border-radius: 4px; border-left: 3px solid #28a745;">
-                                    <strong style="color: #28a745;">📈 Volume Surge:</strong> ${volumeData.volume_ratio}x average
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(+${Math.round((volumeData.surge_multiplier - 1) * 100)}% probability boost)</span>
-                                </div>`;
-                        }
-                        
-                        // RSI Oversold Signal
-                        if (enhancedSignals.rsi_reversion?.oversold) {
-                            const rsiData = enhancedSignals.rsi_reversion;
-                            signalsDisplay += `
-                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,193,7,0.1); border-radius: 4px; border-left: 3px solid #ffc107;">
-                                    <strong style="color: #ffc107;">🎯 RSI Oversold:</strong> ${rsiData.rsi} (${rsiData.signal_strength})
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(mean reversion likely)</span>
-                                </div>`;
-                        }
-                        
-                        // Economic Regime Signal  
-                        if (enhancedSignals.economic_regime?.regime) {
-                            const regimeData = enhancedSignals.economic_regime;
-                            const regimeBoost = regimeData.regime_multipliers?.short || 1.0;
-                            const regimeColor = regimeBoost > 1.2 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
-                            signalsDisplay += `
-                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(128,128,128,0.1); border-radius: 4px; border-left: 3px solid ${regimeColor};">
-                                    <strong style="color: ${regimeColor};">🌡️ Market Regime:</strong> VIX ${regimeData.vix_level} (${regimeData.regime.replace('_', ' ')})
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${regimeData.recovery_environment})</span>
-                                </div>`;
-                        }
+                    if (breakdownElement && breakdownContent) {
 
                         // Build detailed mathematical breakdown for short-term
                         const shortTermBreakdownData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
