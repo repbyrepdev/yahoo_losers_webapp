@@ -2628,19 +2628,42 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
             <!-- Clean Market Overview -->
             <div class="section">
-                <h2 style="margin-bottom: 20px; text-align: left;">📈 Market Overview</h2>
-                <div style="display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; gap: 20px;">
-                    <div class="market-stat">
-                        <div style="font-size: 20px; font-weight: 600; color: {{ market_analysis.vix_analysis.color }};">{{ market_analysis.vix_analysis.current_vix }}</div>
-                        <div style="font-size: 12px; color: var(--text-secondary);">VIX • {{ market_analysis.vix_analysis.regime }}</div>
+                <h2 style="margin-bottom: 24px; text-align: left;">📈 Market Overview</h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 8px;">
+                    <!-- VIX Volatility Card -->
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
+                        <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">📊 VOLATILITY INDEX</div>
+                        <div style="font-size: 32px; font-weight: 700; color: {{ market_analysis.vix_analysis.color }}; margin-bottom: 4px;">{{ market_analysis.vix_analysis.current_vix }}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); font-weight: 500;">VIX • {{ market_analysis.vix_analysis.regime }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; opacity: 0.8;">{{ market_analysis.vix_analysis.recovery_impact }}</div>
                     </div>
-                    <div class="market-stat">
-                        <div style="font-size: 20px; font-weight: 600; color: {{ market_analysis.market_trend.color }};">${{ market_analysis.market_trend.current_price if market_analysis.market_trend.current_price != 'N/A' else 'N/A' }}</div>
-                        <div style="font-size: 12px; color: var(--text-secondary);">SPY • {{ market_analysis.market_trend.trend }}</div>
+                    
+                    <!-- SPY Market Trend Card -->
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
+                        <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">📈 S&P 500 TRACKER</div>
+                        <div style="font-size: 32px; font-weight: 700; color: {{ market_analysis.market_trend.color }}; margin-bottom: 4px;">${{ market_analysis.market_trend.current_price if market_analysis.market_trend.current_price != 'N/A' else 'N/A' }}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); font-weight: 500;">SPY • {{ market_analysis.market_trend.trend }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; opacity: 0.8;">
+                            {% if market_analysis.market_trend.week_change != 'N/A' %}
+                                {{ market_analysis.market_trend.week_change|round(2) }}% this week
+                            {% else %}
+                                Market data loading...
+                            {% endif %}
+                        </div>
                     </div>
-                    <div class="market-stat">
-                        <div style="font-size: 16px; font-weight: 600;">🎯</div>
-                        <div style="font-size: 12px; color: var(--text-secondary);">{{ recommendations_count }} RECOMMENDATIONS</div>
+                    
+                    <!-- AI Recommendations Card -->
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
+                        <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">🤖 AI SIGNALS</div>
+                        <div style="font-size: 32px; font-weight: 700; color: {% if recommendations_count > 0 %}var(--positive-color){% else %}var(--text-secondary){% endif %}; margin-bottom: 4px;">{{ recommendations_count }}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary); font-weight: 500;">Strong Buy Signals</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; opacity: 0.8;">
+                            {% if recommendations_count > 0 %}
+                                High-conviction opportunities detected
+                            {% else %}
+                                Conservative mode active
+                            {% endif %}
+                        </div>
                     </div>
                 </div>
             </div>
