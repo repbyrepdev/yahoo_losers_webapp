@@ -2130,8 +2130,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         return;
                     }
                     
-                    // Get short-term targets from the sophisticated data
-                    const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
+                    // Get short-term targets from the sophisticated data  
+                    const globalRecoveryData = window.currentRecoveryData || {};
+                    const shortTermData = globalRecoveryData.sophisticated_analysis?.timeframe_predictions?.short_term || {};
                     const targets = Object.values(shortTermData);
                     const avgConfidence = targets.some(t => t.confidence === 'High') ? 'High' : 
                                          targets.some(t => t.confidence === 'Medium') ? 'Medium' : 'Low';
@@ -2207,7 +2208,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         const breakdown = recovery.score_breakdown;
                         
                         // Check for enhanced signals
-                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
+                        const enhancedSignals = globalRecoveryData.sophisticated_analysis?.enhanced_signals || {};
                         let signalsDisplay = '';
                         
                         // Volume Surge Signal
@@ -2243,13 +2244,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         }
 
                         // Build detailed mathematical breakdown for short-term
-                        const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
+                        const shortTermBreakdownData = globalRecoveryData.sophisticated_analysis?.timeframe_predictions?.short_term || {};
                         let targetsBreakdown = '';
                         let totalWeightedScore = 0;
                         let totalWeight = 0;
                         
                         // Show each target's calculation
-                        Object.entries(shortTermData).forEach(([targetName, target]) => {
+                        Object.entries(shortTermBreakdownData).forEach(([targetName, target]) => {
                             const displayName = targetName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
                             const weight = targetName === 'previous_close' ? 1.0 : 
                                           targetName === '5day_high' ? 0.9 : 
