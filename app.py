@@ -2127,6 +2127,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         return;
                     }
                     
+                    // Get short-term targets from the sophisticated data
+                    const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
+                    const targets = Object.values(shortTermData);
+                    const avgConfidence = targets.some(t => t.confidence === 'High') ? 'High' : 
+                                         targets.some(t => t.confidence === 'Medium') ? 'Medium' : 'Low';
+                    
                     // Header with confidence levels matching other sections
                     recoveryData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
@@ -2135,7 +2141,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
                             </div>
                             <div>
-                                <div style="font-size: 18px; font-weight: bold;">${recovery.confidence || 'Low'}</div>
+                                <div style="font-size: 18px; font-weight: bold;">${avgConfidence}</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
                             </div>
                             <div>
@@ -2144,9 +2150,52 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </div>
                         </div>
                         <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
-                            ${recovery.recommendation || 'Short-term recovery analysis based on technical indicators and market momentum'}
+                            Short-term recovery analysis based on technical indicators and market momentum
                         </div>
+                        <div style="display: grid; gap: 15px; margin-top: 20px;">
                     `;
+                    
+                    // Add individual targets like med/long-term sections
+                    if (Object.keys(shortTermData).length > 0) {
+                        let shortTermTargets = '';
+                        Object.entries(shortTermData).forEach(([targetName, target]) => {
+                            const confidence = target.confidence || 'Low';
+                            const probability = Math.round(target.probability || 0);
+                            const confidenceColor = confidence === 'High' ? '#28a745' : 
+                                                  confidence === 'Medium' ? '#ffc107' : '#dc3545';
+                            
+                            shortTermTargets += `
+                                <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
+                                    <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
+                                        <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
+                                            ${target.description || targetName}
+                                        </div>
+                                        <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
+                                            ${probability}% probability
+                                        </div>
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
+                                        <div>
+                                            <div style="font-size: 18px; font-weight: bold; color: #ffffff;">$${target.target_price || 'N/A'}</div>
+                                            <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Target Price</div>
+                                        </div>
+                                        <div>
+                                            <div style="font-size: 18px; font-weight: bold; color: #28a745;">+${target.upside_percent || 0}%</div>
+                                            <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside</div>
+                                        </div>
+                                        <div>
+                                            <div style="font-size: 18px; font-weight: bold; color: #ffc107;">${target.timeframe || '1-7 days'}</div>
+                                            <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Timeframe</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        
+                        recoveryData.innerHTML += shortTermTargets + '</div>';
+                    } else {
+                        recoveryData.innerHTML += '</div>';
+                    }
                     
                     // Add mathematical breakdown
                     const breakdownElement = document.getElementById('recovery-breakdown');
