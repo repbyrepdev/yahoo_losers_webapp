@@ -666,17 +666,50 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             body { 
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; 
                 margin: 0; 
-                padding: 12px;
+                padding: 16px;
                 background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-tertiary) 100%);
                 color: var(--text-primary);
-                line-height: 1.6;
+                line-height: 1.5;
                 min-height: 100vh;
+                font-size: 15px;
             }
             
             .container { 
                 max-width: 1600px; 
                 margin: 0 auto; 
-                padding: 0 20px;
+                padding: 0 24px;
+            }
+            
+            /* Improved Typography */
+            h1, h2, h3, h4, h5, h6 { 
+                margin: 0 0 16px 0; 
+                font-weight: 600;
+                letter-spacing: -0.01em;
+            }
+            
+            h1 { font-size: 28px; line-height: 1.2; }
+            h2 { font-size: 22px; line-height: 1.3; }
+            h3 { font-size: 18px; line-height: 1.4; }
+            h4 { font-size: 16px; line-height: 1.4; }
+            
+            /* Status Badges */
+            .status-badge {
+                background: var(--bg-tertiary);
+                border: 1px solid var(--border-color);
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 12px;
+                font-weight: 500;
+                white-space: nowrap;
+            }
+            
+            /* Improved Section Styling */
+            .section {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border-color);
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
             }
             
             /* Widescreen Grid Layout */
@@ -2324,147 +2357,69 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">☀️ Light Mode</button>
         
         <div class="container">
-            <h1>📉 Yahoo Finance Daily Losers Analysis</h1>
-            <div class="timestamp">Generated on: {{ timestamp }}</div>
-            
-            <!-- Live Updates Indicator -->
-            <div style="text-align: center; margin: 10px 0;">
-                <span id="live-indicator" style="background-color: #28a745; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">
-                    ⚡ Auto-refresh every 3 hours during market hours
-                </span>
+            <!-- Clean, Consolidated Header -->
+            <div class="main-header" style="text-align: center; margin-bottom: 32px;">
+                <h1 style="margin: 0 0 8px 0; font-size: 28px; font-weight: 700;">📉 Daily Losers Analysis</h1>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px;">
+                    <span class="status-badge" style="font-size: 13px; font-weight: 500;">
+                        🕐 {{ market_status.message }}
+                        {% if market_status.time_to_close %} • {{ market_status.time_to_close }}{% endif %}
+                    </span>
+                    <span class="status-badge" style="font-size: 13px; font-weight: 500;">
+                        {% if status.data_source == 'cached' %}📁 Cached
+                        {% elif status.data_source == 'live' %}✅ Live
+                        {% elif status.data_source == 'sample' %}⚠️ Sample
+                        {% elif status.data_source == 'error' %}❌ Error
+                        {% endif %}
+                    </span>
+                    <span class="status-badge" style="font-size: 13px; font-weight: 500;">
+                        ⚡ Auto-refresh: 3hrs
+                    </span>
+                </div>
+                <div class="timestamp" style="font-size: 12px; color: var(--text-secondary); margin: 0;">{{ timestamp }}</div>
             </div>
             
-            <!-- Widescreen Status Grid -->
-            <div class="grid-layout">
-                <!-- Market Status -->
-                <div class="section" style="text-align: center;">
-                    <h3>🕐 Market Status</h3>
-                    <div style="font-size: 18px; font-weight: bold; margin: 10px 0;">
-                        {{ market_status.message }}
+            <!-- Streamlined Analysis Summary -->
+            <div class="section" style="text-align: center; padding: 16px 24px;">
+                <div style="display: flex; justify-content: center; align-items: center; gap: 24px; flex-wrap: wrap;">
+                    <div class="stat-item">
+                        <div style="font-size: 24px; font-weight: 700; color: var(--accent-blue);">{{ total_losers }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">STOCKS ANALYZED</div>
                     </div>
-                    {% if market_status.time_to_close %}
-                        <div style="color: var(--positive-color);">{{ market_status.time_to_close }}</div>
-                    {% endif %}
-                    {% if market_status.next_open %}
-                        <div style="color: var(--text-secondary); font-size: 14px;">{{ market_status.next_open }}</div>
-                    {% endif %}
+                    <div class="stat-item">
+                        <div style="font-size: 24px; font-weight: 700; color: var(--positive-color);">{{ recommendations_count }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">AI RECOMMENDATIONS</div>
+                    </div>
+                    <div class="stat-item">
+                        <div style="font-size: 20px; font-weight: 600;">🤖📱🔮</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">ULTIMATE ANALYSIS</div>
+                    </div>
+                    <div class="stat-item">
+                        <div style="font-size: 20px; font-weight: 600;">📈</div>
+                        <div style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">LIVE CHARTS</div>
+                    </div>
                 </div>
+            </div>
                 
-                <!-- Data Source Status -->
-                <div class="section" style="text-align: center;">
-                    <h3>📡 Data Source</h3>
-                    {% if status.data_source == 'cached' %}
-                        <div class="status-cached" style="margin: 0;">
-                            <span class="status-icon">📁 CACHED DATA:</span> {{ status.message }}
-                        </div>
-                    {% elif status.data_source == 'live' %}
-                        <div class="status-live" style="margin: 0;">
-                            <span class="status-icon">✅ LIVE DATA:</span> {{ status.message }}
-                        </div>
-                    {% elif status.data_source == 'sample' %}
-                        <div class="status-sample" style="margin: 0;">
-                            <span class="status-icon">⚠️ SAMPLE DATA:</span> {{ status.message }}
-                        </div>
-                    {% elif status.data_source == 'error' %}
-                        <div class="status-error" style="margin: 0;">
-                            <span class="status-icon">❌ ERROR:</span> {{ status.message }}
-                        </div>
-                    {% endif %}
-                </div>
-            </div>
-            
-            <!-- Summary Section - Full Width -->
-            <div class="section grid-full">
-                <h3>📊 Analysis Summary</h3>
-                <div class="grid-layout">
-                    <div>
-                        <h4 style="margin-top: 0;">📈 Data Analysis</h4>
-                        <ul style="margin: 0;">
-                            <li><strong>Total Losers Analyzed:</strong> {{ total_losers }}</li>
-                            <li><strong>Detailed Analysis:</strong> {{ detailed_count }}</li>
-                            <li><strong>Complete Investment Analysis:</strong> {{ all_analysis_count }}</li>
-                            <li><strong>AI Recovery Recommendations:</strong> {{ recommendations_count }}</li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h4 style="margin-top: 0;">🚀 Enhanced Features</h4>
-                        <ul style="margin: 0; font-size: 14px;">
-                            <li><strong>🤖📱🔮 Ultimate Analysis:</strong> Comprehensive AI + Social + Recovery analysis</li>
-                            <li><strong>🧮 Mathematical Transparency:</strong> Detailed recovery score calculations</li>
-                            <li><strong>📊 Enhanced Engine:</strong> Less conservative scoring (65/50/35 thresholds)</li>
-                            <li><strong>🌐 Multi-Market Intelligence:</strong> SPY/QQQ + sector ETF analysis</li>
-                            <li><strong>📈 Interactive Charts:</strong> Live TradingView integration</li>
-                            <li><strong>⏰ EST Time:</strong> Eastern timezone with market countdown</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <!-- Enhanced Recovery Prediction Explanation -->
-                <div style="margin-top: 20px; padding: 20px; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); color: white; border-radius: 12px;">
-                    <h4 style="margin: 0 0 15px 0; color: white;">🔮 Enhanced Recovery Prediction System</h4>
-                    <div class="grid-layout">
-                        <div>
-                            <p style="margin: 8px 0;"><strong>Multi-Target Analysis:</strong> 6 recovery levels (previous close, 5-day high, 20-day MA, support levels, analyst targets, fair value)</p>
-                            <p style="margin: 8px 0;"><strong>Market Intelligence:</strong> Real-time SPY/QQQ momentum, sector ETF performance, VIX volatility analysis</p>
-                        </div>
-                        <div>
-                            <p style="margin: 8px 0;"><strong>Less Conservative Scoring:</strong> Improved 65/50/35 thresholds (vs old 75/60/40) for more opportunities</p>
-                            <p style="margin: 8px 0;"><strong>Mathematical Transparency:</strong> Click recovery analysis for detailed calculation breakdown</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Comprehensive Market Analysis Section -->
+            <!-- Clean Market Overview -->
             <div class="section">
-                <h2>📈 Comprehensive Market Analysis</h2>
-                
-                <!-- VIX Analysis -->
-                <div style="background: {{ market_analysis.vix_analysis.color }}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                    <h3 style="margin: 0 0 15px 0;">🌡️ Volatility Index (VIX) Analysis</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                        <div>
-                            <div style="font-size: 24px; font-weight: bold;">{{ market_analysis.vix_analysis.current_vix }}</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Current VIX Level</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 18px; font-weight: bold;">{{ market_analysis.vix_analysis.regime }}</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Market Regime</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 16px; font-weight: bold;">{{ market_analysis.vix_analysis.change|round(2) if market_analysis.vix_analysis.change != 'N/A' else 'N/A' }}</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Change from Yesterday</div>
-                        </div>
+                <h3 style="margin-bottom: 20px;">📈 Market Overview</h3>
+                <div style="display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; gap: 20px;">
+                    <div class="market-stat">
+                        <div style="font-size: 20px; font-weight: 600; color: {{ market_analysis.vix_analysis.color }};">{{ market_analysis.vix_analysis.current_vix }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">VIX • {{ market_analysis.vix_analysis.regime }}</div>
                     </div>
-                    <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                        <strong>Analysis:</strong> {{ market_analysis.vix_analysis.description }}
+                    <div class="market-stat">
+                        <div style="font-size: 20px; font-weight: 600; color: {{ market_analysis.market_trend.color }};">${{ market_analysis.market_trend.current_price if market_analysis.market_trend.current_price != 'N/A' else 'N/A' }}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">SPY • {{ market_analysis.market_trend.trend }}</div>
                     </div>
-                    <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                        <strong>Recovery Impact:</strong> {{ market_analysis.vix_analysis.recovery_impact }}
+                    <div class="market-stat">
+                        <div style="font-size: 16px; font-weight: 600;">🎯</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">{{ recommendations_count }} RECOMMENDATIONS</div>
                     </div>
                 </div>
-                
-                <!-- Market Trend Analysis -->
-                <div style="background: {{ market_analysis.market_trend.color }}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                    <h3 style="margin: 0 0 15px 0;">📊 Market Trend Analysis (SPY)</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
-                        <div>
-                            <div style="font-size: 20px; font-weight: bold;">${{ market_analysis.market_trend.current_price if market_analysis.market_trend.current_price != 'N/A' else 'N/A' }}</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Current SPY Price</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 18px; font-weight: bold;">{{ market_analysis.market_trend.week_change|round(2) if market_analysis.market_trend.week_change != 'N/A' else 'N/A' }}%</div>
-                            <div style="font-size: 14px; opacity: 0.9;">5-Day Change</div>
-                        </div>
-                        <div>
-                            <div style="font-size: 16px; font-weight: bold;">{{ market_analysis.market_trend.trend }}</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Current Trend</div>
-                        </div>
-                    </div>
-                    <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
-                        <strong>Trend Impact:</strong> {{ market_analysis.market_trend.description }}
-                    </div>
-                </div>
+            </div>
                 
                 <!-- AI Recommendation Logic Explanation -->
                 <div style="background: #6c757d; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
