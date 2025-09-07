@@ -1889,41 +1889,39 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             container.innerHTML = `
                 <button onclick="document.getElementById('ultimate-modal').remove()" 
                         style="position: absolute; top: 10px; right: 15px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; font-size: 16px;">×</button>
-                <h3 style="text-align: center; color: #333; margin-top: 0;">🤖📱🔮⏰📊 Complete Analysis: ${symbol}</h3>
+                <h3 style="text-align: center; color: #333; margin-top: 0;">📊🔮⏰📊 Complete Analysis: ${symbol}</h3>
                 
                 <!-- Tab Navigation -->
                 <div style="display: flex; justify-content: center; margin: 20px 0; border-bottom: 2px solid #eee; flex-wrap: wrap;">
-                    <button onclick="switchUltimateTab('ai-tab', '🤖')" id="ai-tab-btn" class="ultimate-tab-btn ultimate-tab-active" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid #007bff; font-weight: bold; color: #007bff; font-size: 13px;">🤖 AI News</button>
-                    <button onclick="switchUltimateTab('sentiment-tab', '📱')" id="sentiment-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">📱 Social</button>
+                    <button onclick="switchUltimateTab('sentiment-tab', '🤖📱')" id="sentiment-tab-btn" class="ultimate-tab-btn ultimate-tab-active" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid #007bff; font-weight: bold; color: #007bff; font-size: 13px;">🤖📱 Market Sentiment</button>
                     <button onclick="switchUltimateTab('recovery-tab', '🔮')" id="recovery-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">🔮 Short Term</button>
                     <button onclick="switchUltimateTab('mediumterm-tab', '⏰')" id="mediumterm-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">⏰ Medium Term</button>
                     <button onclick="switchUltimateTab('longterm-tab', '📊')" id="longterm-tab-btn" class="ultimate-tab-btn" style="background: none; border: none; padding: 10px 16px; margin: 0 3px; cursor: pointer; border-bottom: 3px solid transparent; color: #666; font-size: 13px;">📊 Long Term</button>
                 </div>
                 
-                <!-- AI Analysis Tab -->
-                <div id="ai-tab" class="ultimate-tab-content" style="display: block;">
+                <!-- Combined Market Sentiment Tab (AI News + Social) -->
+                <div id="sentiment-tab" class="ultimate-tab-content" style="display: block;">
+                    <!-- AI News Analysis Section -->
                     <div style="background: linear-gradient(45deg, #007bff, #6610f2); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
                         <h4 style="margin: 0 0 15px 0; text-align: center;">🤖 AI News Analysis</h4>
-                        <div style="font-size: 16px; line-height: 1.6; text-align: center;">
+                        <div style="font-size: 16px; line-height: 1.6; text-align: center; margin-bottom: 15px;">
                             ${aiAnalysis.reason || 'AI analysis unavailable'}
                         </div>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; text-align: center;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
                                 <div style="font-size: 18px; font-weight: bold;">${aiCategory}</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Category</div>
+                                <div style="font-size: 14px; opacity: 0.9;">News Category</div>
                             </div>
                             <div>
                                 <div style="font-size: 18px; font-weight: bold;">${aiAnalysis.confidence || 'Low'}</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Confidence</div>
+                                <div style="font-size: 14px; opacity: 0.9;">AI Confidence</div>
                             </div>
                         </div>
                     </div>
-                </div>
-                
-                <!-- Social Sentiment Tab -->
-                <div id="sentiment-tab" class="ultimate-tab-content" style="display: none;">
+                    
+                    <!-- Social Sentiment Section -->
                     <div style="background: ${panicColor}; color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                        <h4 style="margin: 0 0 15px 0; text-align: center;">📱 Social Sentiment</h4>
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">📱 Social Media Sentiment</h4>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
                                 <div style="font-size: 24px; font-weight: bold;">${sentimentDisplay}</div>
@@ -1939,9 +1937,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         </div>` : ''}
                     </div>
                     
+                    <!-- Trending Phrases -->
                     ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
-                        <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Key Market Indicators</h5>
+                        <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Trending Phrases & Market Indicators</h5>
                         <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                             ${sentiment.trending_phrases.map(phrase => 
                                 `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
