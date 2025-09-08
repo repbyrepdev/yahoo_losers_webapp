@@ -5522,11 +5522,16 @@ def filter_ai_recovery_potential(enhanced_analysis):
         try:
             # Get sophisticated short-term analysis
             print(f"DEBUG: Fetching short-term analysis for {symbol}")
-            recovery_data = predict_sophisticated_recovery_timeframe(symbol)
+            sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
             
-            if not recovery_data or 'sophisticated_analysis' not in recovery_data:
+            if not sophisticated_result:
                 print(f"DEBUG: No sophisticated analysis for {symbol}")
                 continue
+                
+            # Convert to the same format as the API endpoint
+            recovery_data = {
+                'sophisticated_analysis': sophisticated_result
+            }
                 
             # Extract short-term predictions
             timeframe_predictions = recovery_data.get('sophisticated_analysis', {}).get('timeframe_predictions', {})
