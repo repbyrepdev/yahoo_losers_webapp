@@ -3224,7 +3224,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <th>Symbol</th>
                                 <th>Current Price</th>
-                                <th>Recovery Score</th>
                                 <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
@@ -3238,7 +3237,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
                                 <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
-                                <td class="positive"><strong>{{ stock.get('Recovery Score', 'Loading...') }}{% if stock.get('Recovery Score') %}%{% endif %}</strong></td>
                                 <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
@@ -3302,7 +3300,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <th>Symbol</th>
                                 <th>Current Price</th>
-                                <th>Recovery Score</th>
                                 <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
                                 <th>Volume</th>
@@ -3321,9 +3318,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                     {% else %}
                                         ${{ "%.2f"|format(stock['Current Price']) }}
                                     {% endif %}
-                                </td>
-                                <td class="{% if stock.get('Recovery Score', 0) >= 65 %}positive{% elif stock.get('Recovery Score', 0) >= 35 %}neutral{% else %}negative{% endif %}">
-                                    <strong>{{ stock.get('Recovery Score', 'Loading...') }}{% if stock.get('Recovery Score') %}%{% endif %}</strong>
                                 </td>
                                 <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
@@ -3912,12 +3906,6 @@ def get_comprehensive_market_analysis():
                     'threshold': 'Contains "STRONG BUY" in AI recommendation',
                     'current_status': 'Most stocks showing "WAIT & WATCH" or "AVOID"',
                     'explanation': 'AI requires high conviction signals, not moderate opportunities'
-                },
-                {
-                    'requirement': 'High Recovery Scores', 
-                    'threshold': 'Recovery score ≥ 75%',
-                    'current_status': 'Current scores: 39-54% (moderate range)',
-                    'explanation': 'Scores below 75% indicate mixed or unfavorable risk/reward'
                 },
                 {
                     'requirement': 'Market Volatility',
@@ -5473,7 +5461,6 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             enhanced_stock.update({
                 # Basic AI Enhancement - simple but working values
                 'AI Score': round(basic_recovery_score, 1),
-                'Recovery Score': round(basic_recovery_score, 1),  # For table column display
                 'AI Target': stock_analysis.get('Current Price', 0),
                 'AI Potential %': basic_recovery_score * 0.8,
                 'AI Recommendation': 'WAIT & WATCH' if basic_recovery_score < 75 else 'MODERATE BUY',
@@ -5497,7 +5484,6 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             enhanced_stock = stock_analysis.copy()
             enhanced_stock.update({
                 'AI Score': 'N/A',
-                'Recovery Score': 'Error',  # For table column display - different from 0
                 'AI Target': 'N/A',
                 'AI Potential %': 0,
                 'AI Recommendation': 'AVOID',
