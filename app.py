@@ -2133,7 +2133,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Get short-term targets from the sophisticated data
                     const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
                     const targets = Object.values(shortTermData);
-                    const avgConfidence = targets.some(t => t.confidence === 'High') ? 'High' : 
+                    const avgConfidence = targets.some(t => t.confidence === 'Very High' || t.confidence === 'High') ? 'High' : 
                                          targets.some(t => t.confidence === 'Medium') ? 'Medium' : 'Low';
                     
                     // Calculate overall score from short-term targets (consistent with medium/long-term)
@@ -2199,7 +2199,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         Object.entries(shortTermData).forEach(([targetName, target]) => {
                             const confidence = target.confidence || 'Low';
                             const probability = Math.round(target.probability || 0);
-                            const confidenceColor = confidence === 'High' ? '#28a745' : 
+                            const confidenceColor = confidence === 'Very High' || confidence === 'High' ? '#28a745' : 
                                                   confidence === 'Medium' ? '#ffc107' : '#dc3545';
                             
                             shortTermTargets += `
@@ -2495,7 +2495,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(mediumTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const avgConfidence = predictions.some(p => p.confidence === 'High') ? 'High' : 
+                    const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
                     // Calculate final score with signal multipliers for header (matching mathematical breakdown)
@@ -2602,7 +2602,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     const breakdownContent = document.getElementById('mediumterm-breakdown-content');
                     if (breakdownElement && breakdownContent) {
                         const totalTargets = predictions.length;
-                        const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
+                        const highConfTargets = predictions.filter(p => p.confidence === 'Very High' || p.confidence === 'High').length;
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
                         // Build detailed mathematical breakdown for medium-term using window data
@@ -2825,7 +2825,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(longTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const avgConfidence = predictions.some(p => p.confidence === 'High') ? 'High' : 
+                    const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
                     // Calculate final score with signal multipliers for header (matching mathematical breakdown)
@@ -2932,7 +2932,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     const breakdownContent = document.getElementById('longterm-breakdown-content');
                     if (breakdownElement && breakdownContent) {
                         const totalTargets = predictions.length;
-                        const highConfTargets = predictions.filter(p => p.confidence === 'High').length;
+                        const highConfTargets = predictions.filter(p => p.confidence === 'Very High' || p.confidence === 'High').length;
                         const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
                         
                         // Build detailed mathematical breakdown for long-term (analyst targets)
@@ -2944,7 +2944,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         
                         // Show each analyst target's calculation
                         predictions.forEach((target, index) => {
-                            const weight = target.confidence === 'High' ? 1.0 : 
+                            const weight = target.confidence === 'Very High' ? 1.0 :
+                                          target.confidence === 'High' ? 1.0 : 
                                           target.confidence === 'Medium' ? 0.8 : 0.6;
                             const probability = parseFloat(target.probability || 0);
                             
