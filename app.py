@@ -3224,9 +3224,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th>Symbol</th>
+                                <th>AI Technical Sentiment</th>
                                 <th>Current Price</th>
-                                <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
+                                <th>Today's Change %</th>
                                 <th>Volume</th>
                                 <th>Analysis</th>
                             </tr>
@@ -3237,9 +3238,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
-                                <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
                                 <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
+                                <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
+                                <td class="negative">{{ stock['Percent Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
                                 <td>
                                     <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}', '{{ stock.Name }}')" 
@@ -3300,9 +3302,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th>Symbol</th>
+                                <th>AI Technical Sentiment</th>
                                 <th>Current Price</th>
-                                <th>AI News Sentiment</th>
                                 <th>Today's Change</th>
+                                <th>Today's Change %</th>
                                 <th>Volume</th>
                                 <th>Analysis</th>
                             </tr>
@@ -3313,6 +3316,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
+                                <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td>
                                     {% if stock['Current Price'] == 'N/A' %}
                                         {{ stock['Current Price'] }}
@@ -3320,8 +3324,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                         ${{ "%.2f"|format(stock['Current Price']) }}
                                     {% endif %}
                                 </td>
-                                <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
                                 <td class="negative">{{ stock['Change Today'] }}</td>
+                                <td class="negative">{{ stock['Percent Change Today'] }}</td>
                                 <td>{{ stock.Volume }}</td>
                                 <td>
                                     <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}', '{{ stock.Name }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">🤖📱🔮 Analysis</button>
@@ -3961,13 +3965,14 @@ def export_csv():
         output = io.StringIO()
         
         # Write header
-        output.write("Symbol,Company Name,Current Price,Price Target,Potential Return %,Change Today,Percent Change Today,Volume,Market Cap,Previous Close\n")
+        output.write("Symbol,Company Name,AI Technical Sentiment,Current Price,Price Target,Potential Return %,Change Today,Percent Change Today,Volume,Market Cap,Previous Close\n")
         
         # Write data rows
         for analysis in all_analysis:
             row = [
                 analysis.get('Symbol', ''),
                 analysis.get('Company Name', '').replace(',', ';'),  # Replace commas to avoid CSV issues
+                analysis.get('AI Sentiment', '').replace(',', ';'),  # AI Technical Sentiment
                 analysis.get('Current Price', '').replace('$', ''),
                 analysis.get('Price Target', '').replace('$', ''),
                 str(analysis.get('Potential Return %', '')).replace('%', ''),
