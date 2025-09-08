@@ -5505,44 +5505,82 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
     return enhanced_analysis
 
 def filter_ai_recovery_potential(enhanced_analysis):
-    """Filter stocks to show AI recovery potential - VERY STRICT CRITERIA ONLY"""
+    """Filter stocks using sophisticated short-term recovery analysis"""
     ai_recovery_picks = []
     
     for stock in enhanced_analysis:
         symbol = stock.get('Symbol', 'UNKNOWN')
-        ai_recommendation = stock.get('AI Recommendation', 'AVOID')
-        ai_score = stock.get('AI Score', 0)
-        ai_potential = stock.get('AI Potential %', 0)
-        is_buy_signal = stock.get('Is Buy Signal', False)
+        ai_sentiment = stock.get('AI Sentiment', '🔴 Weak Setup')
         
-        # STRICT FILTERING: Show ONLY if meets BOTH criteria:
-        # 1. Must be a genuine BUY signal (contains "BUY" in recommendation)
-        # 2. OR high AI score (≥75) AND NOT negative recommendations
+        # Check AI Technical Sentiment (must be positive)
+        has_good_sentiment = ai_sentiment in ['🟢 Oversold Bounce', '📊 Mixed Signals']
         
-        # Check for explicit STRONG BUY signals only (not moderate buy)
-        has_buy_signal = (
-            is_buy_signal and 
-            ai_recommendation and
-            'STRONG BUY' in ai_recommendation.upper()
-        )
-        
-        # Check for high AI score with positive recommendation 
-        has_high_score = (
-            ai_score >= 75 and
-            ai_recommendation and
-            'AVOID' not in ai_recommendation.upper() and
-            'WAIT' not in ai_recommendation.upper() and
-            'WATCH' not in ai_recommendation.upper()
-        )
-        
-        if has_buy_signal or has_high_score:
-            print(f"DEBUG: Including {symbol} - BuySignal={has_buy_signal}, HighScore={has_high_score}, Score={ai_score}, Rec='{ai_recommendation}'")
-            ai_recovery_picks.append(stock)
-        else:
-            print(f"DEBUG: Excluding {symbol} - BuySignal={has_buy_signal}, HighScore={has_high_score}, Score={ai_score}, Rec='{ai_recommendation}'")
+        if not has_good_sentiment:
+            print(f"DEBUG: Skipping {symbol} - Poor sentiment: {ai_sentiment}")
+            continue
+            
+        try:
+            # Get sophisticated short-term analysis
+            print(f"DEBUG: Fetching short-term analysis for {symbol}")
+            recovery_data = predict_sophisticated_recovery_timeframe(symbol)
+            
+            if not recovery_data or 'sophisticated_analysis' not in recovery_data:
+                print(f"DEBUG: No sophisticated analysis for {symbol}")
+                continue
+                
+            # Extract short-term predictions
+            timeframe_predictions = recovery_data.get('sophisticated_analysis', {}).get('timeframe_predictions', {})
+            short_term_data = timeframe_predictions.get('short_term', {})
+            
+            if not short_term_data:
+                print(f"DEBUG: No short-term data for {symbol}")
+                continue
+                
+            # Calculate short-term recovery score (average probability)
+            targets = list(short_term_data.values())
+            probabilities = [t.get('probability', 0) for t in targets]
+            short_term_score = sum(probabilities) / len(probabilities) if probabilities else 0
+            
+            # Apply signal multipliers (matching the JavaScript logic from loadRecoveryData)
+            enhanced_signals = recovery_data.get('sophisticated_analysis', {}).get('enhanced_signals', {})
+            signal_multiplier = 1.0
+            
+            if enhanced_signals.get('volume_surge', {}).get('surge_detected'):
+                signal_multiplier *= enhanced_signals['volume_surge'].get('surge_multiplier', 1.0)
+            if enhanced_signals.get('rsi_reversion', {}).get('oversold_detected'):
+                signal_multiplier *= enhanced_signals['rsi_reversion'].get('reversion_multiplier', 1.0)
+            if enhanced_signals.get('economic_regime', {}).get('regime'):
+                signal_multiplier *= enhanced_signals['economic_regime'].get('short_term_multiplier', 1.0)
+            if enhanced_signals.get('money_flow_index', {}).get('oversold_detected'):
+                signal_multiplier *= enhanced_signals['money_flow_index'].get('recovery_multiplier', 1.0)
+            if enhanced_signals.get('macd_histogram', {}).get('momentum_shift'):
+                signal_multiplier *= enhanced_signals['macd_histogram'].get('recovery_multiplier', 1.0)
+            if enhanced_signals.get('bollinger_squeeze', {}).get('signal_type') != 'neutral':
+                signal_multiplier *= enhanced_signals.get('bollinger_squeeze', {}).get('recovery_multiplier', 1.0)
+            if enhanced_signals.get('put_call_ratio', {}).get('extreme_sentiment'):
+                signal_multiplier *= enhanced_signals['put_call_ratio'].get('recovery_multiplier', 1.0)
+            if enhanced_signals.get('short_interest', {}).get('squeeze_potential'):
+                signal_multiplier *= enhanced_signals['short_interest'].get('recovery_multiplier', 1.0)
+                
+            final_short_term_score = min(95, short_term_score * signal_multiplier)
+            
+            # Filter criteria: Good sentiment + 80%+ short-term recovery score
+            meets_criteria = has_good_sentiment and final_short_term_score >= 80
+            
+            if meets_criteria:
+                # Add short-term score to stock data for sorting
+                stock['Short_Term_Recovery_Score'] = final_short_term_score
+                ai_recovery_picks.append(stock)
+                print(f"DEBUG: Including {symbol} - Sentiment: {ai_sentiment}, Short-term score: {final_short_term_score:.1f}%")
+            else:
+                print(f"DEBUG: Excluding {symbol} - Sentiment: {ai_sentiment}, Short-term score: {final_short_term_score:.1f}%")
+                
+        except Exception as e:
+            print(f"DEBUG: Error analyzing {symbol}: {str(e)}")
+            continue
     
-    # Sort by AI Score (highest first), then by AI Potential % (highest first)
-    ai_recovery_picks.sort(key=lambda x: (x.get('AI Score', 0), x.get('AI Potential %', 0)), reverse=True)
+    # Sort by Short-term Recovery Score (highest first)
+    ai_recovery_picks.sort(key=lambda x: x.get('Short_Term_Recovery_Score', 0), reverse=True)
     
     return ai_recovery_picks
 
