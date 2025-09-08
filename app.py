@@ -5420,85 +5420,95 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         symbol = stock_analysis['Symbol']
         
         try:
-            # TEMPORARY FIX: Provide basic analysis without complex AI prediction
-            # This will show actual data in the columns instead of "Loading..."
-            
+            # Generate AI Technical Sentiment using sophisticated analysis
             enhanced_stock = stock_analysis.copy()  # Preserve everything from original
             
-            # Generate basic recovery score based on percentage change
-            # Try multiple ways to get the percentage change
-            current_change = 0
+            print(f"DEBUG: Generating sophisticated sentiment for {symbol}")
             
-            # Debug print the stock analysis structure
-            print(f"DEBUG: Stock analysis for {symbol}: {list(stock_analysis.keys())}")
+            # Get sophisticated analysis
+            sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
             
-            for field in ['Percent Change Today', 'Change Today', 'Percent Change']:
-                raw_value = stock_analysis.get(field, '0%')
-                change_str = str(raw_value).replace('%', '').replace('+', '').replace('$', '').replace('(', '').replace(')', '').strip()
-                print(f"DEBUG: {field} = '{raw_value}' -> '{change_str}'")
-                try:
-                    current_change = float(change_str)
-                    print(f"DEBUG: Successfully parsed {field}: {current_change}")
-                    break
-                except (ValueError, TypeError) as e:
-                    print(f"DEBUG: Failed to parse {field}: {e}")
-                    continue
-            
-            # Convert loss percentage to recovery potential (rough estimate)
-            if current_change < 0:
-                basic_recovery_score = min(85, abs(current_change) * 2.5 + 25)  # Worse losses = higher potential
-                print(f"DEBUG: Negative change {current_change}% -> Recovery score: {basic_recovery_score}")
-            elif current_change > 0:
-                basic_recovery_score = 15  # Already up, less recovery potential  
-                print(f"DEBUG: Positive change {current_change}% -> Recovery score: {basic_recovery_score}")
-            else:
-                # Conservative fallback if we can't determine price change
-                basic_recovery_score = 50  # Neutral 50% recovery score
-                print(f"DEBUG: No change detected -> Conservative fallback score: {basic_recovery_score}")
+            if sophisticated_result and sophisticated_result.get('timeframe_predictions', {}).get('short_term'):
+                # Extract short-term data for sentiment generation
+                short_term_data = sophisticated_result['timeframe_predictions']['short_term']
+                targets = list(short_term_data.values())
                 
-            # Generate basic sentiment based on recovery score
-            if basic_recovery_score >= 70:
-                basic_sentiment = "🟢 Oversold Bounce"
-            elif basic_recovery_score >= 50:
-                basic_sentiment = "📊 Mixed Signals" 
+                # Calculate average probability and confidence levels
+                probabilities = [t.get('probability', 0) for t in targets]
+                avg_probability = sum(probabilities) / len(probabilities) if probabilities else 0
+                confidences = [t.get('confidence', 'Low') for t in targets]
+                
+                # Check for enhanced signals to refine sentiment
+                enhanced_signals = sophisticated_result.get('enhanced_signals', {})
+                active_signals = []
+                if enhanced_signals.get('volume_surge', {}).get('surge_detected'):
+                    active_signals.append('volume_surge')
+                if enhanced_signals.get('rsi_reversion', {}).get('oversold'):
+                    active_signals.append('rsi_oversold')
+                if enhanced_signals.get('bollinger_squeeze', {}).get('squeeze_detected'):
+                    active_signals.append('bollinger_squeeze')
+                
+                # Generate sophisticated sentiment
+                if avg_probability >= 85 and any(c in ['Very High', 'High'] for c in confidences):
+                    ai_sentiment = "🟢 Oversold Bounce"
+                    ai_emoji = "🟢"
+                    ai_color = "green"
+                elif avg_probability >= 70:
+                    ai_sentiment = "📊 Mixed Signals"
+                    ai_emoji = "📊"
+                    ai_color = "orange"
+                else:
+                    ai_sentiment = "🔴 Weak Setup"
+                    ai_emoji = "🔴"
+                    ai_color = "red"
+                    
+                print(f"DEBUG: {symbol} sophisticated sentiment: {ai_sentiment} (avg_prob: {avg_probability:.1f}%, signals: {len(active_signals)})")
+                
             else:
-                basic_sentiment = "🔴 Weak Setup"
+                # Fallback to simple sentiment based on price change if sophisticated analysis fails
+                print(f"DEBUG: {symbol} falling back to simple sentiment (no sophisticated data)")
+                current_change = 0
+                for field in ['Percent Change Today', 'Change Today', 'Percent Change']:
+                    raw_value = stock_analysis.get(field, '0%')
+                    change_str = str(raw_value).replace('%', '').replace('+', '').replace('$', '').replace('(', '').replace(')', '').strip()
+                    try:
+                        current_change = float(change_str)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+                
+                # Simple fallback sentiment
+                if current_change <= -5:  # Significant drop
+                    ai_sentiment = "🟢 Oversold Bounce"
+                    ai_emoji = "🟢"
+                    ai_color = "green"
+                elif current_change <= -2:  # Moderate drop
+                    ai_sentiment = "📊 Mixed Signals"
+                    ai_emoji = "📊"
+                    ai_color = "orange"
+                else:  # Small drop or positive
+                    ai_sentiment = "🔴 Weak Setup"
+                    ai_emoji = "🔴"
+                    ai_color = "red"
             
+            # Update stock with only the fields we actually use
             enhanced_stock.update({
-                # Basic AI Enhancement - simple but working values
-                'AI Score': round(basic_recovery_score, 1),
-                'AI Target': stock_analysis.get('Current Price', 0),
-                'AI Potential %': basic_recovery_score * 0.8,
-                'AI Recommendation': 'WAIT & WATCH' if basic_recovery_score < 75 else 'MODERATE BUY',
-                'AI Sentiment': basic_sentiment,  # For table column display
-                'AI Emoji': '🟢' if basic_recovery_score >= 60 else '🔴',
-                'AI Color': 'green' if basic_recovery_score >= 60 else 'red',
-                'Is Buy Signal': basic_recovery_score >= 75,
-                'AI Confidence': 'Moderate' if basic_recovery_score >= 50 else 'Low',
-                'Time Horizon': '1-3 days' if basic_recovery_score >= 70 else '1-2 weeks',
-                'Key Factors': ['Price oversold'] if current_change < -5 else ['Mixed signals'],
-                'Risk Factors': ['High volatility'],
-                'AI Summary': f"Basic Recovery Score: {basic_recovery_score:.1f}/100"
+                'AI Sentiment': ai_sentiment,  # Used in table column
+                'AI Emoji': ai_emoji,         # Used for display
+                'AI Color': ai_color          # Used for styling
             })
             
             enhanced_analysis.append(enhanced_stock)
             
         except Exception as e:
-            logger.error(f"CRITICAL: Failed to get AI analysis for {symbol}: {str(e)}")
+            logger.error(f"CRITICAL: Failed to get sophisticated sentiment for {symbol}: {str(e)}")
             print(f"ERROR for {symbol}: {str(e)}")  # Debug print
-            # Fallback - keep original analysis, add basic AI fields
+            # Fallback - keep original analysis, add error AI fields
             enhanced_stock = stock_analysis.copy()
             enhanced_stock.update({
-                'AI Score': 'N/A',
-                'AI Target': 'N/A',
-                'AI Potential %': 0,
-                'AI Recommendation': 'AVOID',
                 'AI Sentiment': '⚠️ Analysis Error',  # For table column display
                 'AI Emoji': '⚠️',
-                'AI Color': '#6c757d',
-                'Is Buy Signal': False,
-                'AI Confidence': 'Low',
-                'AI Summary': 'Insufficient data for analysis'
+                'AI Color': '#6c757d'
             })
             enhanced_analysis.append(enhanced_stock)
     
