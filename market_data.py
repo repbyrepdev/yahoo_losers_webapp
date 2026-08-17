@@ -206,6 +206,16 @@ def _load_cache_from_disk():
     return restored
 
 
+def cache_size() -> int:
+    """Entries visible to this process, preferring the shared backend."""
+    if _cache._redis is not None:
+        try:
+            return sum(1 for _ in _cache._redis.scan_iter(f"md:{CACHE_SCHEMA_VERSION}:*"))
+        except Exception:
+            pass
+    return len(_cache._local)
+
+
 def clear_cache():
     """Drop every cached entry, in memory, on disk and in Redis.
 
@@ -788,7 +798,20 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
 # fills in over time.
 
 WARM_INTERVAL_SECONDS = int(os.environ.get("MARKET_DATA_WARM_INTERVAL", 45))
+WARM_STARTUP_DELAY_SECONDS = int(os.environ.get("MARKET_DATA_WARM_DELAY", 10))
 WARM_LOCK_FILE = os.environ.get("MARKET_DATA_WARM_LOCK", "/tmp/market_data_warmer.lock")
+
+# The warmer must be able to find work on its own. Queueing only happened from
+# the page render, but with a persistent page cache that render stops running --
+# so the queue stayed empty and the cache never filled. The warmer now pulls the
+# current universe itself on each idle cycle.
+_symbol_source = [None]
+
+
+def set_symbol_source(fn):
+    """Register a callable returning the symbols worth keeping warm."""
+    _symbol_source[0] = fn
+
 
 _warm_queue: List[str] = []
 _warm_queue_lock = threading.Lock()
@@ -829,11 +852,23 @@ def _claim_warmer_role() -> bool:
 
 
 def _warm_loop():
+    # Sleep before the first cycle. The thread starts during module import, so
+    # working immediately would race the definitions it depends on, and would
+    # also put a burst of provider calls right at process start.
+    time.sleep(WARM_STARTUP_DELAY_SECONDS)
     while True:
         try:
             os.utime(WARM_LOCK_FILE, None)
         except OSError:
             pass
+        with _warm_queue_lock:
+            empty = not _warm_queue
+        if empty and _symbol_source[0] is not None:
+            try:
+                request_warm(_symbol_source[0]())
+            except Exception as e:
+                logger.warning(f"symbol source failed: {type(e).__name__}: {e}")
+
         with _warm_queue_lock:
             batch = _warm_queue[:MAX_PROFILES_PER_WARM]
             del _warm_queue[:len(batch)]
