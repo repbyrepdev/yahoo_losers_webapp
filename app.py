@@ -35,6 +35,10 @@ app = Flask(__name__)
 # Initialize sophisticated timeframe predictor
 sophisticated_predictor = SophisticatedTimeframePredictor()
 
+# Start background warming at import so it runs under gunicorn, which never
+# executes the __main__ block below.
+market_data.start_background_warmer()
+
 # =============================================================================
 # PRODUCTION OPTIMIZATIONS SETUP
 # =============================================================================
@@ -517,12 +521,13 @@ def get_stock_details(symbols):
     """
     stock_details = []
 
+    # Queue for the background warmer and move on. Fetching here put provider
+    # calls in the request path, so Render's periodic HEAD / health check was
+    # triggering a full refresh each time.
     try:
-        market_data.warm(symbols)
+        market_data.request_warm(symbols)
     except Exception as e:
-        # Warming is an optimisation. If it fails the loop below still works,
-        # just slower, so this must never abort the request.
-        logger.warning(f"Cache warm failed: {type(e).__name__}: {e}")
+        logger.warning(f"Queueing warm failed: {type(e).__name__}: {e}")
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
@@ -3790,6 +3795,17 @@ def metrics():
 def refresh_cache():
     """Manual cache refresh endpoint"""
     try:
+        # Clear every layer, not just the rendered page. Leaving the provider
+        # cache in place meant a refresh redisplayed the same failures -- a
+        # rate-limit entry in particular is held for 15 minutes by design.
+        cleared = market_data.clear_cache()
+        if USE_REDIS and redis_client is not None:
+            try:
+                redis_client.delete('yahoo_losers_cache')
+            except Exception as e:
+                logger.warning(f"Redis page cache clear failed: {type(e).__name__}")
+        logger.info(f"Manual refresh cleared {cleared} provider entries")
+
         if os.path.exists(CACHE_FILE):
             os.remove(CACHE_FILE)
             logger.info("Cache manually cleared")
@@ -5309,7 +5325,7 @@ def score_stock(symbol, current_price=None, full=False):
     """
     targets = market_data.analyst_target(symbol, allow_fetch=full)
     prof = market_data.profile(symbol, allow_fetch=full)
-    tech = market_data.technicals(symbol)
+    tech = market_data.technicals(symbol, allow_fetch=full)
     # `full` controls whether the two expensive factors may hit the network.
     # The loser table scores 25 symbols and settles for four of six factors --
     # the model renormalises over what it has and reports the coverage. The

@@ -351,3 +351,83 @@ class TestEmpiricalProbabilities:
         assert out["a"]["probability_available"] is True
         assert out["b"]["probability_available"] is False
         assert "probability" not in out["b"]
+
+
+class TestCacheRecovery:
+    """A bad provider state must not be able to outlive a refresh."""
+
+    def setup_method(self):
+        import market_data
+        self.md = market_data
+        self.md._cache._local.clear()
+
+    def test_failures_are_not_persisted_to_disk(self, tmp_path, monkeypatch):
+        """A rate-limit entry written to disk would survive a restart.
+
+        That is the opposite of what a restart is for: it would restore the
+        very state the restart was meant to clear.
+        """
+        import json
+        cache_file = tmp_path / "cache.json"
+        monkeypatch.setattr(self.md, "CACHE_FILE", str(cache_file))
+        self.md._cache.set("info:GOOD", {"ok": True, "target_mean": 1.0}, 600)
+        self.md._cache.set("info:BAD", {"ok": False, "reason": "YFRateLimitError"}, 600)
+        self.md.save_cache_to_disk()
+
+        stored = json.loads(cache_file.read_text())
+        assert "info:GOOD" in stored
+        assert "info:BAD" not in stored
+
+    def test_clear_cache_empties_everything(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(self.md, "CACHE_FILE", str(tmp_path / "cache.json"))
+        self.md._cache.set("info:X", {"ok": True}, 600)
+        assert self.md.clear_cache() >= 1
+        assert self.md._cache.get("info:X") is None
+
+    def test_rate_limit_backs_off_longer_than_a_transient_error(self):
+        assert self.md.TTL_RATE_LIMITED > self.md.TTL_NEGATIVE_TRANSIENT
+
+    def test_allow_fetch_false_never_hits_the_network(self, monkeypatch):
+        """The per-render budget depends on this being honoured."""
+        def explode():
+            raise AssertionError("producer must not run when allow_fetch is False")
+        result = self.md._cached("info:NEVER", 600, explode, allow_fetch=False)
+        assert result["ok"] is False
+        assert "not fetched" in result["reason"]
+
+
+class TestRenderPathMakesNoProviderCalls:
+    """Rendering must never call a provider.
+
+    Render's platform issues HEAD / as a health check on a schedule. With
+    fetching in the request path, each check triggered a full refresh -- the
+    logs showed single requests taking 31, 45 and 54 seconds while Yahoo's
+    limiter engaged. Fetching belongs on the background warmer.
+    """
+
+    def test_accessors_default_to_cache_only_when_asked(self):
+        import market_data
+        market_data._cache._local.clear()
+
+        def explode():
+            raise AssertionError("no fetch may occur on the render path")
+
+        for key in ("info:X", "tech:X", "hist:X:5y", "options:X", "recs:X"):
+            result = market_data._cached(key, 600, explode, allow_fetch=False)
+            assert result["ok"] is False
+
+    def test_request_warm_queues_without_fetching(self):
+        import market_data
+        market_data._cache._local.clear()
+        with market_data._warm_queue_lock:
+            market_data._warm_queue.clear()
+        market_data.request_warm(["AAA", "BBB"])
+        with market_data._warm_queue_lock:
+            assert "AAA" in market_data._warm_queue
+            assert "BBB" in market_data._warm_queue
+
+    def test_only_one_process_claims_the_warmer(self, tmp_path, monkeypatch):
+        import market_data
+        monkeypatch.setattr(market_data, "WARM_LOCK_FILE", str(tmp_path / "warm.lock"))
+        assert market_data._claim_warmer_role() is True
+        assert market_data._claim_warmer_role() is False
