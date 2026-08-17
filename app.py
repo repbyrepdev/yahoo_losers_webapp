@@ -2742,7 +2742,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                         ${prediction.description || targetName}
                                     </div>
                                     <div style="font-size: 13px; text-align: right;">
-                                        ${probabilityBadge(target)}
+                                        ${probabilityBadge(prediction)}
                                     </div>
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
@@ -2795,10 +2795,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <span style="color: #ffffff; font-weight: 500;">${displayName}:</span>
-                                        <span style="color: #17a2b8;">${Math.round(target.probability || 0)}%</span>
+                                        <span>${probabilityBadge(target)}</span>
                                     </div>
                                     <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
-                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%) • Weight: ${weight.toFixed(1)}x
+                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%)${target.median_days_to_hit ? ' • median ' + target.median_days_to_hit + 'd to reach' : ''}
                                     </div>
                                 </div>`;
                         });
@@ -2892,7 +2892,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                     Each figure is how often this stock actually reached that target
                                     within the horizon, counted over its own price history.
                                 </div>
-                                ${targetsBreakdown}
+                                ${mediumTargetsBreakdown}
                             </div>
 
                             <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
@@ -3073,7 +3073,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                         ${prediction.description || targetName}
                                     </div>
                                     <div style="font-size: 13px; text-align: right;">
-                                        ${probabilityBadge(target)}
+                                        ${probabilityBadge(prediction)}
                                     </div>
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
@@ -3125,10 +3125,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <span style="color: #ffffff; font-weight: 500;">${target.target_type || 'Analyst Target'}:</span>
-                                        <span style="color: #8b5cf6;">${Math.round(probability)}%</span>
+                                        <span>${probabilityBadge(target)}</span>
                                     </div>
                                     <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
-                                        Target: $${target.target_price} (+${Math.round((parseFloat(target.upside_percent) || 0) * 10) / 10}%) • ${target.confidence} confidence (${weight.toFixed(1)}x weight)
+                                        Target: $${target.target_price} (+${Math.round((parseFloat(target.upside_percent) || 0) * 10) / 10}%)${target.median_days_to_hit ? ' • median ' + target.median_days_to_hit + 'd to reach' : ''}
                                     </div>
                                 </div>`;
                         });
@@ -3222,7 +3222,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                     Each figure is how often this stock actually reached that target
                                     within the horizon, counted over its own price history.
                                 </div>
-                                ${targetsBreakdown}
+                                ${longTermTargetsBreakdown}
                             </div>
 
                             <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
