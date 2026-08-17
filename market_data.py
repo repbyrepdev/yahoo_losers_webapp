@@ -649,7 +649,7 @@ def price_history(symbol: str, period: str = "5y", allow_fetch: bool = True) -> 
         if hist is None or hist.empty:
             return {"ok": False, "reason": "no price history"}
         closes = [float(c) for c in hist["Close"].dropna().tolist() if c and c > 0]
-        if len(closes) < 120:
+        if len(closes) < 40:
             return {"ok": False, "reason": f"only {len(closes)} bars of history"}
         return {"ok": True, "closes": closes}
 
