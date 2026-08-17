@@ -46,7 +46,18 @@ def _current_universe():
 
 
 market_data.set_symbol_source(_current_universe)
-market_data.start_background_warmer()
+
+
+@app.before_request
+def _ensure_warmer_running():
+    """Start the background warmer in this worker, once.
+
+    It cannot be started at import: gunicorn runs with preload_app, so import
+    happens in the master and threads are not inherited across fork. Starting
+    from a request handler guarantees it runs in a process that serves traffic.
+    """
+    if not market_data._warmer_started:
+        market_data.start_background_warmer()
 
 # =============================================================================
 # PRODUCTION OPTIMIZATIONS SETUP

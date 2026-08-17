@@ -830,7 +830,7 @@ def request_warm(symbols: List[str]) -> None:
                 _warm_queue.append(upper)
 
 
-def _claim_warmer_role() -> bool:
+def _unused_claim_warmer_role() -> bool:
     """Ensure only one worker warms, so two processes cannot double the load."""
     try:
         fd = os.open(WARM_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -857,10 +857,6 @@ def _warm_loop():
     # also put a burst of provider calls right at process start.
     time.sleep(WARM_STARTUP_DELAY_SECONDS)
     while True:
-        try:
-            os.utime(WARM_LOCK_FILE, None)
-        except OSError:
-            pass
         with _warm_queue_lock:
             empty = not _warm_queue
         if empty and _symbol_source[0] is not None:
@@ -888,9 +884,6 @@ def start_background_warmer():
     """Start the warmer once, in a single worker."""
     global _warmer_started
     if _warmer_started or os.environ.get("MARKET_DATA_DISABLE_WARMER"):
-        return False
-    if not _claim_warmer_role():
-        logger.info("another worker owns background warming")
         return False
     _warmer_started = True
     threading.Thread(target=_warm_loop, daemon=True, name="market-data-warmer").start()
