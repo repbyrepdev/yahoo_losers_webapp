@@ -94,6 +94,24 @@ Both are free. Nothing is required — an unconfigured source reports itself
 unavailable rather than being filled in with a guess, and `/health/sources`
 shows which are live.
 
+## 📋 Reading the table in one glance
+
+Every row now answers the value question without opening the modal, sorted so
+the highest-conviction setup is at the top:
+
+| Column | Meaning |
+| --- | --- |
+| **Score** | The backtested rebound score (0–100) with its confidence and how many of the six inputs were available |
+| **Upside** | Analyst consensus upside, with the analyst count |
+| **P(prev close, 7d)** | How often this stock has reached yesterday's close within 7 trading days, over its own history |
+| **P(20d MA, 21d)** | Same measure against the 20-day mean within 21 days |
+| **P(target, 6mo)** | Same measure against the analyst consensus within ~126 trading days |
+
+Hover any probability for its evidence (hits/windows and the gain required).
+Click any header to re-sort. Default order: scored stocks first, highest score
+first, coverage as the tiebreak. An em dash means the input is genuinely
+absent — no analyst coverage, or too little trading history to measure.
+
 ## 🎲 Timeframe probabilities are measured, not assumed
 
 The Short / Medium / Long Term tabs show, for each price target, **how often
