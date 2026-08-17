@@ -659,6 +659,47 @@ def price_history(symbol: str, period: str = "5y", allow_fetch: bool = True) -> 
     return Sourced.live(payload["closes"], source)
 
 
+
+def ohlcv_history(symbol: str, period: str = "1y") -> Sourced:
+    """Full OHLCV frame data for the timeframe predictor, cached and throttled."""
+    source = "yfinance:history-ohlcv"
+
+    def produce():
+        hist = _ticker(symbol).history(period=period, interval="1d")
+        if hist is None or hist.empty:
+            return {"ok": False, "reason": "no price history"}
+        return {
+            "ok": True,
+            "index": [d.isoformat() for d in hist.index],
+            "open": [None if o != o else float(o) for o in hist["Open"]],
+            "high": [None if h != h else float(h) for h in hist["High"]],
+            "low": [None if l != l else float(l) for l in hist["Low"]],
+            "close": [None if c != c else float(c) for c in hist["Close"]],
+            "volume": [0 if v != v else float(v) for v in hist["Volume"]],
+        }
+
+    payload = _cached(f"ohlcv:{symbol.upper()}:{period}", TTL_TECHNICALS, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload, source)
+
+
+def ohlcv_frame(symbol: str, period: str = "1y"):
+    """The cached OHLCV as a pandas DataFrame, or None."""
+    sourced = ohlcv_history(symbol, period)
+    if not sourced.ok:
+        return None
+    import pandas as pd
+
+    data = sourced.value
+    frame = pd.DataFrame(
+        {"Open": data["open"], "High": data["high"], "Low": data["low"],
+         "Close": data["close"], "Volume": data["volume"]},
+        index=pd.to_datetime(data["index"]),
+    )
+    return frame.dropna(subset=["Close"])
+
+
 def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
     """Top institutional holders, by name, from 13F filings."""
     source = "yfinance:institutional_holders"

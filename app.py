@@ -4651,7 +4651,26 @@ def _sophisticated_cached(symbol):
     if cached is not None:
         return cached
 
-    result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
+    # Cached history keeps the predictor off the network for its main input;
+    # profile comes from the same cached blob the table already uses. Only the
+    # market-condition context (VIX, SPY) still fetches, and those degrade to
+    # neutral rather than empty when unavailable.
+    frame = market_data.ohlcv_frame(symbol.upper())
+    info_payload = market_data._info(symbol.upper(), allow_fetch=False)
+    # The cached blob uses this codebase's names; the predictor reads yfinance's.
+    preloaded_info = {}
+    if info_payload.get("ok"):
+        preloaded_info = {
+            "sector": info_payload.get("sector"),
+            "industry": info_payload.get("industry"),
+            "trailingPE": info_payload.get("trailing_pe"),
+            "sharesShort": info_payload.get("shares_short"),
+            "shortPercentOfFloat": info_payload.get("short_pct_float"),
+            "averageVolume": info_payload.get("avg_volume"),
+        }
+    result = sophisticated_predictor.predict_recovery_timeframes(
+        symbol.upper(), preloaded_hist=frame,
+        preloaded_info=preloaded_info or None)
     result = _attach_empirical_probabilities(symbol.upper(), result)
 
     bands = (result or {}).get('timeframe_predictions') or {}

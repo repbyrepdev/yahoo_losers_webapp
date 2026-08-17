@@ -61,15 +61,29 @@ class SophisticatedTimeframePredictor:
         self._cache = {}
         self._cache_timeout = 300  # 5 minutes
         
-    def predict_recovery_timeframes(self, symbol: str) -> Dict:
+    def predict_recovery_timeframes(self, symbol: str, preloaded_hist=None,
+                                    preloaded_info=None) -> Dict:
         """
         Main function that predicts sophisticated recovery timeframes with multiple targets
+
+        Callers that already hold cached history pass it in, so this does not
+        refetch a year of bars on the request path. The company profile is
+        optional and non-fatal: under Yahoo's per-IP limiter the .info call was
+        the difference between a degraded result and no result at all, because
+        its exception escaped to the outer handler and produced the empty
+        fallback -- which the UI faithfully rendered as "no targets".
         """
         try:
             # Get real stock data
             stock = yf.Ticker(symbol)
-            hist = stock.history(period="1y")  # Extended for better analysis
-            info = stock.info
+            hist = preloaded_hist if preloaded_hist is not None else stock.history(period="1y")
+            if preloaded_info is not None:
+                info = preloaded_info
+            else:
+                try:
+                    info = stock.info or {}
+                except Exception:
+                    info = {}
             
             if hist.empty:
                 return self._fallback_prediction(symbol)
