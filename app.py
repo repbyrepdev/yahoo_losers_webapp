@@ -3675,7 +3675,14 @@ def health_check():
         cache_info = get_cache_status()
         health_status["cache"] = {
             "status": "available" if cache_info.get("exists") else "unavailable",
-            "age_hours": cache_info.get("age_hours", 0)
+            "age_hours": cache_info.get("age_hours", 0),
+            # Which backend each layer actually resolved to. Without this, a
+            # misconfigured REDIS_URL is invisible: the app degrades silently to
+            # per-worker in-memory caches, which halves the useful request
+            # budget and cannot be diagnosed from outside.
+            "page_cache_backend": "redis" if USE_REDIS else "file",
+            "market_data_backend": "redis" if market_data._cache._redis is not None else "memory",
+            "market_data_entries": len(market_data._cache._local),
         }
         
         # Check memory usage for scaling decisions
