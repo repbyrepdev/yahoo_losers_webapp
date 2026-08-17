@@ -3736,6 +3736,20 @@ def health_sources():
         except requests.RequestException as e:
             results[name] = {"reachable": False, "error": type(e).__name__}
 
+    # yfinance is the path that actually serves analyst targets, options and
+    # history, and Yahoo throttles per IP. A block here starves the score while
+    # every raw endpoint above looks unchanged, so it is probed explicitly.
+    try:
+        probe = market_data.analyst_target('AAPL')
+        rate_limited = 'ratelimit' in (probe['mean'].reason or '').lower() if not probe['mean'].ok else False
+        results['yfinance'] = {
+            'reachable': probe['mean'].ok or not rate_limited,
+            'rate_limited': rate_limited,
+            'detail': 'ok' if probe['mean'].ok else (probe['mean'].reason or 'unavailable'),
+        }
+    except Exception as e:
+        results['yfinance'] = {'reachable': False, 'error': type(e).__name__}
+
     degraded = sorted(name for name, r in results.items() if not r["reachable"])
 
     return {
@@ -5147,7 +5161,7 @@ def calculate_ai_rebound_prediction(symbol, current_price=None, **_ignored):
     Extra keyword arguments are accepted and ignored so older callers that
     passed pre-fetched analysis blobs do not break.
     """
-    result = score_stock(symbol, current_price)
+    result = score_stock(symbol, current_price, full=True)
 
     if not result.get('scored'):
         return {
@@ -5273,7 +5287,9 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         else:
             # Not scored is a distinct state from scored-badly, and the label
             # says so rather than defaulting to a bearish-looking verdict.
+            reason = (result or {}).get('reason', 'scoring failed')
             enhanced['AI Sentiment'] = '⚪ Insufficient data'
+            enhanced['Sentiment Detail'] = reason
             enhanced['Rebound Score'] = None
             enhanced['Confidence'] = 'None'
             enhanced['Coverage'] = result.get('coverage') if result else 0
@@ -5283,7 +5299,7 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
 
     return enhanced_analysis
 
-def score_stock(symbol, current_price=None):
+def score_stock(symbol, current_price=None, full=False):
     """Score one symbol with the documented rebound model.
 
     All inputs come from market_data, which caches aggressively, so scoring the
@@ -5294,8 +5310,12 @@ def score_stock(symbol, current_price=None):
     targets = market_data.analyst_target(symbol)
     prof = market_data.profile(symbol)
     tech = market_data.technicals(symbol)
-    ratings = market_data.analyst_recommendations(symbol)
-    options = market_data.options_flow(symbol)
+    # `full` controls whether the two expensive factors may hit the network.
+    # The loser table scores 25 symbols and settles for four of six factors --
+    # the model renormalises over what it has and reports the coverage. The
+    # detail view asks for everything.
+    ratings = market_data.analyst_recommendations(symbol, allow_fetch=full)
+    options = market_data.options_flow(symbol, allow_fetch=full)
 
     price = current_price or (tech.value or {}).get('close')
 

@@ -45,6 +45,39 @@ TTL_PROFILE = 7 * 24 * 60 * 60
 TTL_NEGATIVE_TRANSIENT = 60
 TTL_NEGATIVE_STRUCTURAL = 6 * 60 * 60
 
+# Yahoo rejects bursts from datacenter IPs. Treating that as an ordinary
+# failure is actively harmful: the 60s negative TTL means every page render
+# retries the whole universe, which keeps the limiter engaged indefinitely.
+_RATE_LIMIT_MARKERS = ("ratelimit", "rate limit", "too many requests", "429")
+
+# Back off for a meaningful interval once limited, so the app stops adding
+# load to a provider that is already refusing it.
+TTL_RATE_LIMITED = 15 * 60
+
+# Minimum gap between outbound provider calls, process-wide. Yahoo tolerates a
+# steady trickle far better than a burst, and the cache means most page renders
+# never reach this path at all.
+MIN_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_MIN_INTERVAL", 0.35))
+
+_throttle_lock = threading.Lock()
+_last_call_at = [0.0]
+
+
+def _throttle():
+    """Space out provider calls process-wide."""
+    with _throttle_lock:
+        elapsed = time.time() - _last_call_at[0]
+        wait = MIN_CALL_INTERVAL_SECONDS - elapsed
+        if wait > 0:
+            time.sleep(wait)
+        _last_call_at[0] = time.time()
+
+
+def _is_rate_limited(reason: str) -> bool:
+    lowered = (reason or "").lower()
+    return any(marker in lowered for marker in _RATE_LIMIT_MARKERS)
+
+
 _STRUCTURAL_MARKERS = (
     "no analyst coverage", "no listed options", "no 13F holders",
     "no ratings published", "insufficient history", "no earnings date published",
@@ -152,7 +185,7 @@ class TTLCache:
 _cache = TTLCache(os.environ.get("REDIS_URL"))
 
 
-def _cached(key: str, ttl: int, producer):
+def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
     """Return a cached payload, or produce and store one.
 
     Three lifetimes apply. Successes use the market-aware TTL. Failures caused
@@ -164,14 +197,32 @@ def _cached(key: str, ttl: int, producer):
     hit = _cache.get(key)
     if hit is not None:
         return hit
-    try:
-        value = producer()
-    except Exception as e:
-        logger.warning(f"market_data fetch failed for {key}: {type(e).__name__}: {e}")
-        value = {"ok": False, "reason": f"{type(e).__name__}"}
+
+    if not allow_fetch:
+        return {"ok": False, "reason": "not fetched yet (opened on the detail view)"}
+
+    # One retry, because Yahoo's limiter often clears within a second or two
+    # and a single symbol failing starves the whole score of that factor.
+    value = None
+    for attempt in range(2):
+        _throttle()
+        try:
+            value = producer()
+            break
+        except Exception as e:
+            name = type(e).__name__
+            detail = f"{name}: {e}"
+            if _is_rate_limited(detail) and attempt == 0:
+                time.sleep(1.5 + random.random())
+                continue
+            logger.warning(f"market_data fetch failed for {key}: {detail}")
+            value = {"ok": False, "reason": name}
+            break
 
     if value.get("ok"):
         lifetime = _effective_ttl(ttl)
+    elif _is_rate_limited(value.get("reason", "")):
+        lifetime = TTL_RATE_LIMITED
     elif _is_structural(value.get("reason", "")):
         lifetime = _effective_ttl(TTL_NEGATIVE_STRUCTURAL)
     else:
@@ -380,7 +431,7 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
     return Sourced.live(payload["items"], source)
 
 
-def analyst_recommendations(symbol: str) -> Sourced:
+def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     """Current analyst rating spread (strongBuy/buy/hold/sell/strongSell)."""
     source = "yfinance:recommendations"
 
@@ -397,13 +448,13 @@ def analyst_recommendations(symbol: str) -> Sourced:
         spread["total"] = total
         return {"ok": True, "spread": spread}
 
-    payload = _cached(f"recs:{symbol.upper()}", TTL_TARGETS, produce)
+    payload = _cached(f"recs:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live(payload["spread"], source)
 
 
-def options_flow(symbol: str) -> Sourced:
+def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
     """Nearest-expiry options activity from the real chain.
 
     Reports only what the chain actually contains. The previous implementation
@@ -450,7 +501,7 @@ def options_flow(symbol: str) -> Sourced:
             "contracts": int(len(calls) + len(puts)),
         }
 
-    payload = _cached(f"options:{symbol.upper()}", TTL_OPTIONS, produce)
+    payload = _cached(f"options:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live(payload, source)
@@ -564,10 +615,105 @@ def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
 
 # Concurrency for cache warming. The work is network-bound, so threads help
 # even on a fractional CPU, but the provider will throttle an aggressive fan-out.
-WARM_WORKERS = int(os.environ.get("MARKET_DATA_WARM_WORKERS", 8))
+WARM_WORKERS = int(os.environ.get("MARKET_DATA_WARM_WORKERS", 3))
 
 
-def warm(symbols: List[str], include_options: bool = True) -> dict:
+
+def _compute_technicals_from_closes(closes, volumes):
+    """Shared indicator maths, so batch and single-symbol paths cannot diverge."""
+    import pandas as pd
+
+    close = pd.Series(closes).dropna()
+    volume = pd.Series(volumes).dropna()
+    if len(close) < 30:
+        return {"ok": False, "reason": f"insufficient history ({len(close)} bars)"}
+
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    rsi = (100 - (100 / (1 + rs))).iloc[-1]
+
+    ma20 = close.rolling(20).mean()
+    std20 = close.rolling(20).std()
+    upper, lower = ma20 + 2 * std20, ma20 - 2 * std20
+    width = upper.iloc[-1] - lower.iloc[-1]
+    percent_b = ((close.iloc[-1] - lower.iloc[-1]) / width) if width else None
+
+    last_close = float(close.iloc[-1])
+    ma20_last = float(ma20.iloc[-1]) if ma20.notna().iloc[-1] else None
+    avg_volume_20 = float(volume.tail(20).mean()) if len(volume) >= 20 else None
+    latest_volume = float(volume.iloc[-1]) if len(volume) else None
+    peak = float(close.max())
+
+    if rsi != rsi or ma20_last is None:
+        return {"ok": False, "reason": "indicators unavailable"}
+
+    return {
+        "ok": True,
+        "close": last_close,
+        "rsi14": round(float(rsi), 2),
+        "percent_b": round(float(percent_b), 3) if percent_b is not None and percent_b == percent_b else None,
+        "ma20": round(ma20_last, 4),
+        "pct_from_ma20": round((last_close - ma20_last) / ma20_last, 4),
+        "volume_ratio_20d": round(latest_volume / avg_volume_20, 2) if avg_volume_20 and latest_volume else None,
+        "drawdown_from_6mo_peak": round((last_close - peak) / peak, 4) if peak else None,
+        "bars": int(len(close)),
+    }
+
+
+def batch_history(symbols: List[str], period: str = "5y") -> int:
+    """Fetch price history for many symbols in a single request.
+
+    This is the change that keeps the app inside Yahoo's limits. Fetching 25
+    symbols individually meant 25 requests per refresh; yf.download retrieves
+    them all in one, and the result populates both the technicals and the
+    raw-closes caches so no per-symbol call is needed afterwards.
+    """
+    symbols = [s.upper() for s in symbols]
+    pending = [s for s in symbols
+               if _cache.get(f"tech:{s}") is None or _cache.get(f"hist:{s}:{period}") is None]
+    if not pending:
+        return 0
+
+    _throttle()
+    try:
+        frame = yf.download(pending, period=period, interval="1d",
+                            group_by="ticker", auto_adjust=True,
+                            progress=False, threads=False)
+    except Exception as e:
+        logger.warning(f"batch history failed for {len(pending)} symbols: {type(e).__name__}: {e}")
+        return 0
+
+    if frame is None or frame.empty:
+        return 0
+
+    populated = 0
+    for symbol in pending:
+        try:
+            # yfinance returns a flat frame for one symbol and a MultiIndex for many.
+            sub = frame[symbol] if len(pending) > 1 else frame
+            closes = [float(c) for c in sub["Close"].dropna().tolist() if c and c > 0]
+            volumes = [float(v) for v in sub["Volume"].fillna(0).tolist()]
+        except Exception:
+            continue
+        if len(closes) < 30:
+            continue
+
+        _cache.set(f"hist:{symbol}:{period}", {"ok": True, "closes": closes},
+                   _effective_ttl(TTL_TECHNICALS))
+        _cache.set(f"tech:{symbol}",
+                   _compute_technicals_from_closes(closes[-130:], volumes[-130:]),
+                   _effective_ttl(TTL_TECHNICALS))
+        populated += 1
+
+    logger.info(f"batch history populated {populated}/{len(pending)} symbols in one request")
+    return populated
+
+
+def warm(symbols: List[str], include_options: bool = False) -> dict:
     """Populate the cache for a batch of symbols, concurrently.
 
     Rendering the loser list needs roughly four provider calls per symbol. Done
@@ -581,12 +727,18 @@ def warm(symbols: List[str], include_options: bool = True) -> dict:
     """
     from concurrent.futures import ThreadPoolExecutor
 
+    # One request covers every symbol's history; only the profile remains
+    # per-symbol, which takes a cold refresh from ~50 requests down to ~26.
+    try:
+        batch_history(symbols)
+    except Exception as e:
+        logger.warning(f"batch history unavailable: {type(e).__name__}: {e}")
+
     tasks = []
     for symbol in symbols:
         tasks.append((symbol, _info))
-        tasks.append((symbol, technicals))
-        tasks.append((symbol, analyst_recommendations))
         if include_options:
+            tasks.append((symbol, analyst_recommendations))
             tasks.append((symbol, options_flow))
 
     started = time.time()
