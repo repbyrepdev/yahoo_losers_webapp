@@ -426,11 +426,28 @@ class TestRenderPathMakesNoProviderCalls:
             assert "AAA" in market_data._warm_queue
             assert "BBB" in market_data._warm_queue
 
-    def test_only_one_process_claims_the_warmer(self, tmp_path, monkeypatch):
+    def test_warmer_starts_once_per_process(self, monkeypatch):
+        """Regression: the warmer must start in a worker, not at import.
+
+        gunicorn runs with preload_app, so import happens in the master and
+        threads are not inherited across fork. Starting at import left every
+        traffic-serving worker without a warmer, and the provider cache stayed
+        empty indefinitely.
+        """
         import market_data
-        monkeypatch.setattr(market_data, "WARM_LOCK_FILE", str(tmp_path / "warm.lock"))
-        assert market_data._claim_warmer_role() is True
-        assert market_data._claim_warmer_role() is False
+        monkeypatch.setattr(market_data, "_warmer_started", False)
+        started = []
+        monkeypatch.setattr(market_data.threading, "Thread",
+                            lambda *a, **k: type("T", (), {"start": lambda self: started.append(1)})())
+        assert market_data.start_background_warmer() is True
+        assert market_data.start_background_warmer() is False
+        assert len(started) == 1
+
+    def test_warmer_can_source_symbols_without_a_request(self):
+        """The queue must not depend on a page render having happened."""
+        import market_data
+        market_data.set_symbol_source(lambda: ["ZZA", "ZZB"])
+        assert market_data._symbol_source[0]() == ["ZZA", "ZZB"]
 
 
 class TestHealthEndpoint:
