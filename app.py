@@ -550,7 +550,7 @@ def get_stock_details(symbols):
                 # quoteSummary endpoint now returns 401 to unauthenticated callers.
                 # A consensus drawn from fewer than three estimates is rejected
                 # upstream in market_data rather than presented as a consensus.
-                targets = market_data.analyst_target(symbol)
+                targets = market_data.analyst_target(symbol, allow_fetch=False)
                 target = targets['mean']
                 analysts = targets['analysts']
 
@@ -5307,8 +5307,8 @@ def score_stock(symbol, current_price=None, full=False):
     optional: score_rebound renormalises over whatever is actually available and
     declines to score at all when too little is.
     """
-    targets = market_data.analyst_target(symbol)
-    prof = market_data.profile(symbol)
+    targets = market_data.analyst_target(symbol, allow_fetch=full)
+    prof = market_data.profile(symbol, allow_fetch=full)
     tech = market_data.technicals(symbol)
     # `full` controls whether the two expensive factors may hit the network.
     # The loser table scores 25 symbols and settles for four of six factors --

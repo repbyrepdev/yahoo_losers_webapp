@@ -219,6 +219,36 @@ affordable on a 0.5 CPU / 512 MB instance:
 Cold page render is ~5 s for 25 symbols (provider calls are warmed
 concurrently); warm render is ~0.03 s.
 
+## 🚦 Staying inside Yahoo's rate limit
+
+Yahoo throttles per IP at roughly 2,000 requests an hour, and punishes bursts
+far more aggressively than steady traffic. A datacenter IP has no slack. An
+earlier version of this app fanned out ~100 requests per cold render across 8
+threads and got the Render IP blocked for about an hour, which starved the
+score and made every stock read "Insufficient data".
+
+A cold render now costs **13 requests**:
+
+| Technique | Effect |
+| --- | --- |
+| Batched history (`yf.download`) | 25 history requests collapse into **1** |
+| Deferred factors | options chains and rating spreads are fetched only when a stock is opened, not for all 25 |
+| Per-render profile cap | at most 12 uncached profiles per refresh; the rest fill in on the next one |
+| Process-wide throttle | minimum 0.8s between provider calls, 3 workers |
+| Rate-limit backoff | a throttled response is held 15 minutes, instead of retrying every 60s and keeping the limiter engaged |
+| Disk-persisted cache | a process restart reuses `/tmp/market_data_cache.json` rather than refetching |
+
+At a 10-minute page cache that is roughly **80 requests an hour against a limit
+near 2,000** — about 4%.
+
+The cache warms progressively: the first render resolves ~11 of 25 analyst
+targets, the second ~21, and symbols still pending show an em dash with
+"not fetched yet" rather than a substituted value.
+
+`/health/sources` probes yfinance directly, because the raw Yahoo endpoints it
+also checks are 401 by design — a rate-limit block on the path actually serving
+data would otherwise be invisible.
+
 ## 🧪 Tests
 
 ```bash
