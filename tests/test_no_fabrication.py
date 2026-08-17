@@ -288,3 +288,66 @@ class TestSecretHandling:
         monkeypatch.setenv("FRED_API_KEY", "canonical")
         monkeypatch.setenv("fred_api_key", "variant")
         assert self.store.get("FRED_API_KEY") == "canonical"
+
+
+class TestEmpiricalProbabilities:
+    """Target probabilities must be measured, not assumed.
+
+    The previous implementation started at a hard-coded 70, applied fixed
+    adjustments, multiplied by a signal factor and capped at 95 -- so every
+    target on a page displayed an identical 95%.
+    """
+
+    def setup_method(self):
+        import numpy as np
+        import timeframes
+        self.np = np
+        self.tf = timeframes
+
+    def _series(self, pattern, repeats=40):
+        return self.np.array(pattern * repeats, dtype=float)
+
+    def test_probability_reflects_actual_frequency(self):
+        # A series that reliably rises 10% within a few bars should report a
+        # high hit rate for a 5% target.
+        closes = self._series([100.0, 104.0, 108.0, 112.0, 100.0])
+        result = self.tf.hit_rate(closes, target_pct=5.0, horizon_bars=4)
+        assert result is not None
+        assert result["probability"] > 0.5
+        assert result["windows"] >= self.tf.MIN_WINDOWS
+
+    def test_unreachable_target_reports_near_zero(self):
+        closes = self._series([100.0, 100.5, 101.0, 100.2])
+        result = self.tf.hit_rate(closes, target_pct=50.0, horizon_bars=4)
+        assert result is not None
+        assert result["probability"] == 0.0
+        assert result["hits"] == 0
+
+    def test_harder_targets_are_never_more_likely(self):
+        closes = self._series([100.0, 103.0, 107.0, 99.0, 101.0])
+        easy = self.tf.hit_rate(closes, target_pct=2.0, horizon_bars=5)
+        hard = self.tf.hit_rate(closes, target_pct=15.0, horizon_bars=5)
+        assert easy["probability"] >= hard["probability"]
+
+    def test_every_result_carries_its_denominator(self):
+        closes = self._series([100.0, 102.0, 98.0, 101.0])
+        result = self.tf.hit_rate(closes, target_pct=1.0, horizon_bars=3)
+        assert result["windows"] > 0
+        assert result["hits"] <= result["windows"]
+
+    def test_insufficient_history_returns_none_not_a_guess(self):
+        assert self.tf.hit_rate(self.np.array([100.0, 101.0]), 5.0, 5) is None
+
+    def test_target_at_or_below_current_price_is_not_a_forecast(self):
+        closes = self._series([100.0, 101.0, 99.0])
+        sourced = self.tf.target_probability(closes, target_pct=0.0, band="short")
+        assert sourced.ok is False
+        assert "at or below" in sourced.reason
+
+    def test_annotated_targets_never_carry_an_unmeasured_probability(self):
+        closes = self._series([100.0, 103.0, 99.0])
+        targets = {"a": {"upside_percent": 2.0}, "b": {"upside_percent": None}}
+        out = self.tf.annotate_targets(closes, targets, "short")
+        assert out["a"]["probability_available"] is True
+        assert out["b"]["probability_available"] is False
+        assert "probability" not in out["b"]

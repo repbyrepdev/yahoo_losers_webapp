@@ -94,30 +94,54 @@ Both are free. Nothing is required — an unconfigured source reports itself
 unavailable rather than being filled in with a guess, and `/health/sources`
 shows which are live.
 
-## ⚠️ The timeframe tabs are a heuristic, not a probability
+## 🎲 Timeframe probabilities are measured, not assumed
 
-The Short / Medium / Long Term tabs come from `sophisticated_timeframe.py`,
-which is **not** the validated scoring model and has not been rebuilt.
+The Short / Medium / Long Term tabs show, for each price target, **how often
+this stock actually reached that gain within the horizon**, counted over its own
+price history and displayed with the sample size behind it.
 
-Its `_calculate_recovery_probability` starts from a hard-coded base of 70 and
-applies fixed integer adjustments:
+Example — MNSO at $10.76:
 
-```python
-base_probability = 70              # assumed, not measured
-if upside_percent > 20:  base -= 15
-if volatility == 'extreme': base += 15
-base += momentum_score * 3
-return max(10, min(90, base))      # then * signal_multiplier, capped at 95
+| Target | Gain needed | Probability | Evidence |
+| --- | --- | --- | --- |
+| Support bounce | +1.3% | **81.4%** | 1,004 of 1,233 windows |
+| Intraday resistance | +6.5% | **32.4%** | 404 of 1,247 windows |
+| Previous close | +9.7% | **20.8%** | 260 of 1,247 windows |
+| Analyst low | +31.3% | **51.7%** | 583 of 1,128 windows |
+| Analyst consensus | +83.2% | **13.8%** | 156 of 1,128 windows |
+| "Fair value" (P/E) | +65.6% | **1.9%** | 24 of 1,233 windows |
+
+Displayed timeframes are the **median number of trading days to first reach the
+target** in those same historical windows — also measured.
+
+### What this replaced
+
+Every one of those targets previously displayed **the same 95%** (or 90% on the
+medium tab). The old calculation started at a hard-coded 70, applied fixed
+integer adjustments, multiplied by a "signal multiplier" and capped at 95. The
+cap was hit constantly, which is why the on-screen arithmetic read:
+
+```text
+95% × 1.88 = 95%
 ```
 
-No component was fitted to historical outcomes. Displaying that as "X%
-probability" asserts a measurement nobody made, so it is now labelled
-**"setup score"** with a warning on each tab.
+The gap between invented and measured was 4× at best and roughly 47× at worst —
+a 65.6% gain in three weeks was shown as 90% likely; it has actually happened in
+1.9% of windows.
 
-The rebound score in the main table and the recommendations panel is a
-different system — that one is documented above and backtested below.
+Also removed: a "Bull Case Growth Scenario" computed as `current_price × 1.6`
+with a hard-coded 35% probability. Being arbitrary, it routinely landed *below*
+the real analyst consensus it was supposed to exceed. The long-term tab now
+shows the actual published analyst low, mean and high.
 
-**Rebuilding this module on the validated model is the main outstanding work.**
+### Limitations
+
+- Assumes the past distribution of moves is informative about the next one. For
+  a company whose situation has fundamentally changed, it is not.
+- Windows overlap, so they are not independent; the sample size overstates how
+  much evidence is present.
+- Split-adjusted, ignores dividends.
+- A stock with too little history reports unavailable rather than guessing.
 
 ## 📉 Backtest: does the score actually work?
 
