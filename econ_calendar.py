@@ -20,6 +20,7 @@ from typing import List, Optional
 import requests
 
 from provenance import Sourced
+import secrets_store
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,9 @@ def fomc_meetings() -> Sourced:
 def fred_releases(days_ahead: int = 45) -> Sourced:
     """Upcoming CPI / jobs / GDP / retail sales dates from the FRED calendar."""
     source = "fred:release/dates"
-    api_key = os.environ.get("FRED_API_KEY")
+    # Environment in deployment, macOS Keychain locally. Missing is a normal
+    # state: the calendar reports FRED unavailable rather than guessing dates.
+    api_key = secrets_store.get("FRED_API_KEY")
     if not api_key:
         return Sourced.unavailable(source, "FRED_API_KEY not configured")
 
