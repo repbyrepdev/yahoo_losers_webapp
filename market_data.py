@@ -520,6 +520,25 @@ def technicals(symbol: str) -> Sourced:
     return Sourced.live(payload, source)
 
 
+def price_history(symbol: str, period: str = "5y") -> Sourced:
+    """Split-adjusted daily closes, for measuring how often targets were hit."""
+    source = "yfinance:history"
+
+    def produce():
+        hist = _ticker(symbol).history(period=period, interval="1d")
+        if hist is None or hist.empty:
+            return {"ok": False, "reason": "no price history"}
+        closes = [float(c) for c in hist["Close"].dropna().tolist() if c and c > 0]
+        if len(closes) < 120:
+            return {"ok": False, "reason": f"only {len(closes)} bars of history"}
+        return {"ok": True, "closes": closes}
+
+    payload = _cached(f"hist:{symbol.upper()}:{period}", TTL_TECHNICALS, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["closes"], source)
+
+
 def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
     """Top institutional holders, by name, from 13F filings."""
     source = "yfinance:institutional_holders"

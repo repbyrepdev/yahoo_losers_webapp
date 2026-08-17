@@ -28,6 +28,7 @@ import market_data
 import recommendation
 import econ_calendar
 import social
+import timeframes
 
 app = Flask(__name__)
 
@@ -1169,6 +1170,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Normalise the social payload for display. Missing data must render as
         // an em dash, never as a default number -- the previous code fell back
         // to "5/10", so an API failure looked like a real, calm reading.
+
+        // Render a measured probability with the evidence behind it. When the
+        // measurement could not be made, show an em dash and the reason --
+        // never a number.
+        function probabilityBadge(target) {
+            if (!target || target.probability_available !== true) {
+                const why = (target && target.probability_reason) || 'not measured';
+                return `<span style="color:#e9ecef; font-weight:600;">\u2014</span>
+                        <span style="color:#ced4da; font-size:11px;"> (${why})</span>`;
+            }
+            const pct = Number(target.probability).toFixed(1);
+            const tone = target.probability >= 50 ? '#7bed9f'
+                       : target.probability >= 25 ? '#ffd97d' : '#ff9f9f';
+            return `<span style="color:${tone}; font-weight:700;">${pct}%</span>
+                    <span style="color:#e9ecef; font-size:11px;"> ${target.evidence || ''}</span>`;
+        }
+
         function socialDisplay(sentiment) {
             const s = (sentiment && sentiment.sentiment) || {};
             const has = s.bearish_ratio !== undefined && s.bearish_ratio !== null;
@@ -2254,7 +2272,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     // Calculate overall score from short-term targets (consistent with medium/long-term)
                     const avgProbability = targets.length > 0 ? targets.reduce((sum, t) => sum + (t.probability || 0), 0) / targets.length : 0;
-                    const heuristicNote = `<div style="background: rgba(255,193,7,0.15); border-left: 3px solid #ffc107; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--text-secondary);">\u26a0\ufe0f These setup scores are a heuristic, not measured probabilities. They start from a fixed base and apply fixed adjustments; no component was fitted to historical outcomes. See the backtest in the README for what the validated model does and does not support.</div>`;
+                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. Past frequency is not a forecast.</div>`;
                     
                     // Calculate final score with signal multipliers for header (matching medium/long-term pattern)
                     const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
@@ -2286,14 +2304,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         shortTermSignalMultiplier *= enhancedSignals.short_interest.recovery_multiplier;
                     }
                     
-                    const shortTermFinalScore = Math.min(95, avgProbability * shortTermSignalMultiplier);
+                    const shortTermFinalScoreSummary = (function(list){
+                        const measured = list.filter(t => t && t.probability_available === true);
+                        if (!measured.length) return { text: '\u2014', sub: 'no measurable targets' };
+                        const best = measured.reduce((a, b) => (b.probability > a.probability ? b : a));
+                        return { text: Number(best.probability).toFixed(0) + '%',
+                                 sub: 'best measured target (' + measured.length + ' measured)' };
+                    })(Object.values(targets || {}));
                     
                     // Header with confidence levels matching other sections
                     recoveryData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round(shortTermFinalScore)}%</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                                <div style="font-size: 28px; font-weight: bold;">${shortTermFinalScoreSummary.text}</div>
+                                <div style="font-size: 13px; opacity: 0.95;">${shortTermFinalScoreSummary.sub}</div>
                             </div>
                             <div>
                                 <div style="font-size: 18px; font-weight: bold;">${avgConfidence}</div>
@@ -2321,27 +2345,27 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                                   confidence === 'Medium' ? '#ffc107' : '#dc3545';
                             
                             shortTermTargets += `
-                                <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
+                                <div style="background: rgba(0,0,0,0.30); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor}; box-shadow: 0 1px 3px rgba(0,0,0,0.25);">
                                     <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
                                         <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
                                             ${target.description || targetName}
                                         </div>
-                                        <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
-                                            ${probability}/100 setup score
+                                        <div style="font-size: 13px; text-align: right;">
+                                            ${probabilityBadge(target)}
                                         </div>
                                     </div>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                         <div>
                                             <div style="font-size: 18px; font-weight: bold; color: #ffffff;">$${target.target_price || 'N/A'}</div>
-                                            <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Target Price</div>
+                                            <div style="font-size: 12px; color: #f1f3f5;">Target Price</div>
                                         </div>
                                         <div>
-                                            <div style="font-size: 18px; font-weight: bold; color: #28a745;">+${target.upside_percent || 0}%</div>
-                                            <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside</div>
+                                            <div style="font-size: 18px; font-weight: bold; color: #eaffef; text-shadow: 0 1px 2px rgba(0,0,0,0.45);">+${target.upside_percent || 0}%</div>
+                                            <div style="font-size: 12px; color: #f1f3f5;">Upside</div>
                                         </div>
                                         <div>
-                                            <div style="font-size: 18px; font-weight: bold; color: #ffc107;">${target.timeframe || '1-7 days'}</div>
-                                            <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Timeframe</div>
+                                            <div style="font-size: 18px; font-weight: bold; color: #fff6d8; text-shadow: 0 1px 2px rgba(0,0,0,0.45);">${target.timeframe || '1-7 days'}</div>
+                                            <div style="font-size: 12px; color: #f1f3f5;">Timeframe</div>
                                         </div>
                                     </div>
                                 </div>
@@ -2411,13 +2435,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             totalWeight += weight;
                             
                             targetsBreakdown += `
-                                <div style="margin: 6px 0; padding: 6px; background: rgba(255,255,255,0.05); border-radius: 3px;">
+                                <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: #ffffff; font-weight: 500;">${displayName}:</span>
-                                        <span style="color: #28a745;">${Math.round(target.probability || 0)}%</span>
+                                        <span style="color: #ffffff; font-weight: 600;">${displayName}:</span>
+                                        <span>${probabilityBadge(target)}</span>
                                     </div>
-                                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
-                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%) • Weight: ${weight.toFixed(1)}x
+                                    <div style="font-size: 11px; color: #dee2e6;">
+                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%)${target.median_days_to_hit ? ' • median ' + target.median_days_to_hit + 'd to reach' : ''}
                                     </div>
                                 </div>`;
                         });
@@ -2506,30 +2530,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         
                         breakdownContent.innerHTML = `
                             <div style="margin-bottom: 12px;">
-                                <strong style="color: #ffffff; font-size: 14px;">📊 Target Analysis:</strong>
+                                <strong style="color: #ffffff; font-size: 14px;">Measured hit rates</strong>
+                                <div style="font-size: 12px; color: #f1f3f5; margin-top: 6px; line-height: 1.55;">
+                                    Each figure is how often this stock actually reached that target
+                                    within the horizon, counted over its own price history.
+                                </div>
                                 ${targetsBreakdown}
                             </div>
-                            
-                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 500;">Step 1: Base Weighted Score</div>
-                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;">
-                                    (${totalWeightedScore.toFixed(1)} weighted points) ÷ (${totalWeight.toFixed(1)} total weight) = <strong>${Math.round(baseScore * 10) / 10}%</strong>
-                                </div>
-                            </div>
-                            
-                            ${signalEffects ? `
-                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 500;">Step 2: Enhanced Signal Multipliers</div>
-                                ${signalEffects}
-                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">
-                                    Combined multiplier: <strong>${signalMultiplier.toFixed(2)}x</strong>
-                                </div>
-                            </div>` : ''}
-                            
-                            <div style="padding: 8px; background: rgba(40,167,69,0.15); border-radius: 4px; margin: 10px 0; border: 1px solid rgba(40,167,69,0.3);">
-                                <div style="color: #ffffff; font-weight: 500;">Final Calculation:</div>
-                                <div style="font-size: 14px; color: #28a745; margin-top: 4px;">
-                                    ${Math.round(baseScore * 10) / 10}% × ${signalMultiplier.toFixed(2)} = <strong>${Math.round(finalScore * 10) / 10}%</strong>
+
+                            <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">Why there is no combined score</div>
+                                <div style="font-size: 12px; color: #f1f3f5; line-height: 1.55;">
+                                    Targets differ in size, so their hit rates are not comparable and
+                                    averaging them would not describe anything real. This panel
+                                    previously showed a weighted score multiplied by a "signal
+                                    multiplier" and capped at 95, which is why every target displayed
+                                    an identical 95% and the arithmetic read 95% &times; 1.88 = 95%.
+                                    Each target now stands on its own measured frequency.
                                 </div>
                             </div>
                         `;
@@ -2613,7 +2630,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(mediumTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const heuristicNote = `<div style="background: rgba(255,193,7,0.15); border-left: 3px solid #ffc107; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--text-secondary);">\u26a0\ufe0f These setup scores are a heuristic, not measured probabilities. They start from a fixed base and apply fixed adjustments; no component was fitted to historical outcomes. See the backtest in the README for what the validated model does and does not support.</div>`;
+                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. Past frequency is not a forecast.</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -2655,14 +2672,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         mediumSignalMultiplier *= siBoost;
                     }
                     
-                    const mediumFinalScore = Math.min(90, avgProbability * mediumSignalMultiplier);
+                    const mediumFinalScoreSummary = (function(list){
+                        const measured = list.filter(t => t && t.probability_available === true);
+                        if (!measured.length) return { text: '\u2014', sub: 'no measurable targets' };
+                        const best = measured.reduce((a, b) => (b.probability > a.probability ? b : a));
+                        return { text: Number(best.probability).toFixed(0) + '%',
+                                 sub: 'best measured target (' + measured.length + ' measured)' };
+                    })(Object.values(predictions || {}));
                     
                     // Header with confidence levels matching other sections
                     mediumtermData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round(mediumFinalScore)}%</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                                <div style="font-size: 28px; font-weight: bold;">${mediumFinalScoreSummary.text}</div>
+                                <div style="font-size: 13px; opacity: 0.95;">${mediumFinalScoreSummary.sub}</div>
                             </div>
                             <div>
                                 <div style="font-size: 18px; font-weight: bold;">${avgConfidence}</div>
@@ -2688,27 +2711,27 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                               confidence === 'Medium' ? '#ffc107' : '#dc3545';
                         
                         mediumTermTargets += `
-                            <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
+                            <div style="background: rgba(0,0,0,0.30); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor}; box-shadow: 0 1px 3px rgba(0,0,0,0.25);">
                                 <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
                                     <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
                                         ${prediction.description || targetName}
                                     </div>
-                                    <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
-                                        ${probability}/100 setup score
+                                    <div style="font-size: 13px; text-align: right;">
+                                        ${probabilityBadge(target)}
                                     </div>
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                     <div>
                                         <div style="font-size: 18px; font-weight: bold; color: #ffffff;">$${prediction.target_price}</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Target Price</div>
+                                        <div style="font-size: 12px; color: #f1f3f5;">Target Price</div>
                                     </div>
                                     <div>
                                         <div style="font-size: 18px; font-weight: bold; color: #28a745;">+${prediction.upside_percent}%</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside</div>
+                                        <div style="font-size: 12px; color: #f1f3f5;">Upside</div>
                                     </div>
                                     <div>
                                         <div style="font-size: 18px; font-weight: bold; color: #ffc107;">${prediction.timeframe}</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Timeframe</div>
+                                        <div style="font-size: 12px; color: #f1f3f5;">Timeframe</div>
                                     </div>
                                 </div>
                             </div>
@@ -2744,7 +2767,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             mediumTotalWeight += weight;
                             
                             mediumTargetsBreakdown += `
-                                <div style="margin: 6px 0; padding: 6px; background: rgba(255,255,255,0.05); border-radius: 3px;">
+                                <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <span style="color: #ffffff; font-weight: 500;">${displayName}:</span>
                                         <span style="color: #17a2b8;">${Math.round(target.probability || 0)}%</span>
@@ -2839,30 +2862,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         
                         breakdownContent.innerHTML = `
                             <div style="margin-bottom: 12px;">
-                                <strong style="color: #ffffff; font-size: 14px;">📊 Medium-Term Target Analysis:</strong>
-                                ${mediumTargetsBreakdown}
-                            </div>
-                            
-                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 500;">Step 1: Base Weighted Score</div>
-                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;">
-                                    (${mediumTotalWeightedScore.toFixed(1)} weighted points) ÷ (${mediumTotalWeight.toFixed(1)} total weight) = <strong>${Math.round(mediumBaseScore * 10) / 10}%</strong>
+                                <strong style="color: #ffffff; font-size: 14px;">Measured hit rates</strong>
+                                <div style="font-size: 12px; color: #f1f3f5; margin-top: 6px; line-height: 1.55;">
+                                    Each figure is how often this stock actually reached that target
+                                    within the horizon, counted over its own price history.
                                 </div>
+                                ${targetsBreakdown}
                             </div>
-                            
-                            ${mediumSignalEffects ? `
-                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 500;">Step 2: Enhanced Signal Multipliers (Reduced Impact)</div>
-                                ${mediumSignalEffects}
-                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">
-                                    Combined multiplier: <strong>${mediumSignalMultiplier.toFixed(2)}x</strong>
-                                </div>
-                            </div>` : ''}
-                            
-                            <div style="padding: 8px; background: rgba(23,162,184,0.15); border-radius: 4px; margin: 10px 0; border: 1px solid rgba(23,162,184,0.3);">
-                                <div style="color: #ffffff; font-weight: 500;">Final Calculation:</div>
-                                <div style="font-size: 14px; color: #17a2b8; margin-top: 4px;">
-                                    ${Math.round(mediumBaseScore * 10) / 10}% × ${mediumSignalMultiplier.toFixed(2)} = <strong>${Math.round(mediumFinalScore * 10) / 10}%</strong>
+
+                            <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">Why there is no combined score</div>
+                                <div style="font-size: 12px; color: #f1f3f5; line-height: 1.55;">
+                                    Targets differ in size, so their hit rates are not comparable and
+                                    averaging them would not describe anything real. This panel
+                                    previously showed a weighted score multiplied by a "signal
+                                    multiplier" and capped at 95, which is why every target displayed
+                                    an identical 95% and the arithmetic read 95% &times; 1.88 = 95%.
+                                    Each target now stands on its own measured frequency.
                                 </div>
                             </div>
                         `;
@@ -2945,7 +2961,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(longTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const heuristicNote = `<div style="background: rgba(255,193,7,0.15); border-left: 3px solid #ffc107; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--text-secondary);">\u26a0\ufe0f These setup scores are a heuristic, not measured probabilities. They start from a fixed base and apply fixed adjustments; no component was fitted to historical outcomes. See the backtest in the README for what the validated model does and does not support.</div>`;
+                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. Past frequency is not a forecast.</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -2987,14 +3003,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         longTermSignalMultiplier *= siBoost;
                     }
                     
-                    const longTermFinalScore = Math.min(85, avgProbability * longTermSignalMultiplier);
+                    const longTermFinalScoreSummary = (function(list){
+                        const measured = list.filter(t => t && t.probability_available === true);
+                        if (!measured.length) return { text: '\u2014', sub: 'no measurable targets' };
+                        const best = measured.reduce((a, b) => (b.probability > a.probability ? b : a));
+                        return { text: Number(best.probability).toFixed(0) + '%',
+                                 sub: 'best measured target (' + measured.length + ' measured)' };
+                    })(Object.values(predictions || {}));
                     
                     // Header with confidence levels matching other sections
                     longtermData.innerHTML = `
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;">
                             <div>
-                                <div style="font-size: 28px; font-weight: bold;">${Math.round(longTermFinalScore)}%</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Recovery Score</div>
+                                <div style="font-size: 28px; font-weight: bold;">${longTermFinalScoreSummary.text}</div>
+                                <div style="font-size: 13px; opacity: 0.95;">${longTermFinalScoreSummary.sub}</div>
                             </div>
                             <div>
                                 <div style="font-size: 18px; font-weight: bold;">${avgConfidence}</div>
@@ -3020,27 +3042,27 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                               confidence === 'Medium' ? '#ffc107' : '#dc3545';
                         
                         longTermTargets += `
-                            <div style="background: rgba(255,255,255,0.1); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor};">
+                            <div style="background: rgba(0,0,0,0.30); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor}; box-shadow: 0 1px 3px rgba(0,0,0,0.25);">
                                 <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
                                     <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
                                         ${prediction.description || targetName}
                                     </div>
-                                    <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
-                                        ${probability}/100 setup score
+                                    <div style="font-size: 13px; text-align: right;">
+                                        ${probabilityBadge(target)}
                                     </div>
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                     <div>
                                         <div style="font-size: 18px; font-weight: bold; color: #ffffff;">$${prediction.target_price || 'N/A'}</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Target Price</div>
+                                        <div style="font-size: 12px; color: #f1f3f5;">Target Price</div>
                                     </div>
                                     <div>
                                         <div style="font-size: 18px; font-weight: bold; color: #28a745;">+${prediction.upside_percent || 0}%</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Upside</div>
+                                        <div style="font-size: 12px; color: #f1f3f5;">Upside</div>
                                     </div>
                                     <div>
                                         <div style="font-size: 18px; font-weight: bold; color: #ffc107;">${prediction.timeframe || 'N/A'}</div>
-                                        <div style="font-size: 12px; color: rgba(255,255,255,0.8);">Timeframe</div>
+                                        <div style="font-size: 12px; color: #f1f3f5;">Timeframe</div>
                                     </div>
                                 </div>
                             </div>
@@ -3075,7 +3097,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             longTermTotalWeight += weight;
                             
                             longTermTargetsBreakdown += `
-                                <div style="margin: 6px 0; padding: 6px; background: rgba(255,255,255,0.05); border-radius: 3px;">
+                                <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
                                         <span style="color: #ffffff; font-weight: 500;">${target.target_type || 'Analyst Target'}:</span>
                                         <span style="color: #8b5cf6;">${Math.round(probability)}%</span>
@@ -3170,36 +3192,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         
                         breakdownContent.innerHTML = `
                             <div style="margin-bottom: 12px;">
-                                <strong style="color: #ffffff; font-size: 14px;">📊 Long-Term Analyst Target Analysis:</strong>
-                                ${longTermTargetsBreakdown}
+                                <strong style="color: #ffffff; font-size: 14px;">Measured hit rates</strong>
+                                <div style="font-size: 12px; color: #f1f3f5; margin-top: 6px; line-height: 1.55;">
+                                    Each figure is how often this stock actually reached that target
+                                    within the horizon, counted over its own price history.
+                                </div>
+                                ${targetsBreakdown}
                             </div>
-                            
-                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 500;">Step 1: Base Weighted Score</div>
-                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;">
-                                    (${longTermTotalWeightedScore.toFixed(1)} weighted points) ÷ (${longTermTotalWeight.toFixed(1)} total weight) = <strong>${Math.round(longTermBaseScore * 10) / 10}%</strong>
-                                </div>
-                                <div style="font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px;">
-                                    High confidence targets weighted 1.0x, Medium 0.8x, Low 0.6x
-                                </div>
-                            </div>
-                            
-                            ${longTermSignalEffects ? `
-                            <div style="padding: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 500;">Step 2: Enhanced Signal Multipliers (Minimal Impact)</div>
-                                ${longTermSignalEffects}
-                                <div style="font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.2);">
-                                    Combined multiplier: <strong>${longTermSignalMultiplier.toFixed(2)}x</strong>
-                                </div>
-                                <div style="font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px;">
-                                    Signals have reduced impact on fundamental long-term targets
-                                </div>
-                            </div>` : ''}
-                            
-                            <div style="padding: 8px; background: rgba(139,92,246,0.15); border-radius: 4px; margin: 10px 0; border: 1px solid rgba(139,92,246,0.3);">
-                                <div style="color: #ffffff; font-weight: 500;">Final Calculation:</div>
-                                <div style="font-size: 14px; color: #8b5cf6; margin-top: 4px;">
-                                    ${Math.round(longTermBaseScore * 10) / 10}% × ${longTermSignalMultiplier.toFixed(2)} = <strong>${Math.round(longTermFinalScore * 10) / 10}%</strong>
+
+                            <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
+                                <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">Why there is no combined score</div>
+                                <div style="font-size: 12px; color: #f1f3f5; line-height: 1.55;">
+                                    Targets differ in size, so their hit rates are not comparable and
+                                    averaging them would not describe anything real. This panel
+                                    previously showed a weighted score multiplied by a "signal
+                                    multiplier" and capped at 95, which is why every target displayed
+                                    an identical 95% and the arithmetic read 95% &times; 1.88 = 95%.
+                                    Each target now stands on its own measured frequency.
                                 </div>
                             </div>
                         `;
@@ -4262,6 +4271,10 @@ def get_sophisticated_timeframe(symbol):
         try:
             # Get the ACTUAL sophisticated analysis - no fake data!
             sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
+            # This route reaches the predictor directly, so it needs the same
+            # measured-probability pass the other caller gets. Without it the
+            # short and medium bands render with no probability at all.
+            sophisticated_result = _attach_empirical_probabilities(symbol.upper(), sophisticated_result)
             print(f"DEBUG: sophisticated_predictor SUCCESS! Result type: {type(sophisticated_result)}")
             print(f"DEBUG: sophisticated_result keys: {list(sophisticated_result.keys()) if isinstance(sophisticated_result, dict) else 'Not a dict'}")
             
@@ -4298,48 +4311,58 @@ def get_sophisticated_timeframe(symbol):
                 # Try to get analyst price target from the stock details
                 try:
                     symbols = [symbol.upper()]
-                    stock_details = get_stock_details(symbols)
-                    if stock_details and len(stock_details) > 0:
-                        stock_detail = stock_details[0]
-                        analyst_target_str = stock_detail.get('Price Target', 'N/A')
-                        
-                        if analyst_target_str != 'N/A':
-                            # Parse the analyst target (format like "$263.45")
-                            analyst_target = float(str(analyst_target_str).replace('$', '').replace(',', ''))
-                            analyst_upside = ((analyst_target - current_price) / current_price) * 100
-                            
-                            if analyst_target > current_price:  # Only if positive upside
-                                long_term_analysis['analyst_consensus'] = {
-                                    "target_price": analyst_target,
-                                    "upside_percent": round(analyst_upside, 2),
-                                    "timeframe": "6-12 months",
-                                    "confidence": "High" if analyst_upside > 20 else "Medium",
-                                    "probability": 65 if analyst_upside > 20 else 45,
-                                    "description": "Analyst Consensus Price Target"
-                                }
-                                print(f"DEBUG: Added analyst consensus target: ${analyst_target} (+{analyst_upside:.1f}%)")
+                    # Real analyst figures: the consensus mean and the actual
+                    # published high estimate. The previous "Bull Case Growth
+                    # Scenario" was current_price * 1.6 with a hard-coded 35%
+                    # probability -- an invented target, which is why it kept
+                    # landing below the real consensus it was meant to exceed.
+                    analyst = market_data.analyst_target(symbol)
+                    if analyst['mean'].ok and current_price > 0:
+                        mean_price = analyst['mean'].value
+                        mean_upside = ((mean_price - current_price) / current_price) * 100
+                        if mean_upside > 0:
+                            long_term_analysis['analyst_consensus'] = {
+                                "target_price": round(mean_price, 2),
+                                "upside_percent": round(mean_upside, 2),
+                                "timeframe": "6-12 months",
+                                "analysts": analyst['analysts'].value,
+                                "description": f"Analyst consensus ({analyst['analysts'].value} analysts)",
+                                "source": analyst['mean'].source,
+                            }
+
+                    if analyst['high'].ok and current_price > 0:
+                        high_price = analyst['high'].value
+                        high_upside = ((high_price - current_price) / current_price) * 100
+                        if high_upside > 0:
+                            long_term_analysis['analyst_high'] = {
+                                "target_price": round(high_price, 2),
+                                "upside_percent": round(high_upside, 2),
+                                "timeframe": "6-12 months",
+                                "description": "Highest published analyst target",
+                                "source": analyst['high'].source,
+                            }
+
+                    if analyst['low'].ok and current_price > 0:
+                        low_price = analyst['low'].value
+                        low_upside = ((low_price - current_price) / current_price) * 100
+                        if low_upside > 0:
+                            long_term_analysis['analyst_low'] = {
+                                "target_price": round(low_price, 2),
+                                "upside_percent": round(low_upside, 2),
+                                "timeframe": "6-12 months",
+                                "description": "Lowest published analyst target",
+                                "source": analyst['low'].source,
+                            }
                 except Exception as e:
-                    print(f"DEBUG: Failed to get analyst target: {e}")
-                
-                # Add a conservative bull case scenario based on analyst target
-                if current_price > 0:
-                    # Use 1.6x current price as conservative bull case (60% upside)
-                    bull_multiplier = 1.6  # Conservative 60% upside potential
-                    bull_target = current_price * bull_multiplier
-                    bull_upside = (bull_multiplier - 1) * 100
-                    
-                    long_term_analysis['bull_case'] = {
-                        "target_price": round(bull_target, 2),
-                        "upside_percent": round(bull_upside, 2),
-                        "timeframe": "12-24 months",
-                        "confidence": "Medium",
-                        "probability": 35,  # Conservative 35% probability
-                        "description": "Bull Case Growth Scenario"
-                    }
-                    print(f"DEBUG: Added bull case target: ${bull_target:.2f} (+{bull_upside:.1f}%)")
-                
+                    logger.warning(f"Long-term analyst targets unavailable for {symbol}: "
+                                   f"{type(e).__name__}: {e}")
+
                 # Only add long_term if we have at least one target
                 if long_term_analysis:
+                    history = market_data.price_history(symbol)
+                    if history.ok:
+                        long_term_analysis = timeframes.annotate_targets(
+                            np.array(history.value, dtype=float), long_term_analysis, 'long')
                     sophisticated_result['timeframe_predictions']['long_term'] = long_term_analysis
                     print(f"DEBUG: Successfully added long_term analysis with {len(long_term_analysis)} targets")
                 else:
@@ -4517,6 +4540,40 @@ def analyze_stock_news(symbol):
 
     return payload
 
+def _attach_empirical_probabilities(symbol, sophisticated_result):
+    """Swap invented target probabilities for measured historical hit rates."""
+    if not sophisticated_result:
+        return sophisticated_result
+
+    history = market_data.price_history(symbol)
+    if not history.ok:
+        # Without history there is no evidence, so the targets are returned
+        # with their probabilities marked unavailable rather than guessed.
+        for band in (sophisticated_result.get('timeframe_predictions') or {}).values():
+            if isinstance(band, dict):
+                for target in band.values():
+                    if isinstance(target, dict):
+                        target['probability_available'] = False
+                        target['probability_reason'] = history.reason
+                        target.pop('probability', None)
+        return sophisticated_result
+
+    closes = np.array(history.value, dtype=float)
+    band_for = {'short_term': 'short', 'medium_term': 'medium', 'long_term': 'long'}
+
+    predictions = sophisticated_result.get('timeframe_predictions') or {}
+    for band_key, targets in predictions.items():
+        if not isinstance(targets, dict):
+            continue
+        predictions[band_key] = timeframes.annotate_targets(
+            closes, targets, band_for.get(band_key, 'medium'))
+
+    sophisticated_result['probability_basis'] = (
+        'Measured frequency with which this stock reached each target within '
+        'the horizon, over its own price history. Not a forecast.')
+    return sophisticated_result
+
+
 def predict_stock_recovery(symbol):
     """
     🚀 SOPHISTICATED RECOVERY PREDICTION using advanced market dynamics
@@ -4528,7 +4585,21 @@ def predict_stock_recovery(symbol):
         
         # Get sophisticated analysis using our new system
         sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol)
-        print(f"DEBUG: Got sophisticated result for {symbol}: {type(sophisticated_result)}")  # Debug
+
+        # Replace the invented probabilities with measured ones.
+        #
+        # The targets this module produces are real -- previous close, moving
+        # averages, analyst consensus. The probability attached to each was not:
+        # it began at a hard-coded 70, took fixed integer adjustments, was
+        # multiplied by a "signal multiplier" and capped at 95. The cap was hit
+        # constantly, so every target on a page showed an identical 95%.
+        #
+        # Each target now carries the frequency with which this stock actually
+        # reached that gain within the horizon, measured over its own history
+        # and reported with the sample size behind it. The signal multiplier is
+        # deliberately not applied: multiplying a measured frequency by an
+        # unfitted constant would destroy the one thing that makes it real.
+        sophisticated_result = _attach_empirical_probabilities(symbol, sophisticated_result)
         
         # Convert sophisticated results back to format expected by existing app
         timeframe_predictions = sophisticated_result.get('timeframe_predictions', {})
