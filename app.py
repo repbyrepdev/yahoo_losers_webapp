@@ -4331,11 +4331,7 @@ def get_sophisticated_timeframe(symbol):
         
         try:
             # Get the ACTUAL sophisticated analysis - no fake data!
-            sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
-            # This route reaches the predictor directly, so it needs the same
-            # measured-probability pass the other caller gets. Without it the
-            # short and medium bands render with no probability at all.
-            sophisticated_result = _attach_empirical_probabilities(symbol.upper(), sophisticated_result)
+            sophisticated_result = _sophisticated_cached(symbol.upper())
             print(f"DEBUG: sophisticated_predictor SUCCESS! Result type: {type(sophisticated_result)}")
             print(f"DEBUG: sophisticated_result keys: {list(sophisticated_result.keys()) if isinstance(sophisticated_result, dict) else 'Not a dict'}")
             
@@ -4635,6 +4631,36 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
     return sophisticated_result
 
 
+
+def _sophisticated_cached(symbol):
+    """Compute the timeframe analysis once per symbol per interval.
+
+    The predictor fetches its own inputs from Yahoo -- a year of history, VIX,
+    SPY, a sector ETF -- unthrottled, on every modal open. Under the per-IP
+    limiter that burst intermittently failed, the predictor fell back to an
+    empty result, and the tabs truthfully rendered "no targets" for stocks
+    whose data existed moments earlier. Caching the finished result makes one
+    computation serve every open for the next half hour.
+
+    A result with no timeframe predictions is the fallback shape produced when
+    the predictor was rate-limited mid-computation; it is held only briefly so
+    the next open retries instead of pinning an empty page for half an hour.
+    """
+    key = f"stf:{symbol.upper()}"
+    cached = market_data._cache.get(key)
+    if cached is not None:
+        return cached
+
+    result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
+    result = _attach_empirical_probabilities(symbol.upper(), result)
+
+    bands = (result or {}).get('timeframe_predictions') or {}
+    populated = any(v for v in bands.values() if v)
+    ttl = market_data._effective_ttl(30 * 60) if populated else 90
+    market_data._cache.set(key, result, ttl)
+    return result
+
+
 def predict_stock_recovery(symbol):
     """
     🚀 SOPHISTICATED RECOVERY PREDICTION using advanced market dynamics
@@ -4645,7 +4671,7 @@ def predict_stock_recovery(symbol):
         print(f"DEBUG: Starting recovery prediction for {symbol}")  # Debug
         
         # Get sophisticated analysis using our new system
-        sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol)
+        sophisticated_result = _sophisticated_cached(symbol)
 
         # Replace the invented probabilities with measured ones.
         #
