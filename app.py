@@ -37,6 +37,15 @@ sophisticated_predictor = SophisticatedTimeframePredictor()
 
 # Start background warming at import so it runs under gunicorn, which never
 # executes the __main__ block below.
+def _current_universe():
+    """Symbols the warmer should keep fresh: today's losers."""
+    losers, status = scrape_yahoo_losers()
+    if not status.get("success"):
+        return []
+    return [s["Symbol"] for s in losers if s.get("Symbol") and s["Symbol"] != "ERROR"]
+
+
+market_data.set_symbol_source(_current_universe)
 market_data.start_background_warmer()
 
 # =============================================================================
@@ -3682,7 +3691,7 @@ def health_check():
             # budget and cannot be diagnosed from outside.
             "page_cache_backend": "redis" if USE_REDIS else "file",
             "market_data_backend": "redis" if market_data._cache._redis is not None else "memory",
-            "market_data_entries": len(market_data._cache._local),
+            "market_data_entries": market_data.cache_size(),
         }
         
         # Check memory usage for scaling decisions
