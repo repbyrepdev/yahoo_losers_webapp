@@ -27,6 +27,7 @@ from provenance import Sourced, safe_ratio, UNAVAILABLE_DISPLAY
 import market_data
 import recommendation
 import econ_calendar
+import social
 
 app = Flask(__name__)
 
@@ -1158,6 +1159,22 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         let autoRefreshInterval;
         let lastUpdateTime = Date.now();
         
+
+        // Normalise the social payload for display. Missing data must render as
+        // an em dash, never as a default number -- the previous code fell back
+        // to "5/10", so an API failure looked like a real, calm reading.
+        function socialDisplay(sentiment) {
+            const s = (sentiment && sentiment.sentiment) || {};
+            const has = s.bearish_ratio !== undefined && s.bearish_ratio !== null;
+            return {
+                label: s.label || 'Unavailable',
+                color: s.color || '#6c757d',
+                bearishText: has ? Math.round(s.bearish_ratio * 100) + '% bearish' : '\u2014',
+                basis: has ? ('of ' + s.tagged_messages + ' tagged messages') : (s.reason || 'no tagged messages'),
+                phrases: (sentiment && sentiment.trending_phrases) || []
+            };
+        }
+
         function isMarketHoliday(date) {
             const year = date.getFullYear();
             const month = date.getMonth() + 1; // JS months are 0-based
@@ -1613,8 +1630,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .catch(error => {
                     console.error('Social sentiment error:', error);
                     displaySentimentModal(symbol, {
-                        panic_level: 0,
-                        panic_description: 'Unable to analyze social sentiment',
+                        sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' },
                         overall_sentiment: 'unknown'
                     });
                 });
@@ -1656,13 +1672,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return '#dc3545'; // Red for high panic
             };
             
-            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
-            const panicLevel = sentiment.panic_level || 5;
+            const panicColor = socialDisplay(sentiment).color;
             
             // Get display values based on format
             const sentimentDisplay = isNewFormat ? 
                 (sentiment.sentiment_label || '😐 Neutral') : 
-                (sentiment.panic_description || '📊 Standard');
+                socialDisplay(sentiment).label;
             const volumeDisplay = isNewFormat ? 
                 (sentiment.volume_interest || '📊 Standard interest') : 
                 (sentiment.social_volume || 'Standard');
@@ -1677,7 +1692,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         ${sentimentDisplay}
                     </div>
                     <div style="font-size: 18px; opacity: 0.9;">
-                        Panic Level: ${panicLevel}/10
+                        ${socialDisplay(sentiment).bearishText} ${socialDisplay(sentiment).basis}
                     </div>
                     ${isNewFormat ? `<div style="font-size: 16px; margin-top: 10px;">
                         ${volumeDisplay}
@@ -1782,7 +1797,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const container = createModalContainer();
             
             // Handle missing data
-            if (!sentiment) sentiment = { panic_level: 5, panic_description: 'Data unavailable', trending_phrases: ['Analysis failed'], panic_color: '#6c757d' };
+            if (!sentiment) sentiment = { sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' }, trending_phrases: [] };
             if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
             
             // Handle both data formats for sentiment
@@ -1793,10 +1808,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return '#dc3545';
             };
             
-            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const panicColor = socialDisplay(sentiment).color;
             const sentimentDisplay = isNewFormat ? 
                 (sentiment.sentiment_label || '😐 Neutral') : 
-                (sentiment.panic_description || '📊 Standard');
+                socialDisplay(sentiment).label;
             
             // Recovery color based on score
             const getRecoveryColor = (score) => {
@@ -1822,8 +1837,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <div style="font-size: 14px; opacity: 0.9;">Current Mood</div>
                         </div>
                         <div>
-                            <div style="font-size: 28px; font-weight: bold;">${sentiment.panic_level || 5}/10</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
+                            <div style="font-size: 28px; font-weight: bold;">${socialDisplay(sentiment).bearishText}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">${socialDisplay(sentiment).basis}</div>
                         </div>
                     </div>
                     ${isNewFormat ? `<div style="text-align: center; margin-top: 10px; font-size: 16px;">
@@ -1853,12 +1868,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
                 
                 <!-- Key Indicators -->
-                ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
+                ${(socialDisplay(sentiment).phrases.length > 0) ? `
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
                     <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Key Market Indicators</h5>
                     <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${sentiment.trending_phrases.map(phrase => 
-                            `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                        ${socialDisplay(sentiment).phrases.map(p =>
+                            `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">${p.phrase} (${p.count})</span>`
                         ).join('')}
                     </div>
                 </div>` : ''}
@@ -1946,7 +1961,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Handle missing data
             if (!aiAnalysis) aiAnalysis = { reason: 'AI analysis unavailable', category: 'Unknown', confidence: 'Low' };
-            if (!sentiment) sentiment = { panic_level: 5, panic_description: 'Data unavailable', trending_phrases: ['Analysis failed'], panic_color: '#6c757d' };
+            if (!sentiment) sentiment = { sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' }, trending_phrases: [] };
             if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
             
             // Data format handling
@@ -1963,9 +1978,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return '#dc3545';
             };
             
-            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const panicColor = socialDisplay(sentiment).color;
             const recoveryColor = getRecoveryColor(recovery.recovery_score || 0);
-            const sentimentDisplay = isNewFormat ? (sentiment.sentiment_label || '😐 Neutral') : (sentiment.panic_description || '📊 Standard');
+            const sentimentDisplay = isNewFormat ? (sentiment.sentiment_label || '😐 Neutral') : socialDisplay(sentiment).label;
             
             // Map AI sentiment to meaningful category
             const getCategoryFromSentiment = (sentiment) => {
@@ -2024,7 +2039,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <div style="font-size: 14px; opacity: 0.9;">Current Mood</div>
                             </div>
                             <div>
-                                <div style="font-size: 24px; font-weight: bold;">${sentiment.panic_level || 5}/10</div>
+                                <div style="font-size: 24px; font-weight: bold;">${socialDisplay(sentiment).bearishText}</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
                             </div>
                         </div>
@@ -2034,12 +2049,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     </div>
                     
                     <!-- Trending Phrases -->
-                    ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
+                    ${(socialDisplay(sentiment).phrases.length > 0) ? `
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
                         <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Trending Phrases & Market Indicators</h5>
                         <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                            ${sentiment.trending_phrases.map(phrase => 
-                                `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                            ${socialDisplay(sentiment).phrases.map(p =>
+                                `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">${p.phrase} (${p.count})</span>`
                             ).join('')}
                         </div>
                     </div>` : ''}
@@ -4376,13 +4391,12 @@ def get_social_sentiment(symbol):
         logger.error(f"Error analyzing social sentiment for {symbol}: {str(e)}")
         return jsonify({
             "symbol": symbol,
-            "sentiment": {
-                "panic_level": 0,
-                "overall_sentiment": "unknown",
-                "reddit_mentions": 0,
-                "twitter_buzz": 0,
-                "trending_phrases": []
-            },
+            # An error path must not emit zeroed counts that read as real
+            # observations of a quiet stock.
+            "sentiment": {"label": "Unavailable", "color": "#6c757d",
+                          "reason": f"request failed ({type(e).__name__})"},
+            "trending_phrases": [],
+            "available": False,
             "error": str(e)
         })
 
@@ -4714,118 +4728,55 @@ def predict_stock_recovery(symbol):
         }
 
 def analyze_social_sentiment(symbol):
-    """
-    Analyze social media sentiment and panic levels
-    Uses real APIs from Reddit, StockTwits, and other social platforms
-    """
-    # Get REAL social media metrics from actual APIs
-    reddit_mentions = 0
-    stocktwits_mentions = 0
-    
-    # Real Reddit API - search for stock mentions
-    try:
-        reddit_url = f"https://www.reddit.com/search.json?q=${symbol}&sort=new&limit=100"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        reddit_response = requests.get(reddit_url, headers=headers, timeout=10)
-        if reddit_response.status_code == 200:
-            reddit_data = reddit_response.json()
-            reddit_mentions = len(reddit_data.get('data', {}).get('children', []))
-            print(f"DEBUG: Got {reddit_mentions} real Reddit mentions for {symbol}")
-    except Exception as e:
-        print(f"DEBUG: Reddit API failed for {symbol}: {e}")
-        reddit_mentions = 0
-    
-    # Real StockTwits API - get real mention count 
-    try:
-        stocktwits_url = f"https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json"
-        stocktwits_response = requests.get(stocktwits_url, timeout=10)
-        if stocktwits_response.status_code == 200:
-            stocktwits_data = stocktwits_response.json()
-            stocktwits_mentions = len(stocktwits_data.get('messages', []))
-            print(f"DEBUG: Got {stocktwits_mentions} real StockTwits mentions for {symbol}")
-    except Exception as e:
-        print(f"DEBUG: StockTwits API failed for {symbol}: {e}")
-        stocktwits_mentions = 0
-    
-    # Twitter/X mentions are not collected. There is no free API for them, and
-    # the previous value was max(reddit_mentions * 2, stocktwits_mentions * 3) --
-    # arithmetic on other platforms' counts, reported under a Twitter label.
+    """Social sentiment from StockTwits tags and, when configured, Reddit.
 
-    total_mentions = reddit_mentions + stocktwits_mentions
-    if total_mentions == 0:
-        panic_level = 3.0  # Neutral when no data
-    else:
-        # Calculate panic based on actual mention density
-        mention_factor = min(total_mentions / 500, 10)  # Scale mentions to 1-10
-        panic_level = max(1.0, min(10.0, mention_factor))
-    
-    logger.info(f"Social data for {symbol}: Reddit={reddit_mentions}, StockTwits={stocktwits_mentions}, Panic={panic_level:.1f}")
-    
-    # Generate panic level description
-    if panic_level >= 8:
-        panic_desc = "🔥🔥🔥 EXTREME PANIC"
-        panic_color = "#dc3545"
-    elif panic_level >= 6:
-        panic_desc = "🔥🔥 HIGH PANIC"
-        panic_color = "#fd7e14"
-    elif panic_level >= 4:
-        panic_desc = "🔥 MODERATE CONCERN"
-        panic_color = "#ffc107"
-    else:
-        panic_desc = "😎 CALM"
-        panic_color = "#28a745"
-    
-    # Generate trending phrases
-    bearish_phrases = [
-        "diamond hands turning to paper",
-        "HODL is dead",
-        "this is the end",
-        "sell everything",
-        "buying the dip was a mistake",
-        "dead cat bounce",
-        "falling knife",
-        "financial ruin"
-    ]
-    
-    bullish_phrases = [
-        "buy the dip",
-        "diamond hands",
-        "HODL strong", 
-        "to the moon",
-        "discount shopping",
-        "strong fundamentals",
-        "oversold bounce coming"
-    ]
-    
-    # Select trending phrases based on sentiment (deterministically based on data)
-    if panic_level > 6:
-        trending = bearish_phrases[:3]  # Take first 3 bearish phrases
-        overall_sentiment = "very_bearish"
-    elif panic_level > 4:
-        # Mix of bearish and bullish based on panic level
-        trending = bearish_phrases[:2] + bullish_phrases[:1]  # 2 bearish, 1 bullish
-        overall_sentiment = "bearish"
-    else:
-        trending = bullish_phrases[:3]  # Take first 3 bullish phrases
-        overall_sentiment = "bullish"
-    
-    return {
-        "panic_level": round(panic_level, 1),
-        "panic_description": panic_desc,
-        "panic_color": panic_color,
-        "overall_sentiment": overall_sentiment,
-        "reddit_mentions": reddit_mentions,
-        "stocktwits_mentions": stocktwits_mentions,
-        "trending_phrases": trending,
-        # Thresholds reflect what these sources can actually return: Reddit search
-        # caps at 100 results and a StockTwits stream page holds ~30 messages, so
-        # the previous 2000/500 cut-offs were unreachable and every stock read low.
-        "social_volume": "high" if total_mentions > 90 else "moderate" if total_mentions > 40 else "low"
+    Reports a measured ratio with its denominator instead of an unanchored
+    1-10 "panic level". The old scale divided total mentions by 500, but Reddit
+    search caps at 100 results and a StockTwits page holds ~30 messages, so it
+    could never exceed roughly 0.26 and every stock rendered as calm.
+    """
+    data = social.sentiment(symbol)
+    overall = data['overall']
+
+    payload = {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "available": overall['available'],
+        "sources": {
+            "stocktwits": {
+                "available": data['stocktwits']['available'],
+                "reason": data['stocktwits'].get('reason'),
+                "messages": data['stocktwits'].get('messages'),
+                "tagged": data['stocktwits'].get('tagged'),
+                "bullish": data['stocktwits'].get('bullish'),
+                "bearish": data['stocktwits'].get('bearish'),
+            },
+            "reddit": {
+                "available": data['reddit']['available'],
+                "reason": data['reddit'].get('reason'),
+                "mentions": data['reddit'].get('mentions'),
+                "capped": data['reddit'].get('capped'),
+            },
+        },
+        # Real repeated phrases from message text, with their counts, rather
+        # than a slice of a hard-coded slang list.
+        "trending_phrases": data['trending_phrases'],
+        "summary": data['summary'],
     }
 
-# ============================================================================= 
-# PROFESSIONAL TRADING FEATURES
-# =============================================================================
+    if overall['available']:
+        payload["sentiment"] = {
+            "bearish_ratio": overall['bearish_ratio'],
+            "bullish_ratio": round(1 - overall['bearish_ratio'], 3),
+            "tagged_messages": overall['tagged_messages'],
+            "label": overall['label'],
+            "color": overall['color'],
+        }
+    else:
+        payload["sentiment"] = {"label": "Unavailable", "color": "#6c757d",
+                                "reason": overall.get('reason')}
+
+    return payload
 
 def _earnings_block(earnings):
     """Render the earnings Sourced into a display block, honestly labelled."""
