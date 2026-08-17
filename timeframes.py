@@ -30,8 +30,13 @@ from provenance import Sourced
 
 logger = logging.getLogger(__name__)
 
-# Below this many windows the frequency is noise, not an estimate.
-MIN_WINDOWS = 60
+# Below this many windows the frequency is noise, not an estimate. Forty
+# overlapping windows is already thin -- the sample-size caveat in the module
+# docstring applies doubly here -- but it lets a stock with three months of
+# trading history get a measured short-term rate instead of nothing. FRVO, a
+# recent IPO, had 59 usable 7-day windows and failed the previous floor of 60
+# by exactly one.
+MIN_WINDOWS = 40
 
 # Trading days per horizon band.
 HORIZON_BARS = {"short": 7, "medium": 21, "long": 126}
@@ -46,7 +51,7 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int) -> Option
     the timeframe shown is measured rather than assumed.
     """
     if closes is None or len(closes) < horizon_bars + MIN_WINDOWS:
-        return None
+        return None  # caller states the shortfall, with the actual bar count
 
     threshold = 1.0 + (target_pct / 100.0)
     hits = 0
@@ -90,7 +95,12 @@ def target_probability(closes: np.ndarray, target_pct: float, band: str) -> Sour
 
     measured = hit_rate(closes, target_pct, horizon)
     if not measured:
-        return Sourced.unavailable(source, f"insufficient history for a {horizon}-day window")
+        bars = 0 if closes is None else len(closes)
+        needed = horizon + MIN_WINDOWS
+        return Sourced.unavailable(
+            source,
+            f"only {bars} trading days of history; measuring a {horizon}-day "
+            f"window needs at least {needed}")
 
     return Sourced.live(measured, source)
 
@@ -141,6 +151,12 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) ->
                 "probability_source": sourced.source,
             })
         else:
+            # The predictor's original dict may still carry its invented
+            # probability (the capped 95). Leaving it beside
+            # probability_available=False hands consumers a number that was
+            # explicitly disclaimed, so it is removed.
+            entry.pop("probability", None)
+            entry.pop("confidence", None)
             entry.update({
                 "probability_available": False,
                 "probability_reason": sourced.reason,

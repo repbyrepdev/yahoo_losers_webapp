@@ -474,3 +474,37 @@ class TestHealthEndpoint:
     def test_cache_state_is_still_reported(self, monkeypatch):
         monkeypatch.setattr(self.app, "get_cache_status", lambda: {"exists": False})
         assert self.client.get("/health").get_json()["cache"]["status"] == "unavailable"
+
+
+class TestRecentIPOs:
+    """A young stock gets measured where possible, honesty where not."""
+
+    def setup_method(self):
+        import numpy as np
+        import timeframes
+        self.np = np
+        self.tf = timeframes
+
+    def test_three_months_of_history_measures_the_short_horizon(self):
+        # 66 bars, FRVO's shape on 2026-08-17. The old floor of 60 windows made
+        # it miss the 7-day horizon by exactly one window and show nothing.
+        closes = self.np.linspace(20, 18, 66)
+        sourced = self.tf.target_probability(closes, 8.0, "short")
+        assert sourced.ok, sourced.reason
+
+    def test_unmeasurable_horizon_names_the_shortfall(self):
+        closes = self.np.linspace(20, 18, 66)
+        sourced = self.tf.target_probability(closes, 80.0, "long")
+        assert not sourced.ok
+        assert "66 trading days" in sourced.reason
+        assert "166" in sourced.reason
+
+    def test_stale_invented_probability_is_removed_when_unavailable(self):
+        """The predictor's capped 95% must not survive next to unavailable."""
+        closes = self.np.linspace(20, 18, 30)  # too short to measure anything
+        targets = {"t": {"upside_percent": 10.0, "probability": 95.0,
+                         "confidence": "Very High"}}
+        out = self.tf.annotate_targets(closes, targets, "short")
+        assert out["t"]["probability_available"] is False
+        assert "probability" not in out["t"]
+        assert "confidence" not in out["t"]
