@@ -206,12 +206,36 @@ def _load_cache_from_disk():
     return restored
 
 
+def clear_cache():
+    """Drop every cached entry, in memory, on disk and in Redis.
+
+    Used by /refresh so a manual refresh can actually recover from a bad state
+    rather than only clearing the rendered page on top of it.
+    """
+    with _cache._lock:
+        cleared = len(_cache._local)
+        _cache._local.clear()
+    if _cache._redis is not None:
+        try:
+            for key in _cache._redis.scan_iter(f"md:{CACHE_SCHEMA_VERSION}:*"):
+                _cache._redis.delete(key)
+        except Exception as e:
+            logger.warning(f"Redis cache clear failed: {type(e).__name__}")
+    try:
+        os.remove(CACHE_FILE)
+    except OSError:
+        pass
+    logger.info(f"market_data cache cleared ({cleared} entries)")
+    return cleared
+
+
 def save_cache_to_disk():
     """Write the in-memory cache out so the next process can reuse it."""
     try:
         import json
         with open(CACHE_FILE, "w", encoding="utf-8") as handle:
-            json.dump({k: [exp, val] for k, (exp, val) in list(_cache._local.items())},
+            json.dump({k: [exp, val] for k, (exp, val) in list(_cache._local.items())
+                       if isinstance(val, dict) and val.get("ok")},
                       handle, default=str)
     except (OSError, TypeError, ValueError) as e:
         logger.debug(f"cache persist skipped: {type(e).__name__}")
@@ -542,7 +566,7 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
     return Sourced.live(payload, source)
 
 
-def technicals(symbol: str) -> Sourced:
+def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
     """Mean-reversion indicators computed from real daily OHLCV.
 
     RSI uses Wilder's smoothing (the standard definition) rather than a simple
@@ -600,13 +624,13 @@ def technicals(symbol: str) -> Sourced:
             "bars": int(len(close)),
         }
 
-    payload = _cached(f"tech:{symbol.upper()}", TTL_TECHNICALS, produce)
+    payload = _cached(f"tech:{symbol.upper()}", TTL_TECHNICALS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live(payload, source)
 
 
-def price_history(symbol: str, period: str = "5y") -> Sourced:
+def price_history(symbol: str, period: str = "5y", allow_fetch: bool = True) -> Sourced:
     """Split-adjusted daily closes, for measuring how often targets were hit."""
     source = "yfinance:history"
 
@@ -619,7 +643,7 @@ def price_history(symbol: str, period: str = "5y") -> Sourced:
             return {"ok": False, "reason": f"only {len(closes)} bars of history"}
         return {"ok": True, "closes": closes}
 
-    payload = _cached(f"hist:{symbol.upper()}:{period}", TTL_TECHNICALS, produce)
+    payload = _cached(f"hist:{symbol.upper()}:{period}", TTL_TECHNICALS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live(payload["closes"], source)
@@ -747,6 +771,96 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
 
     logger.info(f"batch history populated {populated}/{len(pending)} symbols in one request")
     return populated
+
+
+
+# --- Background warming -----------------------------------------------------
+#
+# Provider calls must never happen inside a page render. Render's platform
+# health check issues HEAD / on a schedule, so with fetching in the request path
+# every health check triggered a full cold refresh -- the logs showed single
+# requests taking 31, 45 and 54 seconds while the limiter engaged. Two gunicorn
+# workers without a shared Redis doubled it, and concurrent requests for the
+# same symbol produced four and five duplicate fetches.
+#
+# Fetching now happens on one background thread, paced, in exactly one worker.
+# Renders read cache only, so a page load costs nothing upstream and the cache
+# fills in over time.
+
+WARM_INTERVAL_SECONDS = int(os.environ.get("MARKET_DATA_WARM_INTERVAL", 45))
+WARM_LOCK_FILE = os.environ.get("MARKET_DATA_WARM_LOCK", "/tmp/market_data_warmer.lock")
+
+_warm_queue: List[str] = []
+_warm_queue_lock = threading.Lock()
+_warmer_started = False
+_inflight: Dict[str, bool] = {}
+_inflight_lock = threading.Lock()
+
+
+def request_warm(symbols: List[str]) -> None:
+    """Queue symbols for background warming. Never blocks the caller."""
+    with _warm_queue_lock:
+        known = set(_warm_queue)
+        for symbol in symbols:
+            upper = symbol.upper()
+            if upper not in known and _cache.get(f"info:{upper}") is None:
+                _warm_queue.append(upper)
+
+
+def _claim_warmer_role() -> bool:
+    """Ensure only one worker warms, so two processes cannot double the load."""
+    try:
+        fd = os.open(WARM_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            # A lock left behind by a killed process should not disable warming
+            # for the life of the container.
+            if time.time() - os.path.getmtime(WARM_LOCK_FILE) > 300:
+                os.remove(WARM_LOCK_FILE)
+                return _claim_warmer_role()
+        except OSError:
+            pass
+        return False
+    except OSError:
+        return True
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+    return True
+
+
+def _warm_loop():
+    while True:
+        try:
+            os.utime(WARM_LOCK_FILE, None)
+        except OSError:
+            pass
+        with _warm_queue_lock:
+            batch = _warm_queue[:MAX_PROFILES_PER_WARM]
+            del _warm_queue[:len(batch)]
+        if batch:
+            try:
+                batch_history(batch)
+                for symbol in batch:
+                    _info(symbol)
+                save_cache_to_disk()
+                logger.info(f"background warm completed {len(batch)} symbols")
+            except Exception as e:
+                logger.warning(f"background warm failed: {type(e).__name__}: {e}")
+        time.sleep(WARM_INTERVAL_SECONDS)
+
+
+def start_background_warmer():
+    """Start the warmer once, in a single worker."""
+    global _warmer_started
+    if _warmer_started or os.environ.get("MARKET_DATA_DISABLE_WARMER"):
+        return False
+    if not _claim_warmer_role():
+        logger.info("another worker owns background warming")
+        return False
+    _warmer_started = True
+    threading.Thread(target=_warm_loop, daemon=True, name="market-data-warmer").start()
+    logger.info("background warmer started")
+    return True
 
 
 def warm(symbols: List[str], include_options: bool = False) -> dict:
