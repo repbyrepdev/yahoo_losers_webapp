@@ -1966,7 +1966,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const container = createModalContainer();
             
             // Handle missing data
-            if (!aiAnalysis) aiAnalysis = { reason: 'AI analysis unavailable', category: 'Unknown', confidence: 'Low' };
+            if (!aiAnalysis) aiAnalysis = { headlines: { available: false, items: [], reason: 'request failed' },
+                                            analyst_posture: { available: false } };
             if (!sentiment) sentiment = { sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' }, trending_phrases: [] };
             if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
             
@@ -2020,19 +2021,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <div id="sentiment-tab" class="ultimate-tab-content" style="display: block;">
                     <!-- AI News Analysis Section -->
                     <div style="background: linear-gradient(45deg, #007bff, #6610f2); color: white; border-radius: 10px; padding: 20px; margin: 15px 0;">
-                        <h4 style="margin: 0 0 15px 0; text-align: center;">🤖 AI News Analysis</h4>
-                        <div style="font-size: 16px; line-height: 1.6; text-align: center; margin-bottom: 15px;">
-                            ${aiAnalysis.reason || 'AI analysis unavailable'}
+                        <h4 style="margin: 0 0 15px 0; text-align: center;">📰 Recent Headlines</h4>
+                        <div style="font-size: 15px; line-height: 1.6; margin-bottom: 15px;">
+                            ${(aiAnalysis.headlines && aiAnalysis.headlines.available && aiAnalysis.headlines.items.length)
+                                ? aiAnalysis.headlines.items.slice(0, 4).map(h => `
+                                    <div style="padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.25);">
+                                        <a href="${h.url || '#'}" target="_blank" rel="noopener noreferrer"
+                                           style="color: white; text-decoration: none;">${h.title}</a>
+                                        <div style="font-size: 12px; opacity: 0.75;">${h.publisher || ''}</div>
+                                    </div>`).join('')
+                                : `<div style="text-align:center; opacity:0.85;">\u2014 no headlines available${
+                                    (aiAnalysis.headlines && aiAnalysis.headlines.reason) ? ' (' + aiAnalysis.headlines.reason + ')' : ''}</div>`}
                         </div>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
-                            <div>
-                                <div style="font-size: 18px; font-weight: bold;">${aiCategory}</div>
-                                <div style="font-size: 14px; opacity: 0.9;">News Category</div>
-                            </div>
-                            <div>
-                                <div style="font-size: 18px; font-weight: bold;">${aiAnalysis.confidence || 'Low'}</div>
-                                <div style="font-size: 14px; opacity: 0.9;">AI Confidence</div>
-                            </div>
+                        <div style="text-align: center; font-size: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.25);">
+                            ${(aiAnalysis.analyst_posture && aiAnalysis.analyst_posture.available)
+                                ? aiAnalysis.analyst_posture.summary
+                                : '\u2014 analyst ratings unavailable'}
+                            <div style="font-size: 12px; opacity: 0.75; margin-top: 4px;">Analyst posture</div>
                         </div>
                     </div>
                     
@@ -2046,7 +2051,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </div>
                             <div>
                                 <div style="font-size: 24px; font-weight: bold;">${socialDisplay(sentiment).bearishText}</div>
-                                <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
+                                <div style="font-size: 14px; opacity: 0.9;">${socialDisplay(sentiment).basis}</div>
                             </div>
                         </div>
                         ${isNewFormat ? `<div style="text-align: center; margin-top: 15px; font-size: 16px;">
@@ -2249,6 +2254,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     // Calculate overall score from short-term targets (consistent with medium/long-term)
                     const avgProbability = targets.length > 0 ? targets.reduce((sum, t) => sum + (t.probability || 0), 0) / targets.length : 0;
+                    const heuristicNote = `<div style="background: rgba(255,193,7,0.15); border-left: 3px solid #ffc107; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--text-secondary);">\u26a0\ufe0f These setup scores are a heuristic, not measured probabilities. They start from a fixed base and apply fixed adjustments; no component was fitted to historical outcomes. See the backtest in the README for what the validated model does and does not support.</div>`;
                     
                     // Calculate final score with signal multipliers for header (matching medium/long-term pattern)
                     const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
@@ -2301,6 +2307,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
                             Short-term recovery analysis based on technical indicators and market momentum
                         </div>
+                        ${heuristicNote}
                         <div style="display: grid; gap: 15px; margin-top: 20px;">
                     `;
                     
@@ -2320,7 +2327,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                             ${target.description || targetName}
                                         </div>
                                         <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
-                                            ${probability}% probability
+                                            ${probability}/100 setup score
                                         </div>
                                     </div>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
@@ -2361,7 +2368,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             signalsDisplay += `
                                 <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,255,0,0.1); border-radius: 4px; border-left: 3px solid #28a745;">
                                     <strong style="color: #28a745;">📈 Volume Surge:</strong> ${volumeData.volume_ratio}x average
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(+${Math.round((volumeData.surge_multiplier - 1) * 100)}% probability boost)</span>
+                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(volume surge raises this score by ${Math.round((volumeData.surge_multiplier - 1) * 100)}%)</span>
                                 </div>`;
                         }
                         
@@ -2606,6 +2613,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(mediumTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
+                    const heuristicNote = `<div style="background: rgba(255,193,7,0.15); border-left: 3px solid #ffc107; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--text-secondary);">\u26a0\ufe0f These setup scores are a heuristic, not measured probabilities. They start from a fixed base and apply fixed adjustments; no component was fitted to historical outcomes. See the backtest in the README for what the validated model does and does not support.</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -2668,6 +2676,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
                             Medium-term recovery analysis based on technical patterns and market conditions
                         </div>
+                        ${heuristicNote}
                         <div style="display: grid; gap: 15px; margin-top: 20px;">
                     `;
                     
@@ -2685,7 +2694,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                         ${prediction.description || targetName}
                                     </div>
                                     <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
-                                        ${probability}% probability
+                                        ${probability}/100 setup score
                                     </div>
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
@@ -2936,6 +2945,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(longTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
+                    const heuristicNote = `<div style="background: rgba(255,193,7,0.15); border-left: 3px solid #ffc107; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--text-secondary);">\u26a0\ufe0f These setup scores are a heuristic, not measured probabilities. They start from a fixed base and apply fixed adjustments; no component was fitted to historical outcomes. See the backtest in the README for what the validated model does and does not support.</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -2998,6 +3008,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <div style="text-align: center; margin-top: 15px; font-size: 16px; line-height: 1.6;">
                             Long-term analyst projections and fundamental analysis targets
                         </div>
+                        ${heuristicNote}
                         <div style="display: grid; gap: 15px; margin-top: 20px;">
                     `;
                     
@@ -3015,7 +3026,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                         ${prediction.description || targetName}
                                     </div>
                                     <div style="font-size: 14px; color: ${confidenceColor}; font-weight: bold;">
-                                        ${probability}% probability
+                                        ${probability}/100 setup score
                                     </div>
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
@@ -4755,7 +4766,12 @@ def analyze_social_sentiment(symbol):
     search caps at 100 results and a StockTwits page holds ~30 messages, so it
     could never exceed roughly 0.26 and every stock rendered as calm.
     """
-    data = social.sentiment(symbol)
+    # The company's own name is passed so it can be excluded from trending
+    # phrases; StockTwits messages repeat it constantly and it crowds out any
+    # actual market theme.
+    name_sourced = market_data.profile(symbol).get('name')
+    company_name = name_sourced.value if (name_sourced and name_sourced.ok) else None
+    data = social.sentiment(symbol, company_name)
     overall = data['overall']
 
     payload = {

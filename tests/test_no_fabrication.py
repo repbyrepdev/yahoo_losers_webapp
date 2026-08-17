@@ -234,3 +234,57 @@ class TestCacheLifetimes:
         monkeypatch.setattr(self.md, "market_is_open", lambda: False)
         closed_ttl = self.md._effective_ttl(300)
         assert closed_ttl > open_ttl
+
+
+class TestSecretHandling:
+    """Credentials come from the environment or the Keychain, never from code."""
+
+    def setup_method(self):
+        import secrets_store
+        self.store = secrets_store
+        self.store._resolved.clear()
+
+    def test_environment_takes_precedence_over_keychain(self, monkeypatch):
+        # Deployment and CI must stay authoritative; a stale Keychain entry on a
+        # laptop cannot be allowed to silently override them.
+        monkeypatch.setenv("FRED_API_KEY", "from-environment")
+        assert self.store.get("FRED_API_KEY") == "from-environment"
+
+    def test_missing_credential_returns_none_not_a_placeholder(self, monkeypatch):
+        monkeypatch.delenv("DEFINITELY_NOT_A_REAL_CREDENTIAL", raising=False)
+        assert self.store.get("DEFINITELY_NOT_A_REAL_CREDENTIAL") is None
+
+    def test_status_reports_presence_without_revealing_values(self, monkeypatch):
+        monkeypatch.setenv("FRED_API_KEY", "sensitive-value")
+        report = self.store.status(["FRED_API_KEY"])
+        assert report == {"FRED_API_KEY": True}
+        assert "sensitive-value" not in str(report)
+
+    def test_no_credential_is_hardcoded_in_source(self):
+        """Guard against a key being pasted into a module during debugging."""
+        import pathlib
+        import re
+        root = pathlib.Path(__file__).resolve().parent.parent
+        pattern = re.compile(r"(api_key|secret|token|password)\s*=\s*['\"][A-Za-z0-9_\-]{20,}['\"]",
+                             re.IGNORECASE)
+        offenders = [
+            path.name for path in root.glob("*.py")
+            if pattern.search(path.read_text(encoding="utf-8"))
+        ]
+        assert offenders == [], f"hardcoded credential in {offenders}"
+
+    def test_lowercase_env_var_still_resolves(self, monkeypatch):
+        """A dashboard entry of `fred_api_key` must not silently do nothing.
+
+        Environment variables are case-sensitive, so a casing mismatch would
+        otherwise leave the feature reporting itself unconfigured with no
+        obvious cause.
+        """
+        monkeypatch.delenv("FRED_API_KEY", raising=False)
+        monkeypatch.setenv("fred_api_key", "lowercase-value")
+        assert self.store.get("FRED_API_KEY") == "lowercase-value"
+
+    def test_exact_case_wins_over_a_variant(self, monkeypatch):
+        monkeypatch.setenv("FRED_API_KEY", "canonical")
+        monkeypatch.setenv("fred_api_key", "variant")
+        assert self.store.get("FRED_API_KEY") == "canonical"

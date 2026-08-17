@@ -28,6 +28,7 @@ from typing import Dict, List, Optional
 import requests
 
 from provenance import Sourced
+import secrets_store
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,25 @@ def _clean_tokens(text: str) -> List[str]:
     return [w for w in words if w not in _STOPWORDS]
 
 
-def _phrases(messages: List[str], top: int = 3) -> List[dict]:
-    """Most repeated two- and three-word phrases across real message bodies."""
+# Legal-entity words. A phrase built only from these plus the company's own
+# name is just the company restating itself, not a market theme.
+_CORPORATE_WORDS = {
+    "inc", "corp", "corporation", "incorporated", "holdings", "holding",
+    "ltd", "limited", "group", "plc", "company", "companies", "sa", "nv",
+    "ag", "spa", "ab", "asa", "class", "common", "stock", "shares", "adr",
+}
+
+
+def _phrases(messages: List[str], top: int = 3,
+             exclude_terms: Optional[set] = None) -> List[dict]:
+    """Most repeated two- and three-word phrases across real message bodies.
+
+    Phrases made up entirely of the company's own name and legal-entity words
+    are dropped. StockTwits messages routinely repeat the full company name, so
+    without this the shortlist fills with "tenable holdings" and "holdings inc"
+    instead of anything about the market.
+    """
+    blocked = {t.lower() for t in (exclude_terms or set())} | _CORPORATE_WORDS
     counter: Counter = Counter()
     for body in messages:
         tokens = _clean_tokens(body)
@@ -87,8 +105,12 @@ def _phrases(messages: List[str], top: int = 3) -> List[dict]:
             for i in range(len(tokens) - size + 1):
                 counter[" ".join(tokens[i:i + size])] += 1
 
-    # A phrase seen once is not trending.
-    ranked = [(phrase, count) for phrase, count in counter.most_common(40) if count >= 2]
+    # A phrase seen once is not trending, and one made only of blocked words
+    # carries no information about why the stock moved.
+    ranked = [
+        (phrase, count) for phrase, count in counter.most_common(60)
+        if count >= 2 and not all(word in blocked for word in phrase.split())
+    ]
 
     # Drop overlapping phrases so a trigram and its component bigram do not both
     # occupy the shortlist. Containment is checked in both directions: ranking by
@@ -105,9 +127,10 @@ def _phrases(messages: List[str], top: int = 3) -> List[dict]:
     return chosen
 
 
-def stocktwits(symbol: str) -> Sourced:
+def stocktwits(symbol: str, company_name: Optional[str] = None) -> Sourced:
     """Message volume, real bull/bear split, and phrases from actual message text."""
     source = "stocktwits:streams"
+    exclude = {symbol.lower()} | set(re.findall(r"[a-z]{3,}", (company_name or "").lower()))
 
     def produce():
         try:
@@ -146,7 +169,7 @@ def stocktwits(symbol: str) -> Sourced:
             "bearish": bearish,
             # Only meaningful with enough tagged messages to be a ratio at all.
             "bearish_ratio": round(bearish / tagged, 3) if tagged >= MIN_TAGGED_MESSAGES else None,
-            "phrases": _phrases(bodies),
+            "phrases": _phrases(bodies, exclude_terms=exclude),
         }
 
     payload = _cached(f"st:{symbol.upper()}", produce)
@@ -162,8 +185,8 @@ def _reddit_token() -> Optional[str]:
     mention counts had been silently zero. Zero is dangerous here: it rendered
     as a calm, bullish-looking reading produced entirely by an auth failure.
     """
-    client_id = os.environ.get("REDDIT_CLIENT_ID")
-    client_secret = os.environ.get("REDDIT_CLIENT_SECRET")
+    client_id = secrets_store.get("REDDIT_CLIENT_ID")
+    client_secret = secrets_store.get("REDDIT_CLIENT_SECRET")
     if not (client_id and client_secret):
         return None
 
@@ -192,9 +215,10 @@ def _reddit_token() -> Optional[str]:
     return token
 
 
-def reddit(symbol: str) -> Sourced:
+def reddit(symbol: str, company_name: Optional[str] = None) -> Sourced:
     """Recent Reddit posts mentioning the symbol, via OAuth."""
     source = "reddit:oauth-search"
+    exclude = {symbol.lower()} | set(re.findall(r"[a-z]{3,}", (company_name or "").lower()))
 
     token = _reddit_token()
     if not token:
@@ -226,7 +250,7 @@ def reddit(symbol: str) -> Sourced:
             # The endpoint caps at 100, so report saturation honestly rather
             # than implying the count is the true volume.
             "capped": len(posts) >= 100,
-            "phrases": _phrases(titles),
+            "phrases": _phrases(titles, exclude_terms=exclude),
         }
 
     payload = _cached(f"rd:{symbol.upper()}", produce)
@@ -235,10 +259,10 @@ def reddit(symbol: str) -> Sourced:
     return Sourced.live(payload, source)
 
 
-def sentiment(symbol: str) -> dict:
+def sentiment(symbol: str, company_name: Optional[str] = None) -> dict:
     """Combined social read, with each source's availability stated."""
-    st = stocktwits(symbol)
-    rd = reddit(symbol)
+    st = stocktwits(symbol, company_name)
+    rd = reddit(symbol, company_name)
 
     result = {
         "symbol": symbol,
