@@ -138,14 +138,17 @@ def add_security_headers(response):
     return response
 
 # #1 Redis Caching Layer
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
 try:
     redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5)
     # Test connection
     redis_client.ping()
     logger.info("Redis connection established", redis_url=REDIS_URL)
     USE_REDIS = True
-except (redis.RedisError, ConnectionError) as e:
+except (redis.RedisError, ConnectionError, ValueError) as e:
+    # ValueError covers a malformed REDIS_URL. Previously an empty or invalid
+    # value raised at import and took the whole app down, when the correct
+    # behaviour is the same graceful degradation as an unreachable server.
     logger.warning("Redis unavailable, falling back to file cache", error=str(e))
     redis_client = None
     USE_REDIS = False
@@ -4889,150 +4892,78 @@ def analyze_options_flow(symbol):
     }
 
 def track_institutional_flow(symbol):
-    """Track institutional buying/selling patterns"""
-    from datetime import datetime, timedelta
-    
-    # Get REAL volume data from Yahoo Finance 
-    total_volume = 0
-    institutional_volume = 0
-    retail_volume = 0
-    buy_volume = 0
-    sell_volume = 0
-    net_flow = 0
-    
-    try:
-        # Get real volume data from Yahoo Finance
-        quote_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        response = requests.get(quote_url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            quote_data = response.json()
-            
-            # Extract real volume data
-            if 'chart' in quote_data and quote_data['chart']['result']:
-                result = quote_data['chart']['result'][0]
-                volume_data = result.get('indicators', {}).get('quote', [{}])[0].get('volume', [])
-                
-                if volume_data:
-                    # Drop falsy bars, not just None. Yahoo returns 0-volume bars
-                    # outside regular hours, and a 0 here previously propagated into
-                    # an unguarded division further down and crashed the request.
-                    recent_volume = [v for v in volume_data if v]
-                    if recent_volume:
-                        total_volume = int(recent_volume[-1])  # Most recent volume
-                        
-                        # Estimate institutional vs retail split based on volume characteristics
-                        # Higher volume typically indicates more institutional activity
-                        avg_volume = sum(recent_volume[-10:]) / len(recent_volume[-10:]) if len(recent_volume) >= 10 else total_volume
-                        volume_ratio = total_volume / avg_volume if avg_volume > 0 else 1
-                        
-                        # Higher than average volume = more institutional activity
-                        institutional_percentage = min(0.8, 0.4 + (volume_ratio - 1) * 0.1)  # 40-80% range
-                        institutional_volume = int(total_volume * institutional_percentage)
-                        retail_volume = total_volume - institutional_volume
-                        
-                        # Estimate buy/sell based on price movement  
-                        price_data = result.get('indicators', {}).get('quote', [{}])[0].get('close', [])
-                        if len(price_data) >= 2:
-                            recent_prices = [p for p in price_data if p is not None]
-                            if len(recent_prices) >= 2:
-                                price_change = (recent_prices[-1] - recent_prices[-2]) / recent_prices[-2]
-                                
-                                # Positive price change = more buying, negative = more selling
-                                buy_percentage = 0.5 + (price_change * 2)  # Scale price change to buy/sell ratio
-                                buy_percentage = max(0.2, min(0.8, buy_percentage))  # Limit to 20-80% range
-                                
-                                buy_volume = int(institutional_volume * buy_percentage)
-                                sell_volume = institutional_volume - buy_volume
-                                net_flow = buy_volume - sell_volume
-                        
-                        print(f"DEBUG: Real institutional data for {symbol}: Total Volume={total_volume:,}, Institutional={institutional_percentage:.1%}")
-                        
-    except Exception as e:
-        # No invented volume here. This previously defaulted to a flat 1,000,000
-        # shares split 50/50, which rendered as a real reading of the tape.
-        logger.warning(f"Institutional volume unavailable for {symbol}: {type(e).__name__}: {e}")
-        total_volume = 0
+    """Institutional ownership from 13F filings, plus reported trading volume.
 
-    if not total_volume:
-        return {
-            "symbol": symbol,
-            "timestamp": datetime.now().isoformat(),
-            "available": False,
-            "reason": "no volume data returned for this symbol",
-            "volume_analysis": {},
-            "flow_direction": {},
-            "smart_money_signals": [],
-            "summary": "Institutional volume unavailable"
-        }
+    What this reports and what it does not:
 
-    # Flow classification
-    net_flow_ratio = abs(safe_ratio(abs(net_flow), institutional_volume, default=0))
-    if net_flow_ratio > 0.3:
-        flow_strength = "strong"
-        if net_flow > 0:
-            flow_direction = "accumulation"
-            flow_color = "#28a745"
-            flow_emoji = "🟢"
+    Real, from filings -- the percentage of shares held by institutions and the
+    largest holders by name. Real, from the exchange -- total share volume.
+
+    Not reported: the intraday split of volume between institutional and retail
+    participants, and off-exchange (dark pool) volume. Neither is available from
+    any free source. Earlier versions inferred both from a volume ratio and
+    presented them as observations, alongside a hedge-fund/mutual-fund/pension
+    breakdown derived from the same single number.
+    """
+    profile = market_data.profile(symbol)
+    holders = market_data.institutional_holders(symbol, limit=5)
+    technicals = market_data.technicals(symbol)
+
+    held = profile['held_pct_institutions']
+    volume_ratio = (technicals.value or {}).get('volume_ratio_20d') if technicals.ok else None
+
+    ownership = {"available": held.ok}
+    if held.ok:
+        # profile() returns a derived payload when Yahoo reports >100%.
+        raw = held.value
+        if isinstance(raw, dict):
+            ownership.update({
+                "pct_held": raw["value"],
+                "caveat": raw["note"],
+                "estimated": True,
+            })
         else:
-            flow_direction = "distribution"
-            flow_color = "#dc3545" 
-            flow_emoji = "🔴"
-    elif net_flow_ratio > 0.1:
-        flow_strength = "moderate"
-        flow_direction = "accumulation" if net_flow > 0 else "distribution"
-        flow_color = "#ffc107"
-        flow_emoji = "🟡"
+            ownership.update({"pct_held": raw, "estimated": False})
+        ownership["source"] = held.source
     else:
-        flow_strength = "weak"
-        flow_direction = "balanced"
-        flow_color = "#6c757d"
-        flow_emoji = "⚪"
-    
-    # Removed from this response because none of it had a data source:
-    #
-    #   institution_breakdown  hedge fund / mutual fund / pension / ETF splits
-    #                          derived from a volume ratio. No 13F data was ever
-    #                          fetched. Real ownership comes from SEC filings.
-    #   dark_pool_analysis     0.15 + (institutional_ratio - 0.5) * 0.2. Off-exchange
-    #                          volume is not in any Yahoo feed. FINRA publishes the
-    #                          real figures on a delayed basis.
-    #   execution_quality      price impact, efficiency and slippage were clamp
-    #                          formulas. These require order-level fill data.
-    #
-    # The institutional/retail split below is still an estimate rather than a
-    # reported figure, so it is labelled as derived instead of being presented
-    # as a reading of the tape.
-    institutional_ratio = safe_ratio(institutional_volume, total_volume)
+        ownership["reason"] = held.reason
+
+    signals = []
+    if ownership.get("pct_held") is not None:
+        signals.append(f"🏛️ {ownership['pct_held']:.1%} held by institutions")
+    if holders.ok and holders.value:
+        signals.append(f"📋 Top holder: {holders.value[0]['holder']}")
+    if volume_ratio is not None:
+        descriptor = "elevated" if volume_ratio > 1.5 else "normal" if volume_ratio > 0.7 else "light"
+        signals.append(f"📊 Volume {volume_ratio:.2f}x 20-day average ({descriptor})")
 
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
-        "available": True,
-        "volume_analysis": {
-            "total_volume": f"{total_volume:,}",
-            "total_volume_source": "yahoo:chart/volume",
-            "institutional_volume": f"{institutional_volume:,}",
-            "retail_volume": f"{retail_volume:,}",
-            "institutional_percentage": round(institutional_ratio * 100, 1) if institutional_ratio is not None else None,
-            "estimated": True,
-            "estimate_basis": "inferred from volume relative to its 10-bar average; not a reported institutional split"
+        "available": held.ok or holders.ok,
+        "ownership": ownership,
+        "top_holders": {
+            "available": holders.ok,
+            "source": holders.source,
+            "reason": None if holders.ok else holders.reason,
+            "holders": holders.value if holders.ok else [],
         },
-        "flow_direction": {
-            "net_flow": f"{net_flow:+,}",
-            "direction": flow_direction,
-            "strength": flow_strength,
-            "color": flow_color,
-            "emoji": flow_emoji,
-            "estimated": True,
-            "estimate_basis": "inferred from price direction; not order flow"
+        "volume": {
+            "available": volume_ratio is not None,
+            "ratio_20d": volume_ratio,
+            "source": technicals.source if technicals.ok else None,
         },
-        "smart_money_signals": [
-            f"{flow_emoji} {flow_strength.title()} {flow_direction} (estimated)",
-            f"📊 {total_volume:,} shares traded"
+        "not_reported": [
+            "intraday institutional vs retail split (no free source)",
+            "off-exchange / dark pool volume (FINRA publishes this on a delay)",
+            "execution quality: price impact, slippage (needs order-level data)",
         ],
-        "summary": f"Estimated {flow_strength} {flow_direction} based on volume and price direction"
+        "smart_money_signals": signals,
+        "summary": (
+            f"{ownership['pct_held']:.1%} institutional ownership"
+            if ownership.get("pct_held") is not None
+            else f"Institutional ownership unavailable: {ownership.get('reason', 'unknown')}"
+        ),
     }
 
 def get_economic_calendar_impact(symbol):

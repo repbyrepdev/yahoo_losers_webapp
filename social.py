@@ -90,11 +90,14 @@ def _phrases(messages: List[str], top: int = 3) -> List[dict]:
     # A phrase seen once is not trending.
     ranked = [(phrase, count) for phrase, count in counter.most_common(40) if count >= 2]
 
-    # Drop any phrase fully contained in a higher-ranked one, so a trigram and
-    # its component bigram do not both occupy the shortlist.
+    # Drop overlapping phrases so a trigram and its component bigram do not both
+    # occupy the shortlist. Containment is checked in both directions: ranking by
+    # frequency can surface either one first, and only testing one direction let
+    # "guidance cut" and "guidance cut again" through together.
     chosen: List[dict] = []
     for phrase, count in ranked:
-        if any(phrase in existing["phrase"] for existing in chosen):
+        if any(phrase in existing["phrase"] or existing["phrase"] in phrase
+               for existing in chosen):
             continue
         chosen.append({"phrase": phrase, "count": count})
         if len(chosen) >= top:
