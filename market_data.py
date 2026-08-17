@@ -57,7 +57,7 @@ TTL_RATE_LIMITED = 15 * 60
 # Minimum gap between outbound provider calls, process-wide. Yahoo tolerates a
 # steady trickle far better than a burst, and the cache means most page renders
 # never reach this path at all.
-MIN_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_MIN_INTERVAL", 0.35))
+MIN_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_MIN_INTERVAL", 0.8))
 
 _throttle_lock = threading.Lock()
 _last_call_at = [0.0]
@@ -182,7 +182,42 @@ class TTLCache:
             self._local[key] = (time.time() + ttl, value)
 
 
+CACHE_FILE = os.environ.get("MARKET_DATA_CACHE_FILE", "/tmp/market_data_cache.json")
+
 _cache = TTLCache(os.environ.get("REDIS_URL"))
+
+
+def _load_cache_from_disk():
+    """Restore unexpired entries written by a previous process."""
+    try:
+        import json
+        with open(CACHE_FILE, "r", encoding="utf-8") as handle:
+            stored = json.load(handle)
+    except (OSError, ValueError):
+        return 0
+    now = time.time()
+    restored = 0
+    for key, (expires_at, value) in stored.items():
+        if expires_at > now:
+            _cache._local[key] = (expires_at, value)
+            restored += 1
+    if restored:
+        logger.info(f"restored {restored} cached entries from disk")
+    return restored
+
+
+def save_cache_to_disk():
+    """Write the in-memory cache out so the next process can reuse it."""
+    try:
+        import json
+        with open(CACHE_FILE, "w", encoding="utf-8") as handle:
+            json.dump({k: [exp, val] for k, (exp, val) in list(_cache._local.items())},
+                      handle, default=str)
+    except (OSError, TypeError, ValueError) as e:
+        logger.debug(f"cache persist skipped: {type(e).__name__}")
+
+
+_load_cache_from_disk()
 
 
 def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
@@ -236,7 +271,7 @@ def _ticker(symbol: str) -> yf.Ticker:
     return yf.Ticker(symbol.upper())
 
 
-def _info(symbol: str) -> dict:
+def _info(symbol: str, allow_fetch: bool = True) -> dict:
     """One `.info` call backs targets, sector, short interest and ownership.
 
     Deliberately cached as a single blob under the shortest of the lifetimes it
@@ -270,16 +305,16 @@ def _info(symbol: str) -> dict:
             "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
         }
 
-    return _cached(f"info:{symbol.upper()}", TTL_TARGETS, produce)
+    return _cached(f"info:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
 
 
-def analyst_target(symbol: str) -> Dict[str, Sourced]:
+def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
     """Analyst consensus target, with the spread and the count behind it.
 
     The count is returned alongside the number because "$322.28" and
     "$322.28 across 41 analysts" are different claims.
     """
-    info = _info(symbol)
+    info = _info(symbol, allow_fetch)
     source = "yfinance:targetMeanPrice"
 
     if not info.get("ok"):
@@ -317,9 +352,9 @@ def analyst_target(symbol: str) -> Dict[str, Sourced]:
     }
 
 
-def profile(symbol: str) -> Dict[str, Sourced]:
+def profile(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
     """Sector, industry, short interest and institutional ownership."""
-    info = _info(symbol)
+    info = _info(symbol, allow_fetch)
     source = "yfinance:info"
     if not info.get("ok"):
         reason = info.get("reason", "unavailable")
@@ -616,6 +651,7 @@ def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
 # Concurrency for cache warming. The work is network-bound, so threads help
 # even on a fractional CPU, but the provider will throttle an aggressive fan-out.
 WARM_WORKERS = int(os.environ.get("MARKET_DATA_WARM_WORKERS", 3))
+MAX_PROFILES_PER_WARM = int(os.environ.get("MARKET_DATA_MAX_PROFILES", 12))
 
 
 
@@ -734,8 +770,15 @@ def warm(symbols: List[str], include_options: bool = False) -> dict:
     except Exception as e:
         logger.warning(f"batch history unavailable: {type(e).__name__}: {e}")
 
+    # Only symbols whose profile is not already cached count against the cap.
+    uncached = [s for s in symbols if _cache.get(f"info:{s.upper()}") is None]
+    budgeted = uncached[:MAX_PROFILES_PER_WARM]
+    if len(uncached) > len(budgeted):
+        logger.info(f"profile fetch capped at {len(budgeted)} of {len(uncached)} "
+                    f"uncached symbols; the rest fill in on the next refresh")
+
     tasks = []
-    for symbol in symbols:
+    for symbol in budgeted:
         tasks.append((symbol, _info))
         if include_options:
             tasks.append((symbol, analyst_recommendations))
@@ -759,6 +802,7 @@ def warm(symbols: List[str], include_options: bool = False) -> dict:
                 failures += 1
 
     elapsed = time.time() - started
+    save_cache_to_disk()
     logger.info(f"warmed {len(symbols)} symbols in {elapsed:.1f}s ({failures} task failures)")
     return {"symbols": len(symbols), "tasks": len(tasks), "failures": failures,
             "seconds": round(elapsed, 1)}
