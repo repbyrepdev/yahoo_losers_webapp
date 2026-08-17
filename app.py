@@ -3686,11 +3686,11 @@ def health_check():
             "healthy": memory['percent'] < 90  # Unhealthy if using >90% memory
         }
         
-        # Overall health determination
-        overall_healthy = (
-            health_status["cache"]["status"] == "available" and
-            health_status["resources"]["healthy"]
-        )
+        # Liveness, not readiness. An empty cache is the normal state of a
+        # freshly started instance, so treating it as unhealthy made every new
+        # deploy fail its health check and hang in update_in_progress forever.
+        # Cache state is still reported, just not as a failure condition.
+        overall_healthy = health_status["resources"]["healthy"]
         
         status_code = 200 if overall_healthy else 503
         if not overall_healthy:
