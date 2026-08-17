@@ -28,6 +28,7 @@ from typing import Dict, List, Optional
 import requests
 
 from provenance import Sourced
+import secrets_store
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +163,8 @@ def _reddit_token() -> Optional[str]:
     mention counts had been silently zero. Zero is dangerous here: it rendered
     as a calm, bullish-looking reading produced entirely by an auth failure.
     """
-    client_id = os.environ.get("REDDIT_CLIENT_ID")
-    client_secret = os.environ.get("REDDIT_CLIENT_SECRET")
+    client_id = secrets_store.get("REDDIT_CLIENT_ID")
+    client_secret = secrets_store.get("REDDIT_CLIENT_SECRET")
     if not (client_id and client_secret):
         return None
 

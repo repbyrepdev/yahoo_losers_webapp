@@ -24,7 +24,7 @@ provider status is at `/health/sources`.
 | RSI-14, Bollinger %B, 20-day gap | computed from real OHLCV | ✅ Live |
 | FOMC meeting dates | federalreserve.gov | ✅ Live |
 | StockTwits sentiment + volume | StockTwits API | ✅ Live |
-| CPI / jobs / GDP / retail dates | FRED `release/dates` | ⚙️ Needs `FRED_API_KEY` |
+| CPI / jobs / GDP / retail dates | FRED `release/dates` | ✅ Live |
 | Reddit mentions | Reddit OAuth API | ⚙️ Needs `REDDIT_CLIENT_ID`/`SECRET` |
 
 ### Deliberately not reported
@@ -70,6 +70,29 @@ Four rules make the number honest:
 
 Per-factor contributions and effective weights are returned by
 `/api/ai-analysis/<symbol>`, so any score can be recomputed by hand.
+
+## 🔐 Credentials
+
+Secrets are read from the environment first, falling back to the **macOS
+Keychain** locally. There is no `.env` file, so a plaintext credential never
+sits in the working tree waiting to be committed by accident.
+
+Store one locally:
+
+```bash
+security add-generic-password -a you@example.com -s FRED_API_KEY -w '<value>' -U
+```
+
+In deployment, set the same names as environment variables (Render → Environment).
+
+| Name | Unlocks | Required? |
+| --- | --- | --- |
+| `FRED_API_KEY` | CPI / jobs / GDP / retail sales release dates | No |
+| `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | Reddit mention counts | No |
+
+Both are free. Nothing is required — an unconfigured source reports itself
+unavailable rather than being filled in with a guess, and `/health/sources`
+shows which are live.
 
 ## 📉 Backtest: does the score actually work?
 
