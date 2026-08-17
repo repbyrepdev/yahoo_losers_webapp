@@ -692,12 +692,22 @@ def ohlcv_frame(symbol: str, period: str = "1y"):
     import pandas as pd
 
     data = sourced.value
-    frame = pd.DataFrame(
-        {"Open": data["open"], "High": data["high"], "Low": data["low"],
-         "Close": data["close"], "Volume": data["volume"]},
-        index=pd.to_datetime(data["index"]),
-    )
-    return frame.dropna(subset=["Close"])
+    try:
+        # utc=True: a year of exchange timestamps spans a DST change, so the
+        # serialised offsets mix -04:00 and -05:00, which to_datetime refuses
+        # to combine into a naive index.
+        index = pd.to_datetime(data["index"], utc=True)
+        frame = pd.DataFrame(
+            {"Open": data["open"], "High": data["high"], "Low": data["low"],
+             "Close": data["close"], "Volume": data["volume"]},
+            index=index,
+        )
+        return frame.dropna(subset=["Close"])
+    except (ValueError, KeyError, TypeError) as e:
+        # A malformed cached payload must degrade to "no preloaded history",
+        # not take the whole analysis route down with a 500.
+        logger.warning(f"ohlcv frame rebuild failed for {symbol}: {type(e).__name__}: {e}")
+        return None
 
 
 def institutional_holders(symbol: str, limit: int = 5) -> Sourced:

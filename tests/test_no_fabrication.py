@@ -558,3 +558,34 @@ class TestInlineJavaScriptScope:
                 if ident not in declared and ident not in top_level:
                     failures.append(f"{ident} used in {fn_name} but not defined there")
         assert failures == [], failures
+
+
+class TestOhlcvRoundTrip:
+    """Cached OHLCV must survive serialisation across a DST boundary."""
+
+    def test_mixed_offset_timestamps_rebuild(self, monkeypatch):
+        """A year of exchange timestamps mixes -04:00 and -05:00 offsets.
+
+        pd.to_datetime refuses to merge those without utc=True, and that
+        ValueError previously escaped as a 500 from the analysis route.
+        """
+        import market_data
+        payload = {
+            "ok": True,
+            "index": ["2025-11-01T00:00:00-04:00", "2025-12-01T00:00:00-05:00",
+                      "2026-03-15T00:00:00-04:00"],
+            "open": [1.0, 2.0, 3.0], "high": [1.0, 2.0, 3.0],
+            "low": [1.0, 2.0, 3.0], "close": [1.0, 2.0, 3.0],
+            "volume": [10, 20, 30],
+        }
+        market_data._cache.set("ohlcv:TZX:1y", payload, 600)
+        frame = market_data.ohlcv_frame("TZX")
+        assert frame is not None
+        assert len(frame) == 3
+
+    def test_malformed_payload_degrades_to_none(self):
+        import market_data
+        market_data._cache.set("ohlcv:BADX:1y", {"ok": True, "index": ["nonsense"],
+                                                 "open": [1], "high": [1], "low": [1],
+                                                 "close": [1], "volume": [1]}, 600)
+        assert market_data.ohlcv_frame("BADX") is None
