@@ -431,3 +431,29 @@ class TestRenderPathMakesNoProviderCalls:
         monkeypatch.setattr(market_data, "WARM_LOCK_FILE", str(tmp_path / "warm.lock"))
         assert market_data._claim_warmer_role() is True
         assert market_data._claim_warmer_role() is False
+
+
+class TestHealthEndpoint:
+    """A cold cache is a normal startup state, not a failure."""
+
+    def setup_method(self):
+        import app
+        self.client = app.app.test_client()
+        self.app = app
+
+    def test_healthy_with_an_empty_cache(self, monkeypatch):
+        """Regression: requiring a warm cache made every deploy hang.
+
+        Render marks an instance live only once its health check passes. With
+        cache presence in the health condition, a new instance answered 503
+        until something populated it -- which nothing did, because it never
+        received traffic.
+        """
+        monkeypatch.setattr(self.app, "get_cache_status", lambda: {"exists": False})
+        response = self.client.get("/health")
+        assert response.status_code == 200
+        assert response.get_json()["status"] == "healthy"
+
+    def test_cache_state_is_still_reported(self, monkeypatch):
+        monkeypatch.setattr(self.app, "get_cache_status", lambda: {"exists": False})
+        assert self.client.get("/health").get_json()["cache"]["status"] == "unavailable"
