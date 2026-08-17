@@ -24,6 +24,10 @@ from celery import Celery
 import hashlib
 from sophisticated_timeframe import SophisticatedTimeframePredictor
 from provenance import Sourced, safe_ratio, UNAVAILABLE_DISPLAY
+import market_data
+import recommendation
+import econ_calendar
+import social
 
 app = Flask(__name__)
 
@@ -134,14 +138,17 @@ def add_security_headers(response):
     return response
 
 # #1 Redis Caching Layer
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
 try:
     redis_client = redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=5)
     # Test connection
     redis_client.ping()
     logger.info("Redis connection established", redis_url=REDIS_URL)
     USE_REDIS = True
-except (redis.RedisError, ConnectionError) as e:
+except (redis.RedisError, ConnectionError, ValueError) as e:
+    # ValueError covers a malformed REDIS_URL. Previously an empty or invalid
+    # value raised at import and took the whole app down, when the correct
+    # behaviour is the same graceful degradation as an unreachable server.
     logger.warning("Redis unavailable, falling back to file cache", error=str(e))
     redis_client = None
     USE_REDIS = False
@@ -206,7 +213,19 @@ request_lock = threading.Lock()
 
 # Cache configuration
 CACHE_FILE = '/tmp/yahoo_finance_cache.pkl'  # Use /tmp for Render compatibility
-CACHE_DURATION_HOURS = 24
+CACHE_DURATION_HOURS = 24  # ceiling; page_cache_hours() is what callers use
+
+
+def page_cache_hours():
+    """How long a rendered loser list stays servable.
+
+    A flat 24 hours meant a live session could be served yesterday's losers.
+    The list genuinely churns while the market is open and cannot change at all
+    once it closes, so the lifetime follows the session rather than the clock.
+    """
+    if market_data.market_is_open():
+        return float(os.environ.get('CACHE_MINUTES_MARKET_OPEN', 10)) / 60
+    return float(os.environ.get('CACHE_HOURS_MARKET_CLOSED', 12))
 
 # Rate limiting configuration
 MAX_REQUESTS_PER_MINUTE = 30
@@ -215,6 +234,19 @@ MAX_AI_REQUESTS_PER_MINUTE = 10
 # Minimum upside required for a stock to be listed as high potential.
 # Overridable so it can be recalibrated once real analyst targets are wired in.
 MIN_UPSIDE_PERCENT = float(os.environ.get('MIN_UPSIDE_PERCENT', 65))
+
+# Minimum rebound score for a stock to appear in the recommendations panel.
+# 70 is the "Strong rebound setup" boundary in the scoring model. Set at the
+# Constructive boundary (58) this surfaced 17 of 25 losers, which is not a
+# shortlist -- beaten-down names routinely show large consensus upside.
+MIN_REBOUND_SCORE = float(os.environ.get('MIN_REBOUND_SCORE', 70))
+
+# Concurrency for the per-symbol quote fetch.
+QUOTE_WORKERS = int(os.environ.get('QUOTE_WORKERS', 8))
+
+# Forward window for scheduled macro events. The old code filtered on 30 days
+# while the UI text claimed 14; one number now drives both.
+ECON_HORIZON_DAYS = int(os.environ.get('ECON_HORIZON_DAYS', 30))
 
 def rate_limit(max_per_minute=MAX_REQUESTS_PER_MINUTE):
     """Rate limiting decorator"""
@@ -250,7 +282,10 @@ def get_memory_usage():
             'vms': memory_info.vms / 1024 / 1024,  # MB
             'percent': process.memory_percent()
         }
-    except:
+    except (psutil.Error, OSError) as e:
+        # Monitoring only. Zeroes here are a reading of the process, not of
+        # market data, so they cannot be mistaken for a financial figure.
+        logger.debug(f"Memory probe unavailable: {type(e).__name__}")
         return {'rss': 0, 'vms': 0, 'percent': 0}
 
 def cleanup_resources():
@@ -281,7 +316,7 @@ def save_cache(data):
                 'timestamp': cache_data['timestamp'].isoformat(),
                 'data': data
             }
-            redis_client.setex('yahoo_losers_cache', CACHE_DURATION_HOURS * 3600, json.dumps(redis_data, default=str))
+            redis_client.setex('yahoo_losers_cache', int(page_cache_hours() * 3600), json.dumps(redis_data, default=str))
             logger.info(f"Cache saved to Redis successfully at {cache_data['timestamp']}")
         except Exception as redis_error:
             logger.warning(f"Redis cache save failed: {redis_error}, falling back to file")
@@ -327,7 +362,7 @@ def load_cache():
         current_time = datetime.now()
         time_diff = current_time - cache_time
         
-        if time_diff.total_seconds() / 3600 < CACHE_DURATION_HOURS:
+        if time_diff.total_seconds() / 3600 < page_cache_hours():
             logger.info(f"Valid cache found from file from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
             return cache_data
         else:
@@ -367,7 +402,7 @@ def get_cache_status():
         time_diff = current_time - cache_time
         hours_old = time_diff.total_seconds() / 3600
         
-        if hours_old < CACHE_DURATION_HOURS:
+        if hours_old < page_cache_hours():
             return {
                 "exists": True,
                 "valid": True,
@@ -472,13 +507,29 @@ def format_market_cap(market_cap):
         return f"{market_cap:,.0f}"
 
 def get_stock_details(symbols):
-    """Step 2: Get additional real stock details using Yahoo Finance API"""
+    """Step 2: Get additional real stock details using Yahoo Finance API.
+
+    The per-symbol loop below stays sequential and readable, but every provider
+    call it makes is pre-warmed concurrently first. Warming turns ~4 sequential
+    round trips per symbol into a parallel batch, which is the difference
+    between a page render taking ~45s and a few seconds on a cold cache.
+    """
     stock_details = []
-    
+
+    try:
+        market_data.warm(symbols)
+    except Exception as e:
+        # Warming is an optimisation. If it fails the loop below still works,
+        # just slower, so this must never abort the request.
+        logger.warning(f"Cache warm failed: {type(e).__name__}: {e}")
+
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    session = requests.Session()
-    
-    for symbol in symbols:  # Process ALL symbols, no artificial limits
+
+    def fetch_one(symbol):
+        # A session per worker: requests.Session is not documented as
+        # thread-safe, and sharing one across the pool risks connection reuse
+        # races for no real benefit at this batch size.
+        session = requests.Session()
         try:
             # Get detailed quote data
             quote_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -494,56 +545,52 @@ def get_stock_details(symbols):
                 prev_close = meta.get('previousClose', 0)
                 volume = meta.get('regularMarketVolume', 0)
                 
-                # Analyst consensus price target.
-                #
-                # This endpoint began requiring authentication and now returns 401,
-                # so this resolves to unavailable until the yfinance migration lands.
-                # It previously fell back to `current_price * 1.15`, which meant every
-                # stock displayed a fabricated target and an identical 15% upside.
-                # A failed fetch must never invent a price.
-                target = Sourced.unavailable('yahoo:targetMeanPrice', 'not fetched')
-                try:
-                    target_url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=financialData"
-                    target_response = session.get(target_url, headers=headers, timeout=8)
-                    target_response.raise_for_status()
-                    target_data = target_response.json()
+                # Analyst consensus target, via yfinance because the raw
+                # quoteSummary endpoint now returns 401 to unauthenticated callers.
+                # A consensus drawn from fewer than three estimates is rejected
+                # upstream in market_data rather than presented as a consensus.
+                targets = market_data.analyst_target(symbol)
+                target = targets['mean']
+                analysts = targets['analysts']
 
-                    financial_data = {}
-                    if 'quoteSummary' in target_data and target_data['quoteSummary'].get('result'):
-                        financial_data = target_data['quoteSummary']['result'][0].get('financialData', {})
-
-                    target_mean = financial_data.get('targetMeanPrice', {})
-                    if isinstance(target_mean, dict) and target_mean.get('raw'):
-                        target = Sourced.live(target_mean['raw'], 'yahoo:targetMeanPrice')
-                    else:
-                        target = Sourced.unavailable('yahoo:targetMeanPrice', 'no analyst consensus published')
-                except requests.RequestException as e:
-                    target = Sourced.unavailable('yahoo:targetMeanPrice', f'upstream unavailable ({type(e).__name__})')
-                except (ValueError, KeyError, IndexError) as e:
-                    target = Sourced.unavailable('yahoo:targetMeanPrice', f'unexpected payload ({type(e).__name__})')
-
-                stock_details.append({
+                return {
                     'Symbol': symbol,
                     'Current Price': f"${current_price:.2f}" if current_price else UNAVAILABLE_DISPLAY,
                     'Previous Close': f"${prev_close:.2f}" if prev_close else UNAVAILABLE_DISPLAY,
                     'Volume': format_volume(volume),
                     'Price Target': target.format('.2f', prefix='$'),
+                    'Target Low': targets['low'].format('.2f', prefix='$'),
+                    'Target High': targets['high'].format('.2f', prefix='$'),
+                    'Analyst Count': analysts.value if analysts.ok else None,
                     'Price Target Source': target.source if target.ok else f'unavailable: {target.reason}'
-                })
-                
+                }
+
+            raise ValueError('chart response contained no result')
+
         except Exception as e:
             logger.warning(f"Failed to get details for {symbol}: {str(e)}")
             # Nothing was retrieved for this symbol. Every field stays empty
             # rather than being filled with a placeholder that reads as data.
-            stock_details.append({
+            return {
                 'Symbol': symbol,
                 'Current Price': UNAVAILABLE_DISPLAY,
                 'Previous Close': UNAVAILABLE_DISPLAY,
                 'Volume': UNAVAILABLE_DISPLAY,
                 'Price Target': UNAVAILABLE_DISPLAY,
+                'Target Low': UNAVAILABLE_DISPLAY,
+                'Target High': UNAVAILABLE_DISPLAY,
+                'Analyst Count': None,
                 'Price Target Source': f'unavailable: quote fetch failed ({type(e).__name__})'
-            })
-    
+            }
+        finally:
+            session.close()
+
+    # Quotes are independent per symbol and purely network-bound, so they run
+    # concurrently. Order is preserved to keep the rendered table stable.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=QUOTE_WORKERS) as pool:
+        stock_details = list(pool.map(fetch_one, symbols))
+
     logger.info(f"Retrieved details for {len(stock_details)} stocks from Yahoo Finance API")
     return stock_details
 
@@ -606,6 +653,9 @@ def calculate_all_investment_analysis(losers_data, details_data):
                     'Current Price': current_price if current_price else UNAVAILABLE_DISPLAY,
                     'Target Price': target_price if target_price else UNAVAILABLE_DISPLAY,
                     'Potential Return %': round(potential_return, 2) if potential_return is not None else UNAVAILABLE_DISPLAY,
+                    'Analyst Count': details.get('Analyst Count'),
+                    'Target Low': details.get('Target Low', UNAVAILABLE_DISPLAY),
+                    'Target High': details.get('Target High', UNAVAILABLE_DISPLAY),
                     'Target Source': details.get('Price Target Source', 'unknown'),
                     'Volume': details['Volume'],
                     'Change Today': stock['Change'],
@@ -1115,6 +1165,22 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         let autoRefreshInterval;
         let lastUpdateTime = Date.now();
         
+
+        // Normalise the social payload for display. Missing data must render as
+        // an em dash, never as a default number -- the previous code fell back
+        // to "5/10", so an API failure looked like a real, calm reading.
+        function socialDisplay(sentiment) {
+            const s = (sentiment && sentiment.sentiment) || {};
+            const has = s.bearish_ratio !== undefined && s.bearish_ratio !== null;
+            return {
+                label: s.label || 'Unavailable',
+                color: s.color || '#6c757d',
+                bearishText: has ? Math.round(s.bearish_ratio * 100) + '% bearish' : '\u2014',
+                basis: has ? ('of ' + s.tagged_messages + ' tagged messages') : (s.reason || 'no tagged messages'),
+                phrases: (sentiment && sentiment.trending_phrases) || []
+            };
+        }
+
         function isMarketHoliday(date) {
             const year = date.getFullYear();
             const month = date.getMonth() + 1; // JS months are 0-based
@@ -1289,11 +1355,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .catch(error => {
                     console.error('Analysis error:', error);
                     displayAnalysisModal(symbol, {
-                        sentiment: 'error',
-                        reason: 'Unable to analyze news at this time',
-                        confidence: 0,
-                        icon: '❌',
-                        news_count: 0
+                        sentiment: 'unknown',
+                        headlines: { available: false, count: 0, items: [], reason: 'request failed' },
+                        analyst_posture: { available: false, reason: 'request failed' }
                     });
                 });
         }
@@ -1347,21 +1411,33 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <h3 style="text-align: left; color: var(--text-primary); margin-top: 0; font-size: 20px; font-weight: bold; padding: 15px 0; border-bottom: 2px solid var(--border-color); margin-bottom: 20px;">🤖 AI News Analysis: ${symbol}</h3>
                 
                 <div style="background: ${style.bg}; border: 1px solid ${style.color}; border-radius: 8px; padding: 20px; margin: 20px 0;">
-                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
-                        <div style="font-size: 48px;">${analysis.icon}</div>
-                        <div>
-                            <div style="font-size: 18px; font-weight: bold; color: ${style.color};">
-                                ${style.label} Sentiment
-                            </div>
-                            <div style="font-size: 14px; color: #666;">
-                                Confidence: ${analysis.confidence}% • ${analysis.news_count} news sources
-                            </div>
-                        </div>
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 15px; border-radius: 5px; border-left: 4px solid ${style.color}; margin-bottom: 15px;">
+                        <h4 style="margin: 0 0 10px 0; color: var(--text-primary);">Analyst posture</h4>
+                        <p style="margin: 0; font-size: 15px; color: var(--text-primary);">
+                            ${(analysis.analyst_posture && analysis.analyst_posture.available)
+                                ? analysis.analyst_posture.summary
+                                : '— <span style="color:#888; font-size:13px;">(' + ((analysis.analyst_posture && analysis.analyst_posture.reason) || 'unavailable') + ')</span>'}
+                        </p>
                     </div>
-                    
-                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 15px; border-radius: 5px; border-left: 4px solid ${style.color};">
-                        <h4 style="margin: 0 0 10px 0; color: var(--text-primary);">Why ${symbol} is falling:</h4>
-                        <p style="margin: 0; font-size: 16px; line-height: 1.5; color: var(--text-primary);">${analysis.reason}</p>
+
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 15px; border-radius: 5px;">
+                        <h4 style="margin: 0 0 10px 0; color: var(--text-primary);">
+                            Recent headlines${(analysis.headlines && analysis.headlines.count) ? ' (' + analysis.headlines.count + ')' : ''}
+                        </h4>
+                        ${(analysis.headlines && analysis.headlines.available && analysis.headlines.items.length)
+                            ? analysis.headlines.items.map(h => `
+                                <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+                                    <a href="${h.url || '#'}" target="_blank" rel="noopener noreferrer"
+                                       style="color: var(--text-primary); text-decoration: none; font-size: 15px; line-height: 1.4;">
+                                        ${h.title}
+                                    </a>
+                                    <div style="font-size: 12px; color: #888; margin-top: 3px;">${h.publisher || ''}</div>
+                                </div>`).join('')
+                            : `<p style="margin:0; color:#888;">— no headlines available
+                                 ${(analysis.headlines && analysis.headlines.reason) ? '(' + analysis.headlines.reason + ')' : ''}</p>`}
+                        <div style="font-size: 11px; color: #888; margin-top: 10px;">
+                            Source: ${(analysis.headlines && analysis.headlines.source) || 'unknown'}
+                        </div>
                     </div>
                 </div>
                 
@@ -1560,8 +1636,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 .catch(error => {
                     console.error('Social sentiment error:', error);
                     displaySentimentModal(symbol, {
-                        panic_level: 0,
-                        panic_description: 'Unable to analyze social sentiment',
+                        sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' },
                         overall_sentiment: 'unknown'
                     });
                 });
@@ -1603,13 +1678,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return '#dc3545'; // Red for high panic
             };
             
-            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
-            const panicLevel = sentiment.panic_level || 5;
+            const panicColor = socialDisplay(sentiment).color;
             
             // Get display values based on format
             const sentimentDisplay = isNewFormat ? 
                 (sentiment.sentiment_label || '😐 Neutral') : 
-                (sentiment.panic_description || '📊 Standard');
+                socialDisplay(sentiment).label;
             const volumeDisplay = isNewFormat ? 
                 (sentiment.volume_interest || '📊 Standard interest') : 
                 (sentiment.social_volume || 'Standard');
@@ -1624,7 +1698,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         ${sentimentDisplay}
                     </div>
                     <div style="font-size: 18px; opacity: 0.9;">
-                        Panic Level: ${panicLevel}/10
+                        ${socialDisplay(sentiment).bearishText} ${socialDisplay(sentiment).basis}
                     </div>
                     ${isNewFormat ? `<div style="font-size: 16px; margin-top: 10px;">
                         ${volumeDisplay}
@@ -1729,7 +1803,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const container = createModalContainer();
             
             // Handle missing data
-            if (!sentiment) sentiment = { panic_level: 5, panic_description: 'Data unavailable', trending_phrases: ['Analysis failed'], panic_color: '#6c757d' };
+            if (!sentiment) sentiment = { sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' }, trending_phrases: [] };
             if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
             
             // Handle both data formats for sentiment
@@ -1740,10 +1814,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return '#dc3545';
             };
             
-            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const panicColor = socialDisplay(sentiment).color;
             const sentimentDisplay = isNewFormat ? 
                 (sentiment.sentiment_label || '😐 Neutral') : 
-                (sentiment.panic_description || '📊 Standard');
+                socialDisplay(sentiment).label;
             
             // Recovery color based on score
             const getRecoveryColor = (score) => {
@@ -1769,8 +1843,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <div style="font-size: 14px; opacity: 0.9;">Current Mood</div>
                         </div>
                         <div>
-                            <div style="font-size: 28px; font-weight: bold;">${sentiment.panic_level || 5}/10</div>
-                            <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
+                            <div style="font-size: 28px; font-weight: bold;">${socialDisplay(sentiment).bearishText}</div>
+                            <div style="font-size: 14px; opacity: 0.9;">${socialDisplay(sentiment).basis}</div>
                         </div>
                     </div>
                     ${isNewFormat ? `<div style="text-align: center; margin-top: 10px; font-size: 16px;">
@@ -1800,12 +1874,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
                 
                 <!-- Key Indicators -->
-                ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
+                ${(socialDisplay(sentiment).phrases.length > 0) ? `
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
                     <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Key Market Indicators</h5>
                     <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${sentiment.trending_phrases.map(phrase => 
-                            `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                        ${socialDisplay(sentiment).phrases.map(p =>
+                            `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">${p.phrase} (${p.count})</span>`
                         ).join('')}
                     </div>
                 </div>` : ''}
@@ -1893,7 +1967,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Handle missing data
             if (!aiAnalysis) aiAnalysis = { reason: 'AI analysis unavailable', category: 'Unknown', confidence: 'Low' };
-            if (!sentiment) sentiment = { panic_level: 5, panic_description: 'Data unavailable', trending_phrases: ['Analysis failed'], panic_color: '#6c757d' };
+            if (!sentiment) sentiment = { sentiment: { label: 'Unavailable', color: '#6c757d', reason: 'request failed' }, trending_phrases: [] };
             if (!recovery) recovery = { recovery_score: 0, recommendation: 'Analysis unavailable', confidence: 'low' };
             
             // Data format handling
@@ -1910,9 +1984,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 return '#dc3545';
             };
             
-            const panicColor = isNewFormat ? getColorByPanic(sentiment.panic_level || 5) : (sentiment.panic_color || '#ffc107');
+            const panicColor = socialDisplay(sentiment).color;
             const recoveryColor = getRecoveryColor(recovery.recovery_score || 0);
-            const sentimentDisplay = isNewFormat ? (sentiment.sentiment_label || '😐 Neutral') : (sentiment.panic_description || '📊 Standard');
+            const sentimentDisplay = isNewFormat ? (sentiment.sentiment_label || '😐 Neutral') : socialDisplay(sentiment).label;
             
             // Map AI sentiment to meaningful category
             const getCategoryFromSentiment = (sentiment) => {
@@ -1971,7 +2045,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <div style="font-size: 14px; opacity: 0.9;">Current Mood</div>
                             </div>
                             <div>
-                                <div style="font-size: 24px; font-weight: bold;">${sentiment.panic_level || 5}/10</div>
+                                <div style="font-size: 24px; font-weight: bold;">${socialDisplay(sentiment).bearishText}</div>
                                 <div style="font-size: 14px; opacity: 0.9;">Panic Level</div>
                             </div>
                         </div>
@@ -1981,12 +2055,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     </div>
                     
                     <!-- Trending Phrases -->
-                    ${(sentiment.trending_phrases && sentiment.trending_phrases.length > 0) ? `
+                    ${(socialDisplay(sentiment).phrases.length > 0) ? `
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
                         <h5 style="margin: 0 0 10px 0; color: #333;">🔥 Trending Phrases & Market Indicators</h5>
                         <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                            ${sentiment.trending_phrases.map(phrase => 
-                                `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">"${phrase}"</span>`
+                            ${socialDisplay(sentiment).phrases.map(p =>
+                                `<span style="background: ${panicColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px;">${p.phrase} (${p.count})</span>`
                             ).join('')}
                         </div>
                     </div>` : ''}
@@ -3418,9 +3492,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <!-- Disclaimer -->
                     <div style="background: rgba(255,193,7,0.1); border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 20px 0;">
                         <p style="margin: 0; font-size: 13px; color: #fff8dc; line-height: 1.5;">
-                            <strong>⚠️ Disclaimer:</strong> This analysis is for informational purposes only and should not be considered as financial advice. 
-                            Stock investments carry risk, and past performance does not guarantee future results. 
-                            Always consult with a qualified financial advisor before making investment decisions.
+                            <strong>⚠️ Disclaimer:</strong> This is a technical demonstration, not financial advice.
+                            The rebound score measures how closely a stock matches conditions that have historically
+                            preceded mean reversion. It is <strong>not a prediction of future returns</strong>.
+                            <br><br>
+                            <strong>What the evidence actually shows:</strong> a backtest over 9,126 point-in-time
+                            observations found the technical factors carry a <em>weak</em> positive signal
+                            (rank correlation +0.04 at a 20-day horizon), with roughly a 2.4 percentage point spread
+                            between the highest- and lowest-scoring buckets. The majority of the model's weight comes
+                            from analyst data that <strong>cannot be backtested</strong> with this data source and is
+                            therefore unvalidated. The backtest also excludes trading costs, and its universe carries
+                            survivorship bias.
+                            <br><br>
+                            Stock investments carry risk and past performance does not guarantee future results.
+                            Consult a qualified financial advisor before making investment decisions.
                         </p>
                     </div>
                     
@@ -3860,7 +3945,8 @@ def get_market_status():
                 "message": f"🟢 Markets Open",
                 "time_to_close": time_display
             }
-    except:
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        logger.warning(f"Market status unavailable: {type(e).__name__}: {e}")
         return {
             "status": "unknown",
             "message": "❓ Market Status Unknown", 
@@ -3924,7 +4010,8 @@ def get_comprehensive_market_analysis():
                 'recovery_impact': recovery_impact,
                 'interpretation': f"VIX at {current_vix:.1f} indicates {vix_regime.lower()} market conditions."
             }
-        except:
+        except Exception as e:
+            logger.warning(f"VIX analysis unavailable: {type(e).__name__}: {e}")
             analysis['vix_analysis'] = {
                 'current_vix': 'N/A',
                 'regime': 'Unknown',
@@ -3977,7 +4064,8 @@ def get_comprehensive_market_analysis():
                 }
             else:
                 raise Exception("Insufficient SPY data")
-        except:
+        except Exception as e:
+            logger.warning(f"SPY trend unavailable: {type(e).__name__}: {e}")
             analysis['market_trend'] = {
                 'trend': 'Unknown',
                 'description': 'Unable to analyze market trend',
@@ -4137,7 +4225,7 @@ def get_recovery_prediction(symbol):
         
     except Exception as e:
         logger.error(f"Error predicting recovery for {symbol}: {str(e)}")
-        return json.dumps({
+        return jsonify({
             "symbol": symbol,
             "prediction": {
                 "recovery_score": 0,
@@ -4291,7 +4379,7 @@ def get_sophisticated_timeframe(symbol):
             "current_drop": 0
         }
         
-        return json.dumps({
+        return jsonify({
             "symbol": symbol.upper(),
             "prediction": fallback_prediction,  # Frontend compatible format
             "sophisticated_analysis": {  # Detailed format
@@ -4313,7 +4401,7 @@ def get_social_sentiment(symbol):
     try:
         sentiment = analyze_social_sentiment(symbol)
         
-        return json.dumps({
+        return jsonify({
             "symbol": symbol,
             "sentiment": sentiment,
             "timestamp": time.time()
@@ -4321,15 +4409,14 @@ def get_social_sentiment(symbol):
         
     except Exception as e:
         logger.error(f"Error analyzing social sentiment for {symbol}: {str(e)}")
-        return json.dumps({
+        return jsonify({
             "symbol": symbol,
-            "sentiment": {
-                "panic_level": 0,
-                "overall_sentiment": "unknown",
-                "reddit_mentions": 0,
-                "twitter_buzz": 0,
-                "trending_phrases": []
-            },
+            # An error path must not emit zeroed counts that read as real
+            # observations of a quiet stock.
+            "sentiment": {"label": "Unavailable", "color": "#6c757d",
+                          "reason": f"request failed ({type(e).__name__})"},
+            "trending_phrases": [],
+            "available": False,
             "error": str(e)
         })
 
@@ -4341,7 +4428,7 @@ def get_news_analysis(symbol):
         # Get real AI analysis from news APIs and financial data
         analysis = analyze_stock_news(symbol)
         
-        return json.dumps({
+        return jsonify({
             "symbol": symbol,
             "analysis": analysis,
             "timestamp": time.time()
@@ -4349,7 +4436,7 @@ def get_news_analysis(symbol):
         
     except Exception as e:
         logger.error(f"Error analyzing news for {symbol}: {str(e)}")
-        return json.dumps({
+        return jsonify({
             "symbol": symbol,
             "analysis": {
                 "sentiment": "unknown",
@@ -4362,103 +4449,62 @@ def get_news_analysis(symbol):
         })
 
 def analyze_stock_news(symbol):
+    """Recent headlines plus the current analyst rating spread.
+
+    The old version never read news despite its name -- it inspected
+    recommendation trends and returned a prose "reason" with a hard-coded
+    confidence of 70. When the endpoint began returning 401 it always emitted
+    the same sentence, "Broader market pressures affecting stock performance",
+    for every stock, with that same invented confidence.
+
+    Two separable things are reported now, each labelled with its source:
+    the actual headlines, and where analysts currently stand. No confidence
+    score is attached, because nothing here measures one.
     """
-    Analyze recent news for a stock symbol and determine why it's falling
-    Uses real news sources and financial data to determine sentiment
-    """
-    
-    # Try to get real news analysis from financial APIs
-    try:
-        # Get recent earnings and news from Yahoo Finance
-        news_url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=recommendationTrend,earningsHistory,earningsDate,indexTrend,defaultKeyStatistics"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        response = requests.get(news_url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Analyze real data for sentiment indicators
-            result = data.get('quoteSummary', {}).get('result', [])
-            if result and len(result) > 0:
-                modules = result[0]
-                
-                # Check analyst recommendations for sentiment
-                recommend_trend = modules.get('recommendationTrend', {}).get('trend', [])
-                earnings_history = modules.get('earningsHistory', {}).get('history', [])
-                
-                # Determine real sentiment based on actual data
-                reason = "Market dynamics affecting stock performance"
-                sentiment = "neutral"
-                confidence = 70
-                icon = "📊"
-                news_count = 3
-                
-                # Analyze recommendation trends
-                if recommend_trend:
-                    latest_trend = recommend_trend[0] if len(recommend_trend) > 0 else {}
-                    sell_recs = latest_trend.get('sell', {}).get('raw', 0) or 0
-                    buy_recs = latest_trend.get('buy', {}).get('raw', 0) or 0
-                    hold_recs = latest_trend.get('hold', {}).get('raw', 0) or 0
-                    
-                    total_recs = sell_recs + buy_recs + hold_recs
-                    if total_recs > 0:
-                        sell_ratio = sell_recs / total_recs
-                        buy_ratio = buy_recs / total_recs
-                        
-                        if sell_ratio > 0.4:  # More than 40% sell recommendations
-                            reason = f"Analyst downgrades - {sell_recs} sell vs {buy_recs} buy recommendations"
-                            sentiment = "negative"
-                            confidence = 85
-                            icon = "📉"
-                            news_count = max(3, int(total_recs / 2))
-                        elif buy_ratio > 0.6:  # More than 60% buy recommendations (shouldn't be in losers, but just in case)
-                            reason = f"Strong analyst support despite price decline - {buy_recs} buy recommendations"
-                            sentiment = "positive"
-                            confidence = 75
-                            icon = "📈"
-                            news_count = max(2, int(total_recs / 3))
-                
-                # Analyze recent earnings if available
-                if earnings_history:
-                    recent_earnings = earnings_history[0] if len(earnings_history) > 0 else {}
-                    earnings_surprise = recent_earnings.get('surprisePercent', {}).get('raw')
-                    
-                    if earnings_surprise is not None:
-                        if earnings_surprise < -0.05:  # Missed by more than 5%
-                            reason = f"Earnings miss - reported {earnings_surprise:.1%} below expectations"
-                            sentiment = "very_negative" 
-                            confidence = 92
-                            icon = "📉"
-                            news_count = 8
-                        elif earnings_surprise < 0:  # Any earnings miss
-                            reason = f"Earnings disappointment - missed estimates by {abs(earnings_surprise):.1%}"
-                            sentiment = "negative"
-                            confidence = 80
-                            icon = "📊"
-                            news_count = 5
-                
-                print(f"DEBUG: Real news analysis for {symbol}: {reason}")
-                return {
-                    "reason": reason,
-                    "sentiment": sentiment,
-                    "confidence": confidence,
-                    "icon": icon,
-                    "news_count": news_count
-                }
-                
-    except Exception as e:
-        print(f"DEBUG: Failed to get real news data for {symbol}: {e}")
-    
-    # Conservative fallback based on being in "losers" list
-    # Since this function is only called for stocks that are down significantly,
-    # we can make reasonable inferences
-    return {
-        "reason": "Broader market pressures affecting stock performance",
-        "sentiment": "negative",
-        "confidence": 70,
-        "icon": "📊",
-        "news_count": 3
+    news = market_data.headlines(symbol, limit=5)
+    ratings = market_data.analyst_recommendations(symbol)
+
+    payload = {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "headlines": {
+            "available": news.ok,
+            "source": news.source,
+            "items": news.value if news.ok else [],
+            "count": len(news.value) if news.ok else 0,
+            "reason": None if news.ok else news.reason,
+        },
+        "analyst_posture": {
+            "available": ratings.ok,
+            "source": ratings.source,
+            "spread": ratings.value if ratings.ok else None,
+            "reason": None if ratings.ok else ratings.reason,
+        },
     }
+
+    if ratings.ok:
+        spread = ratings.value
+        bullish = spread.get("strongBuy", 0) + spread.get("buy", 0)
+        bearish = spread.get("sell", 0) + spread.get("strongSell", 0)
+        total = spread.get("total", 0)
+        if bearish > bullish:
+            posture, icon = "net negative", "📉"
+        elif bullish > bearish:
+            posture, icon = "net positive", "📈"
+        else:
+            posture, icon = "split", "📊"
+        payload["analyst_posture"]["summary"] = (
+            f"{icon} {bullish} buy vs {bearish} sell of {total} ratings ({posture})"
+        )
+
+    if news.ok:
+        payload["summary"] = f"{payload['headlines']['count']} recent headlines"
+    elif ratings.ok:
+        payload["summary"] = payload["analyst_posture"]["summary"]
+    else:
+        payload["summary"] = "No headlines or analyst ratings available"
+
+    return payload
 
 def predict_stock_recovery(symbol):
     """
@@ -4702,987 +4748,533 @@ def predict_stock_recovery(symbol):
         }
 
 def analyze_social_sentiment(symbol):
+    """Social sentiment from StockTwits tags and, when configured, Reddit.
+
+    Reports a measured ratio with its denominator instead of an unanchored
+    1-10 "panic level". The old scale divided total mentions by 500, but Reddit
+    search caps at 100 results and a StockTwits page holds ~30 messages, so it
+    could never exceed roughly 0.26 and every stock rendered as calm.
     """
-    Analyze social media sentiment and panic levels
-    Uses real APIs from Reddit, StockTwits, and other social platforms
-    """
-    # Get REAL social media metrics from actual APIs
-    reddit_mentions = 0
-    stocktwits_mentions = 0
-    
-    # Real Reddit API - search for stock mentions
-    try:
-        reddit_url = f"https://www.reddit.com/search.json?q=${symbol}&sort=new&limit=100"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        reddit_response = requests.get(reddit_url, headers=headers, timeout=10)
-        if reddit_response.status_code == 200:
-            reddit_data = reddit_response.json()
-            reddit_mentions = len(reddit_data.get('data', {}).get('children', []))
-            print(f"DEBUG: Got {reddit_mentions} real Reddit mentions for {symbol}")
-    except Exception as e:
-        print(f"DEBUG: Reddit API failed for {symbol}: {e}")
-        reddit_mentions = 0
-    
-    # Real StockTwits API - get real mention count 
-    try:
-        stocktwits_url = f"https://api.stocktwits.com/api/2/streams/symbol/{symbol}.json"
-        stocktwits_response = requests.get(stocktwits_url, timeout=10)
-        if stocktwits_response.status_code == 200:
-            stocktwits_data = stocktwits_response.json()
-            stocktwits_mentions = len(stocktwits_data.get('messages', []))
-            print(f"DEBUG: Got {stocktwits_mentions} real StockTwits mentions for {symbol}")
-    except Exception as e:
-        print(f"DEBUG: StockTwits API failed for {symbol}: {e}")
-        stocktwits_mentions = 0
-    
-    # Twitter/X mentions are not collected. There is no free API for them, and
-    # the previous value was max(reddit_mentions * 2, stocktwits_mentions * 3) --
-    # arithmetic on other platforms' counts, reported under a Twitter label.
+    data = social.sentiment(symbol)
+    overall = data['overall']
 
-    total_mentions = reddit_mentions + stocktwits_mentions
-    if total_mentions == 0:
-        panic_level = 3.0  # Neutral when no data
-    else:
-        # Calculate panic based on actual mention density
-        mention_factor = min(total_mentions / 500, 10)  # Scale mentions to 1-10
-        panic_level = max(1.0, min(10.0, mention_factor))
-    
-    logger.info(f"Social data for {symbol}: Reddit={reddit_mentions}, StockTwits={stocktwits_mentions}, Panic={panic_level:.1f}")
-    
-    # Generate panic level description
-    if panic_level >= 8:
-        panic_desc = "🔥🔥🔥 EXTREME PANIC"
-        panic_color = "#dc3545"
-    elif panic_level >= 6:
-        panic_desc = "🔥🔥 HIGH PANIC"
-        panic_color = "#fd7e14"
-    elif panic_level >= 4:
-        panic_desc = "🔥 MODERATE CONCERN"
-        panic_color = "#ffc107"
-    else:
-        panic_desc = "😎 CALM"
-        panic_color = "#28a745"
-    
-    # Generate trending phrases
-    bearish_phrases = [
-        "diamond hands turning to paper",
-        "HODL is dead",
-        "this is the end",
-        "sell everything",
-        "buying the dip was a mistake",
-        "dead cat bounce",
-        "falling knife",
-        "financial ruin"
-    ]
-    
-    bullish_phrases = [
-        "buy the dip",
-        "diamond hands",
-        "HODL strong", 
-        "to the moon",
-        "discount shopping",
-        "strong fundamentals",
-        "oversold bounce coming"
-    ]
-    
-    # Select trending phrases based on sentiment (deterministically based on data)
-    if panic_level > 6:
-        trending = bearish_phrases[:3]  # Take first 3 bearish phrases
-        overall_sentiment = "very_bearish"
-    elif panic_level > 4:
-        # Mix of bearish and bullish based on panic level
-        trending = bearish_phrases[:2] + bullish_phrases[:1]  # 2 bearish, 1 bullish
-        overall_sentiment = "bearish"
-    else:
-        trending = bullish_phrases[:3]  # Take first 3 bullish phrases
-        overall_sentiment = "bullish"
-    
-    return {
-        "panic_level": round(panic_level, 1),
-        "panic_description": panic_desc,
-        "panic_color": panic_color,
-        "overall_sentiment": overall_sentiment,
-        "reddit_mentions": reddit_mentions,
-        "stocktwits_mentions": stocktwits_mentions,
-        "trending_phrases": trending,
-        # Thresholds reflect what these sources can actually return: Reddit search
-        # caps at 100 results and a StockTwits stream page holds ~30 messages, so
-        # the previous 2000/500 cut-offs were unreachable and every stock read low.
-        "social_volume": "high" if total_mentions > 90 else "moderate" if total_mentions > 40 else "low"
-    }
-
-# ============================================================================= 
-# PROFESSIONAL TRADING FEATURES
-# =============================================================================
-
-def analyze_options_flow(symbol):
-    """Analyze unusual options activity for a stock"""
-    from datetime import datetime, timedelta
-    
-    # Get REAL options flow data from Yahoo Finance options API
-    base_volume = 0
-    avg_volume = 0
-    put_call_ratio = 1.0
-    block_trades = 0
-    sweep_activity = 0
-    strikes_otm = []
-    
-    try:
-        # Get real options data from Yahoo Finance
-        options_url = f"https://query1.finance.yahoo.com/v7/finance/options/{symbol}"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        response = requests.get(options_url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            options_data = response.json()
-            
-            # Extract real options chain data
-            if 'optionChain' in options_data and options_data['optionChain']['result']:
-                options_result = options_data['optionChain']['result'][0]
-                options_info = options_result.get('options', [])
-                
-                if options_info:
-                    calls = options_info[0].get('calls', [])
-                    puts = options_info[0].get('puts', [])
-                    
-                    # Calculate REAL options metrics
-                    call_volume = sum([opt.get('volume', 0) or 0 for opt in calls])
-                    put_volume = sum([opt.get('volume', 0) or 0 for opt in puts])
-                    
-                    base_volume = call_volume + put_volume
-                    put_call_ratio = put_volume / call_volume if call_volume > 0 else 1.0
-                    
-                    # Get real strike prices
-                    current_price = options_result.get('quote', {}).get('regularMarketPrice', 0)
-                    if current_price > 0:
-                        all_strikes = [opt.get('strike', 0) for opt in calls + puts if opt.get('volume', 0) > 10]
-                        strikes_otm = [round(strike / current_price, 2) for strike in all_strikes[:5]]
-                    
-                    # Calculate block trades (high volume options)
-                    block_trades = len([opt for opt in calls + puts if opt.get('volume', 0) > 1000])
-                    
-                    # Calculate sweep activity (options with high open interest changes)
-                    sweep_activity = len([opt for opt in calls + puts if 
-                                        opt.get('openInterest', 0) > opt.get('volume', 0) * 0.5])
-                    
-                    print(f"DEBUG: Real options data for {symbol}: Volume={base_volume}, P/C Ratio={put_call_ratio:.2f}, Blocks={block_trades}")
-                
-    except Exception as e:
-        print(f"DEBUG: Options API failed for {symbol}: {e}")
-        # Use conservative defaults when real data unavailable
-        base_volume = 100
-        put_call_ratio = 1.0
-        block_trades = 0
-        sweep_activity = 0
-        strikes_otm = [0.95, 1.00, 1.05]
-    
-    # Calculate unusual activity based on real volume
-    avg_volume = max(base_volume * 0.8, 100)  # Estimate average from current
-    volume_ratio = base_volume / avg_volume if avg_volume > 0 else 1
-    is_unusual = volume_ratio > 2.0 or base_volume > 5000
-    
-    # Flow sentiment
-    if put_call_ratio < 0.7:
-        flow_sentiment = "bullish"
-        sentiment_strength = "strong" if put_call_ratio < 0.5 else "moderate"
-        sentiment_color = "#28a745"
-    elif put_call_ratio > 1.5:
-        flow_sentiment = "bearish" 
-        sentiment_strength = "strong" if put_call_ratio > 2.0 else "moderate"
-        sentiment_color = "#dc3545"
-    else:
-        flow_sentiment = "neutral"
-        sentiment_strength = "weak"
-        sentiment_color = "#6c757d"
-    
-    # Get REAL earnings date from Yahoo Finance
-    next_earnings = None
-    near_term_bias = "mixed"  # Default
-    
-    try:
-        # Get real earnings calendar data
-        earnings_url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=calendarEvents"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        earnings_response = requests.get(earnings_url, headers=headers, timeout=10)
-        
-        if earnings_response.status_code == 200:
-            earnings_data = earnings_response.json()
-            
-            # Extract real earnings date
-            calendar_events = earnings_data.get('quoteSummary', {}).get('result', [])
-            if calendar_events and len(calendar_events) > 0:
-                calendar = calendar_events[0].get('calendarEvents', {})
-                earnings_info = calendar.get('earnings', {})
-                
-                if 'earningsDate' in earnings_info and len(earnings_info['earningsDate']) > 0:
-                    # Yahoo returns earnings date as timestamp
-                    earnings_timestamp = earnings_info['earningsDate'][0]['raw']
-                    next_earnings = datetime.fromtimestamp(earnings_timestamp)
-                    print(f"DEBUG: Real earnings date for {symbol}: {next_earnings.strftime('%Y-%m-%d')}")
-                    
-                    # Determine options bias based on time to earnings
-                    days_to_earnings = (next_earnings - datetime.now()).days
-                    if days_to_earnings < 7:
-                        near_term_bias = "calls"  # Volatility play before earnings
-                    elif days_to_earnings > 30:
-                        near_term_bias = "puts"   # Long-term uncertainty
-                    else:
-                        near_term_bias = "mixed"  # Standard range
-                        
-    except Exception as e:
-        print(f"DEBUG: Failed to get real earnings date for {symbol}: {e}")
-    
-    # Fallback if no real earnings date found
-    if next_earnings is None:
-        # Estimate based on typical quarterly earnings cycle
-        next_earnings = datetime.now() + timedelta(days=60)  # Conservative estimate
-        print(f"DEBUG: Using estimated earnings date for {symbol}")
-    
-    # Generate key signals
-    signals = []
-    if is_unusual:
-        signals.append("🚨 Unusual Volume Spike")
-    if block_trades > 5:
-        signals.append("🐋 Large Block Activity")
-    if sweep_activity > 3:
-        signals.append("⚡ Sweep Activity Detected")
-    if put_call_ratio < 0.4:
-        signals.append("🟢 Heavy Call Buying")
-    elif put_call_ratio > 2.5:
-        signals.append("🔴 Heavy Put Buying")
-    
-    return {
+    payload = {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
-        "volume_metrics": {
-            "total_options_volume": f"{base_volume:,}",
-            "vs_avg_volume": f"{volume_ratio:.1f}x",
-            "is_unusual": is_unusual
+        "available": overall['available'],
+        "sources": {
+            "stocktwits": {
+                "available": data['stocktwits']['available'],
+                "reason": data['stocktwits'].get('reason'),
+                "messages": data['stocktwits'].get('messages'),
+                "tagged": data['stocktwits'].get('tagged'),
+                "bullish": data['stocktwits'].get('bullish'),
+                "bearish": data['stocktwits'].get('bearish'),
+            },
+            "reddit": {
+                "available": data['reddit']['available'],
+                "reason": data['reddit'].get('reason'),
+                "mentions": data['reddit'].get('mentions'),
+                "capped": data['reddit'].get('capped'),
+            },
         },
-        "flow_sentiment": {
-            "direction": flow_sentiment,
-            "strength": sentiment_strength,
-            "color": sentiment_color,
-            "put_call_ratio": put_call_ratio
-        },
-        "smart_money_indicators": {
-            "block_trades": block_trades,
-            "sweep_activity": sweep_activity,
-            # dark_pool_prints removed: it was min(block_trades + sweep_activity, 8),
-            # an arithmetic expression presented as off-exchange print counts.
-            # Real ATS data comes from FINRA and is wired up separately.
-        },
-        "key_strikes": {
-            "most_active_calls": strikes_otm[:3],
-            "most_active_puts": strikes_otm[2:5],
-            "near_term_bias": near_term_bias
-        },
-        "timing_analysis": {
-            "next_earnings": next_earnings.strftime("%Y-%m-%d"),
-            "days_to_earnings": (next_earnings - datetime.now()).days,
-            "expiration_focus": "earnings" if (next_earnings - datetime.now()).days < 14 else "monthly" if base_volume > 2000 else "weekly"
-        },
-        "alerts": signals,
-        "summary": f"{'Unusual' if is_unusual else 'Normal'} options activity with {sentiment_strength} {flow_sentiment} bias"
+        # Real repeated phrases from message text, with their counts, rather
+        # than a slice of a hard-coded slang list.
+        "trending_phrases": data['trending_phrases'],
+        "summary": data['summary'],
     }
 
-def track_institutional_flow(symbol):
-    """Track institutional buying/selling patterns"""
-    from datetime import datetime, timedelta
-    
-    # Get REAL volume data from Yahoo Finance 
-    total_volume = 0
-    institutional_volume = 0
-    retail_volume = 0
-    buy_volume = 0
-    sell_volume = 0
-    net_flow = 0
-    
-    try:
-        # Get real volume data from Yahoo Finance
-        quote_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
-        response = requests.get(quote_url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            quote_data = response.json()
-            
-            # Extract real volume data
-            if 'chart' in quote_data and quote_data['chart']['result']:
-                result = quote_data['chart']['result'][0]
-                volume_data = result.get('indicators', {}).get('quote', [{}])[0].get('volume', [])
-                
-                if volume_data:
-                    # Drop falsy bars, not just None. Yahoo returns 0-volume bars
-                    # outside regular hours, and a 0 here previously propagated into
-                    # an unguarded division further down and crashed the request.
-                    recent_volume = [v for v in volume_data if v]
-                    if recent_volume:
-                        total_volume = int(recent_volume[-1])  # Most recent volume
-                        
-                        # Estimate institutional vs retail split based on volume characteristics
-                        # Higher volume typically indicates more institutional activity
-                        avg_volume = sum(recent_volume[-10:]) / len(recent_volume[-10:]) if len(recent_volume) >= 10 else total_volume
-                        volume_ratio = total_volume / avg_volume if avg_volume > 0 else 1
-                        
-                        # Higher than average volume = more institutional activity
-                        institutional_percentage = min(0.8, 0.4 + (volume_ratio - 1) * 0.1)  # 40-80% range
-                        institutional_volume = int(total_volume * institutional_percentage)
-                        retail_volume = total_volume - institutional_volume
-                        
-                        # Estimate buy/sell based on price movement  
-                        price_data = result.get('indicators', {}).get('quote', [{}])[0].get('close', [])
-                        if len(price_data) >= 2:
-                            recent_prices = [p for p in price_data if p is not None]
-                            if len(recent_prices) >= 2:
-                                price_change = (recent_prices[-1] - recent_prices[-2]) / recent_prices[-2]
-                                
-                                # Positive price change = more buying, negative = more selling
-                                buy_percentage = 0.5 + (price_change * 2)  # Scale price change to buy/sell ratio
-                                buy_percentage = max(0.2, min(0.8, buy_percentage))  # Limit to 20-80% range
-                                
-                                buy_volume = int(institutional_volume * buy_percentage)
-                                sell_volume = institutional_volume - buy_volume
-                                net_flow = buy_volume - sell_volume
-                        
-                        print(f"DEBUG: Real institutional data for {symbol}: Total Volume={total_volume:,}, Institutional={institutional_percentage:.1%}")
-                        
-    except Exception as e:
-        # No invented volume here. This previously defaulted to a flat 1,000,000
-        # shares split 50/50, which rendered as a real reading of the tape.
-        logger.warning(f"Institutional volume unavailable for {symbol}: {type(e).__name__}: {e}")
-        total_volume = 0
+    if overall['available']:
+        payload["sentiment"] = {
+            "bearish_ratio": overall['bearish_ratio'],
+            "bullish_ratio": round(1 - overall['bearish_ratio'], 3),
+            "tagged_messages": overall['tagged_messages'],
+            "label": overall['label'],
+            "color": overall['color'],
+        }
+    else:
+        payload["sentiment"] = {"label": "Unavailable", "color": "#6c757d",
+                                "reason": overall.get('reason')}
 
-    if not total_volume:
+    return payload
+
+def _earnings_block(earnings):
+    """Render the earnings Sourced into a display block, honestly labelled."""
+    if not earnings.ok:
+        return {"available": False, "reason": earnings.reason}
+    value = earnings.value
+    return {
+        "available": True,
+        "label": value["label"],
+        "date": value["date"],
+        "through": value["through"],
+        "upcoming": value["upcoming"],
+        "days_away": value["days_away"],
+        "confirmed": value["confirmed"],
+        "source": earnings.source,
+    }
+
+
+def analyze_options_flow(symbol):
+    """Options positioning from the real nearest-expiry chain.
+
+    Returns unavailable rather than a neutral-looking placeholder when the chain
+    cannot be read. The previous fallback produced a put/call ratio of exactly
+    1.0, which reads as a genuine neutral signal and fed a quarter of the
+    rebound score on days when no options data existed at all.
+    """
+    flow = market_data.options_flow(symbol)
+    earnings = market_data.earnings_date(symbol)
+    timing = _earnings_block(earnings)
+
+    if not flow.ok:
         return {
             "symbol": symbol,
             "timestamp": datetime.now().isoformat(),
             "available": False,
-            "reason": "no volume data returned for this symbol",
-            "volume_analysis": {},
-            "flow_direction": {},
-            "smart_money_signals": [],
-            "summary": "Institutional volume unavailable"
+            "reason": flow.reason,
+            "volume_metrics": {},
+            "flow_sentiment": {},
+            "key_strikes": {},
+            "timing_analysis": timing,
+            "alerts": [],
+            "summary": f"Options data unavailable: {flow.reason}",
         }
 
-    # Flow classification
-    net_flow_ratio = abs(safe_ratio(abs(net_flow), institutional_volume, default=0))
-    if net_flow_ratio > 0.3:
-        flow_strength = "strong"
-        if net_flow > 0:
-            flow_direction = "accumulation"
-            flow_color = "#28a745"
-            flow_emoji = "🟢"
-        else:
-            flow_direction = "distribution"
-            flow_color = "#dc3545" 
-            flow_emoji = "🔴"
-    elif net_flow_ratio > 0.1:
-        flow_strength = "moderate"
-        flow_direction = "accumulation" if net_flow > 0 else "distribution"
-        flow_color = "#ffc107"
-        flow_emoji = "🟡"
+    data = flow.value
+    put_call_ratio = data["put_call_ratio"]
+
+    # Volume relative to open interest is a standard read on whether today's
+    # activity is new positioning or existing contracts being closed. It needs
+    # only the current chain, unlike a volume-vs-average comparison, which the
+    # old code faked by dividing today's volume by 80% of itself (a constant
+    # 1.25x regardless of input).
+    open_interest = (data.get("open_interest_put_call") or 0)
+    turnover = safe_ratio(data["total_volume"], data["contracts"])
+
+    if put_call_ratio is None:
+        flow_sentiment, sentiment_strength, sentiment_color = "unknown", "unknown", "#6c757d"
+    elif put_call_ratio < 0.7:
+        flow_sentiment = "call-heavy"
+        sentiment_strength = "strong" if put_call_ratio < 0.5 else "moderate"
+        sentiment_color = "#28a745"
+    elif put_call_ratio > 1.5:
+        flow_sentiment = "put-heavy"
+        sentiment_strength = "strong" if put_call_ratio > 2.0 else "moderate"
+        sentiment_color = "#dc3545"
     else:
-        flow_strength = "weak"
-        flow_direction = "balanced"
-        flow_color = "#6c757d"
-        flow_emoji = "⚪"
-    
-    # Removed from this response because none of it had a data source:
-    #
-    #   institution_breakdown  hedge fund / mutual fund / pension / ETF splits
-    #                          derived from a volume ratio. No 13F data was ever
-    #                          fetched. Real ownership comes from SEC filings.
-    #   dark_pool_analysis     0.15 + (institutional_ratio - 0.5) * 0.2. Off-exchange
-    #                          volume is not in any Yahoo feed. FINRA publishes the
-    #                          real figures on a delayed basis.
-    #   execution_quality      price impact, efficiency and slippage were clamp
-    #                          formulas. These require order-level fill data.
-    #
-    # The institutional/retail split below is still an estimate rather than a
-    # reported figure, so it is labelled as derived instead of being presented
-    # as a reading of the tape.
-    institutional_ratio = safe_ratio(institutional_volume, total_volume)
+        flow_sentiment, sentiment_strength, sentiment_color = "balanced", "weak", "#6c757d"
+
+    alerts = []
+    if put_call_ratio is not None and put_call_ratio < 0.4:
+        alerts.append("🟢 Heavy call buying")
+    elif put_call_ratio is not None and put_call_ratio > 2.5:
+        alerts.append("🔴 Heavy put buying")
+    if data["total_volume"] > 10000:
+        alerts.append(f"📊 {data['total_volume']:,} contracts traded")
+    if timing.get("upcoming") and (timing.get("days_away") or 99) <= 14:
+        alerts.append(f"📅 Earnings in {timing['days_away']}d")
 
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
         "available": True,
-        "volume_analysis": {
-            "total_volume": f"{total_volume:,}",
-            "total_volume_source": "yahoo:chart/volume",
-            "institutional_volume": f"{institutional_volume:,}",
-            "retail_volume": f"{retail_volume:,}",
-            "institutional_percentage": round(institutional_ratio * 100, 1) if institutional_ratio is not None else None,
-            "estimated": True,
-            "estimate_basis": "inferred from volume relative to its 10-bar average; not a reported institutional split"
+        "source": flow.source,
+        "volume_metrics": {
+            "expiry": data["expiry"],
+            "call_volume": data["call_volume"],
+            "put_volume": data["put_volume"],
+            "total_options_volume": f"{data['total_volume']:,}",
+            "contracts_listed": data["contracts"],
+            "avg_volume_per_contract": round(turnover, 1) if turnover is not None else None,
         },
-        "flow_direction": {
-            "net_flow": f"{net_flow:+,}",
-            "direction": flow_direction,
-            "strength": flow_strength,
-            "color": flow_color,
-            "emoji": flow_emoji,
-            "estimated": True,
-            "estimate_basis": "inferred from price direction; not order flow"
+        "flow_sentiment": {
+            "direction": flow_sentiment,
+            "strength": sentiment_strength,
+            "color": sentiment_color,
+            "put_call_ratio": put_call_ratio,
+            "open_interest_put_call": open_interest or None,
+            "note": "Positioning as observed in the chain, not a directional forecast",
         },
-        "smart_money_signals": [
-            f"{flow_emoji} {flow_strength.title()} {flow_direction} (estimated)",
-            f"📊 {total_volume:,} shares traded"
+        "key_strikes": {
+            "most_active_calls": data["top_calls"],
+            "most_active_puts": data["top_puts"],
+        },
+        "timing_analysis": timing,
+        "alerts": alerts,
+        "summary": (
+            f"{data['total_volume']:,} contracts on {data['expiry']}, "
+            f"put/call {put_call_ratio if put_call_ratio is not None else 'n/a'} ({flow_sentiment})"
+        ),
+    }
+
+def track_institutional_flow(symbol):
+    """Institutional ownership from 13F filings, plus reported trading volume.
+
+    What this reports and what it does not:
+
+    Real, from filings -- the percentage of shares held by institutions and the
+    largest holders by name. Real, from the exchange -- total share volume.
+
+    Not reported: the intraday split of volume between institutional and retail
+    participants, and off-exchange (dark pool) volume. Neither is available from
+    any free source. Earlier versions inferred both from a volume ratio and
+    presented them as observations, alongside a hedge-fund/mutual-fund/pension
+    breakdown derived from the same single number.
+    """
+    profile = market_data.profile(symbol)
+    holders = market_data.institutional_holders(symbol, limit=5)
+    technicals = market_data.technicals(symbol)
+
+    held = profile['held_pct_institutions']
+    volume_ratio = (technicals.value or {}).get('volume_ratio_20d') if technicals.ok else None
+
+    ownership = {"available": held.ok}
+    if held.ok:
+        # profile() returns a derived payload when Yahoo reports >100%.
+        raw = held.value
+        if isinstance(raw, dict):
+            ownership.update({
+                "pct_held": raw["value"],
+                "caveat": raw["note"],
+                "estimated": True,
+            })
+        else:
+            ownership.update({"pct_held": raw, "estimated": False})
+        ownership["source"] = held.source
+    else:
+        ownership["reason"] = held.reason
+
+    signals = []
+    if ownership.get("pct_held") is not None:
+        signals.append(f"🏛️ {ownership['pct_held']:.1%} held by institutions")
+    if holders.ok and holders.value:
+        signals.append(f"📋 Top holder: {holders.value[0]['holder']}")
+    if volume_ratio is not None:
+        descriptor = "elevated" if volume_ratio > 1.5 else "normal" if volume_ratio > 0.7 else "light"
+        signals.append(f"📊 Volume {volume_ratio:.2f}x 20-day average ({descriptor})")
+
+    return {
+        "symbol": symbol,
+        "timestamp": datetime.now().isoformat(),
+        "available": held.ok or holders.ok,
+        "ownership": ownership,
+        "top_holders": {
+            "available": holders.ok,
+            "source": holders.source,
+            "reason": None if holders.ok else holders.reason,
+            "holders": holders.value if holders.ok else [],
+        },
+        "volume": {
+            "available": volume_ratio is not None,
+            "ratio_20d": volume_ratio,
+            "source": technicals.source if technicals.ok else None,
+        },
+        "not_reported": [
+            "intraday institutional vs retail split (no free source)",
+            "off-exchange / dark pool volume (FINRA publishes this on a delay)",
+            "execution quality: price impact, slippage (needs order-level data)",
         ],
-        "summary": f"Estimated {flow_strength} {flow_direction} based on volume and price direction"
+        "smart_money_signals": signals,
+        "summary": (
+            f"{ownership['pct_held']:.1%} institutional ownership"
+            if ownership.get("pct_held") is not None
+            else f"Institutional ownership unavailable: {ownership.get('reason', 'unknown')}"
+        ),
     }
 
 def get_economic_calendar_impact(symbol):
-    """Get relevant economic events that could impact the stock"""
-    from datetime import datetime, timedelta
-    
-    # Economic events with stock impact potential
-    economic_events = [
-        {"name": "FOMC Interest Rate Decision", "impact": "high", "sectors": ["financials", "reits", "utilities"]},
-        {"name": "Non-Farm Payrolls", "impact": "high", "sectors": ["all"]},
-        {"name": "CPI Inflation Data", "impact": "high", "sectors": ["consumer", "retail", "food"]},
-        {"name": "GDP Growth Rate", "impact": "medium", "sectors": ["all"]},
-        {"name": "Consumer Confidence", "impact": "medium", "sectors": ["consumer", "retail"]},
-        {"name": "ISM Manufacturing PMI", "impact": "medium", "sectors": ["manufacturing", "industrials"]},
-        {"name": "Oil Inventory Report", "impact": "medium", "sectors": ["energy", "oil"]},
-        {"name": "Retail Sales", "impact": "medium", "sectors": ["retail", "consumer"]},
-        {"name": "Housing Starts", "impact": "low", "sectors": ["reits", "construction", "materials"]},
-        {"name": "Initial Jobless Claims", "impact": "low", "sectors": ["all"]}
-    ]
-    
-    # Company sector mapping (simplified)
-    sector_map = {
-        "AAPL": "technology", "MSFT": "technology", "GOOGL": "technology", "AMZN": "consumer",
-        "TSLA": "automotive", "META": "technology", "NVDA": "semiconductors",
-        "JPM": "financials", "BAC": "financials", "WFC": "financials",
-        "XOM": "energy", "CVX": "energy", "COP": "energy",
-        "JNJ": "healthcare", "PFE": "healthcare", "UNH": "healthcare",
-        "WMT": "retail", "HD": "retail", "PG": "consumer"
-    }
-    
-    stock_sector = sector_map.get(symbol, "general")
-    
-    # Get real upcoming economic events (using predetermined schedule)
-    upcoming_events = []
-    
-    # Real economic events with actual typical dates/times
-    current_date = datetime.now()
-    
-    # CPI data (usually mid-month around 8:30 AM ET)
-    next_cpi_date = current_date.replace(day=13) if current_date.day < 13 else current_date.replace(month=current_date.month+1 if current_date.month < 12 else 1, day=13, year=current_date.year+1 if current_date.month == 12 else current_date.year)
-    
-    # Fed meetings (8 times per year, scheduled dates)
-    # Approximate next FOMC meeting
-    months_with_fed = [1, 3, 5, 6, 7, 9, 11, 12]  # Typical FOMC meeting months
-    next_fed_month = None
-    for month in months_with_fed:
-        if month > current_date.month:
-            next_fed_month = month
-            break
-    if not next_fed_month:
-        next_fed_month = months_with_fed[0]  # Next year
-    
-    next_fed_date = current_date.replace(month=next_fed_month, day=20)  # Typically mid-to-late month
-    
-    # Jobs report (first Friday of month at 8:30 AM ET)
-    next_month = current_date.replace(month=current_date.month+1 if current_date.month < 12 else 1, day=1, year=current_date.year+1 if current_date.month == 12 else current_date.year)
-    # Find first Friday
-    days_ahead = 4 - next_month.weekday()  # Friday is weekday 4
-    if days_ahead <= 0:  # Target day already happened this week
-        days_ahead += 7
-    first_friday = next_month + timedelta(days_ahead)
-    
-    # Add events based on sector relevance
-    potential_events = [
-        {"name": "CPI Inflation Data", "date": next_cpi_date, "time": "08:30", "impact": "high", "sectors": ["all"], "volatility": "high"},
-        {"name": "Fed Interest Rate Decision", "date": next_fed_date, "time": "14:00", "impact": "high", "sectors": ["all"], "volatility": "high"},
-        {"name": "Jobs Report", "date": first_friday, "time": "08:30", "impact": "high", "sectors": ["all"], "volatility": "high"},
-        {"name": "GDP Report", "date": current_date + timedelta(days=21), "time": "08:30", "impact": "medium", "sectors": ["all"], "volatility": "medium"}
-    ]
-    
-    for event in potential_events:
-        # Check if event affects this stock sector
-        affects_stock = (
-            "all" in event["sectors"] or 
-            stock_sector in event["sectors"] or
-            any(sector in stock_sector for sector in event["sectors"])
-        )
-        
-        # Only include events in next 30 days
-        days_away = (event["date"] - current_date).days
-        if 0 <= days_away <= 30:
-            impact_score = {"high": 85, "medium": 60, "low": 35}[event["impact"]]
-            if not affects_stock:
-                impact_score *= 0.6  # Reduce impact for indirect effects
-            
-            upcoming_events.append({
-                "name": event["name"],
-                "date": event["date"].strftime("%Y-%m-%d"),
-                "time": event["time"],
-                "impact_level": event["impact"],
-                "impact_score": int(impact_score),
-                "relevance": "direct" if affects_stock else "indirect",
-                "expected_volatility": event["volatility"],
-                "days_away": days_away
-            })
-    
-    # Sort by impact and date
-    upcoming_events.sort(key=lambda x: (x["impact_score"], -x["days_away"]), reverse=True)
-    
-    # Generate impact analysis
-    high_impact_events = [e for e in upcoming_events if e["impact_level"] == "high"]
-    total_impact_score = sum(e["impact_score"] for e in upcoming_events)
-    
-    if total_impact_score > 200:
-        volatility_outlook = "high"
-        outlook_color = "#dc3545"
-    elif total_impact_score > 100:
-        volatility_outlook = "moderate" 
-        outlook_color = "#ffc107"
+    """Real upcoming macro events, with the stock's real sector for context.
+
+    Replaces a version that guessed release dates from assumed conventions --
+    CPI on the 13th, FOMC on the 20th of eight assumed months -- and presented
+    them with exact dates and times. FOMC dates now come from the Federal
+    Reserve's published calendar; other releases come from FRED when a key is
+    configured, and are reported unavailable when it is not.
+    """
+    sector_sourced = market_data.profile(symbol)['sector']
+    stock_sector = sector_sourced.value if sector_sourced.ok else None
+
+    calendar = econ_calendar.upcoming_events(days_ahead=ECON_HORIZON_DAYS)
+    events = calendar['events']
+
+    high_impact = [e for e in events if e.get('impact') == 'high']
+
+    # Volatility outlook reflects how much scheduled macro risk sits inside the
+    # horizon. With no events it is "low"; with none available it is unknown,
+    # which is different and is reported as such.
+    if not calendar['sources']:
+        volatility_outlook, outlook_color = 'unavailable', '#6c757d'
+    elif len(high_impact) >= 2:
+        volatility_outlook, outlook_color = 'high', '#dc3545'
+    elif high_impact:
+        volatility_outlook, outlook_color = 'moderate', '#ffc107'
     else:
-        volatility_outlook = "low"
-        outlook_color = "#28a745"
-    
+        volatility_outlook, outlook_color = 'low', '#28a745'
+
+    considerations = []
+    if calendar['sources']:
+        considerations.append(
+            f"📅 {len(high_impact)} high-impact event(s) in the next {ECON_HORIZON_DAYS} days"
+        )
+        if events:
+            nearest = events[0]
+            considerations.append(
+                f"🎯 Next: {nearest['name']} in {nearest['days_away']}d ({nearest['date']})"
+            )
+    for gap in calendar['unavailable']:
+        considerations.append(f"⚠️ {gap['source']} unavailable: {gap['reason']}")
+
     return {
         "symbol": symbol,
-        "sector": stock_sector,
-        "timestamp": datetime.now().isoformat(),
-        "upcoming_events": upcoming_events[:6],  # Top 6 most relevant
+        "sector": stock_sector or "unknown",
+        "sector_source": sector_sourced.source if sector_sourced.ok else f"unavailable: {sector_sourced.reason}",
+        "timestamp": calendar['as_of'],
+        "upcoming_events": events,
         "impact_summary": {
-            "total_events": len(upcoming_events),
-            "high_impact_events": len(high_impact_events),
+            "total_events": len(events),
+            "high_impact_events": len(high_impact),
             "volatility_outlook": volatility_outlook,
             "outlook_color": outlook_color,
-            "cumulative_impact_score": total_impact_score
+            "horizon_days": ECON_HORIZON_DAYS,
         },
-        "key_dates": [
-            {
-                "date": event["date"],
-                "events": [e["name"] for e in upcoming_events if e["date"] == event["date"]]
-            }
-            for event in upcoming_events[:3]
-        ],
-        "trading_considerations": [
-            f"📅 {len(high_impact_events)} high-impact events in next 14 days",
-            f"⚠️ Expected volatility: {volatility_outlook}",
-            f"🎯 Key focus: {upcoming_events[0]['name'] if upcoming_events else 'No major events'}"
-        ],
-        "summary": f"{len(upcoming_events)} relevant economic events with {volatility_outlook} expected volatility impact"
+        "sources": calendar['sources'],
+        "unavailable_sources": calendar['unavailable'],
+        "trading_considerations": considerations,
+        "summary": (
+            f"{len(events)} scheduled macro event(s) in {ECON_HORIZON_DAYS} days; "
+            f"volatility outlook {volatility_outlook}"
+        ),
     }
 
-def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data, calendar_data, recovery_data, sentiment_data):
-    """AI-powered rebound prediction combining ALL professional analysis"""
-    from datetime import datetime, timedelta
-    
-    symbol = stock_data['Symbol']
-    # The previous guard required a str, but the only caller passes a float from
-    # yfinance, so this always resolved to 0. Passing a '$12.34' string instead
-    # raised ValueError, because the guard stripped '$' to test isdigit() but
-    # then called float() on the unstripped text. parse_money handles both.
-    current_price = parse_money(stock_data.get('Current Price')) or 0
-    
-    # Initialize scoring system (0-100)
-    ai_score = 0
-    confidence_factors = []
-    risk_factors = []
-    
-    # 1. OPTIONS FLOW ANALYSIS (25% weight)
-    options_weight = 25
-    if options_data['flow_sentiment']['direction'] == 'bullish':
-        if options_data['flow_sentiment']['strength'] == 'strong':
-            options_score = 85
-            confidence_factors.append("🟢 Strong Bullish Options Flow")
-        else:
-            options_score = 65
-            confidence_factors.append("🟡 Moderate Bullish Options Flow")
-    elif options_data['flow_sentiment']['direction'] == 'bearish':
-        if options_data['flow_sentiment']['strength'] == 'strong':
-            options_score = 15
-            risk_factors.append("🔴 Strong Bearish Options Flow")
-        else:
-            options_score = 35
-            risk_factors.append("🟡 Moderate Bearish Options Flow")
-    else:
-        options_score = 50
-        confidence_factors.append("⚪ Neutral Options Flow")
-    
-    # Unusual activity boost
-    if options_data['volume_metrics']['is_unusual']:
-        options_score += 10
-        confidence_factors.append("🚨 Unusual Options Volume")
-    
-    if len(options_data['alerts']) > 2:
-        options_score += 5
-        
-    ai_score += (options_score * options_weight / 100)
-    
-    # 2. INSTITUTIONAL FLOW ANALYSIS (30% weight)
-    institutional_weight = 30
-    institutional_flow = institutional_data.get('flow_direction') or {}
-    if institutional_flow.get('direction') == 'accumulation':
-        if institutional_flow.get('strength') == 'strong':
-            institutional_score = 90
-            confidence_factors.append("🟢 Strong Institutional Accumulation")
-        else:
-            institutional_score = 70
-            confidence_factors.append("🟡 Moderate Institutional Accumulation")
-    elif institutional_flow.get('direction') == 'distribution':
-        if institutional_flow.get('strength') == 'strong':
-            institutional_score = 10
-            risk_factors.append("🔴 Strong Institutional Distribution")
-        else:
-            institutional_score = 30
-            risk_factors.append("🟡 Moderate Institutional Distribution")
-    else:
-        # Also the path when volume was unavailable entirely, in which case this
-        # contributes a neutral 50 rather than a score built on invented volume.
-        institutional_score = 50
-        confidence_factors.append("⚪ Balanced Institutional Flow")
+def calculate_ai_rebound_prediction(symbol, current_price=None, **_ignored):
+    """Rebound assessment for one symbol, from the documented scoring model.
 
-    # The dark pool adjustment that sat here was driven by a fabricated
-    # percentage, so it has been removed rather than re-weighted.
+    The previous implementation assigned fixed scores from arbitrary weights and
+    treated missing inputs as a neutral 50, so a symbol with no real data still
+    produced a confident-looking number. It also derived a price target as
+    `current_price * base_multiplier * momentum_factor` and reported it beside
+    analyst figures. Both are gone: the model now scores only observable
+    factors, renormalises across them, and declines to score when too few exist.
 
-    ai_score += (institutional_score * institutional_weight / 100)
-    
-    # 3. ECONOMIC CALENDAR IMPACT (20% weight)
-    calendar_weight = 20
-    volatility_outlook = calendar_data['impact_summary']['volatility_outlook']
-    if volatility_outlook == 'low':
-        calendar_score = 75  # Low volatility = good for recovery
-        confidence_factors.append("📅 Low Economic Volatility")
-    elif volatility_outlook == 'moderate':
-        calendar_score = 50
-        confidence_factors.append("📅 Moderate Economic Risk")
-    else:
-        calendar_score = 25
-        risk_factors.append("📅 High Economic Volatility")
-        
-    ai_score += (calendar_score * calendar_weight / 100)
-    
-    # 4. RECOVERY PREDICTION ANALYSIS (15% weight)
-    recovery_weight = 15
-    recovery_score_raw = recovery_data.get('recovery_score', 50)
-    ai_score += (recovery_score_raw * recovery_weight / 100)
-    
-    if recovery_data.get('confidence') == 'very_high':
-        confidence_factors.append("⭐ Very High Recovery Confidence")
-    elif recovery_data.get('confidence') == 'high':
-        confidence_factors.append("⭐ High Recovery Confidence")
-    
-    # 5. SOCIAL SENTIMENT ANALYSIS (10% weight)
-    sentiment_weight = 10
-    overall_sentiment = sentiment_data.get('overall_sentiment', 'neutral')
-    if overall_sentiment == 'bullish':
-        sentiment_score = 75
-        confidence_factors.append("📱 Bullish Social Sentiment")
-    elif overall_sentiment == 'bearish':
-        sentiment_score = 25
-        risk_factors.append("📱 Bearish Social Sentiment")
-    else:
-        sentiment_score = 50
-        
-    ai_score += (sentiment_score * sentiment_weight / 100)
-    
-    # Calculate AI Price Target based on weighted analysis
-    if current_price > 0:
-        # Base multiplier from AI score
-        base_multiplier = 1.0 + ((ai_score - 50) / 100)  # 50 score = no change, 100 score = +50% target
-        
-        # Additional factors
-        momentum_factor = 1.0
-        if len(confidence_factors) > len(risk_factors):
-            momentum_factor = 1.05 + (len(confidence_factors) * 0.02)
-        elif len(risk_factors) > len(confidence_factors):
-            momentum_factor = 0.95 - (len(risk_factors) * 0.02)
-            
-        ai_price_target = current_price * base_multiplier * momentum_factor
-        ai_profit_potential = ((ai_price_target - current_price) / current_price) * 100
-    else:
-        ai_price_target = 0
-        ai_profit_potential = 0
-    
-    # Determine AI recommendation
-    if ai_score >= 75 and ai_profit_potential >= 20:
-        ai_recommendation = "STRONG BUY"
-        recommendation_color = "#28a745"
-        recommendation_emoji = "🚀"
-        buy_signal = True
-    elif ai_score >= 60 and ai_profit_potential >= 10:
-        ai_recommendation = "BUY"
-        recommendation_color = "#28a745" 
-        recommendation_emoji = "🟢"
-        buy_signal = True
-    elif ai_score >= 45 and ai_profit_potential >= 5:
-        ai_recommendation = "HOLD"
-        recommendation_color = "#ffc107"
-        recommendation_emoji = "🟡"
-        buy_signal = False
-    else:
-        ai_recommendation = "AVOID"
-        recommendation_color = "#dc3545"
-        recommendation_emoji = "🔴"
-        buy_signal = False
-    
-    # Calculate confidence level
-    total_signals = len(confidence_factors) + len(risk_factors)
-    if total_signals >= 6 and len(confidence_factors) > len(risk_factors):
-        confidence_level = "Very High"
-    elif total_signals >= 4 and len(confidence_factors) >= len(risk_factors):
-        confidence_level = "High"
-    elif total_signals >= 2:
-        confidence_level = "Moderate" 
-    else:
-        confidence_level = "Low"
-    
-    # Time horizon based on analysis
-    if ai_score >= 75:
-        time_horizon = "2-7 days"
-    elif ai_score >= 60:
-        time_horizon = "1-2 weeks"
-    elif ai_score >= 45:
-        time_horizon = "2-4 weeks"
-    else:
-        time_horizon = "1+ months"
-    
+    Extra keyword arguments are accepted and ignored so older callers that
+    passed pre-fetched analysis blobs do not break.
+    """
+    result = score_stock(symbol, current_price)
+
+    if not result.get('scored'):
+        return {
+            "symbol": symbol,
+            "timestamp": datetime.now().isoformat(),
+            "scored": False,
+            "ai_analysis": {
+                "recommendation": result['recommendation'],
+                "recommendation_color": result['recommendation_color'],
+                "coverage": result['coverage'],
+            },
+            "reason": result['reason'],
+            "factors": result['factors'],
+            "methodology": result['methodology'],
+            "summary": f"Not scored: {result['reason']}",
+        }
+
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
+        "scored": True,
         "ai_analysis": {
-            "overall_score": round(ai_score, 1),
-            "price_target": round(ai_price_target, 2) if ai_price_target > 0 else "N/A",
-            "current_price": current_price,
-            "profit_potential": round(ai_profit_potential, 1) if ai_profit_potential != 0 else 0,
-            "recommendation": ai_recommendation,
-            "recommendation_color": recommendation_color,
-            "recommendation_emoji": recommendation_emoji,
-            "is_buy_signal": buy_signal,
-            "confidence_level": confidence_level,
-            "time_horizon": time_horizon
+            "overall_score": result['score'],
+            "recommendation": result['recommendation'],
+            "recommendation_color": result['recommendation_color'],
+            "confidence_level": result['confidence'],
+            "coverage": result['coverage'],
+            "factors_used": result['factors_used'],
+            "factors_total": result['factors_total'],
         },
-        "analysis_breakdown": {
-            "options_flow_score": round(options_score, 1),
-            "institutional_flow_score": round(institutional_score, 1), 
-            "economic_calendar_score": round(calendar_score, 1),
-            "recovery_prediction_score": round(recovery_score_raw, 1),
-            "sentiment_score": round(sentiment_score, 1)
-        },
+        # A list, not a dict: Flask sorts JSON object keys alphabetically, which
+        # would discard the ranking by contribution.
+        "analysis_breakdown": [
+            {
+                "key": f['key'],
+                "label": f['label'],
+                "score": f['score'],
+                "effective_weight": f['effective_weight'],
+                "contribution": f['contribution'],
+                "detail": f['detail'],
+                "source": f['source'],
+            }
+            for f in result['factors']
+        ],
         "key_factors": {
-            "confidence_factors": confidence_factors,
-            "risk_factors": risk_factors,
-            "total_signals": total_signals
+            "strongest": [f"{f['label']}: {f['detail']}" for f in result['factors'][:3]],
+            "missing": [{"factor": m['label'], "reason": m['reason']} for m in result['missing']],
         },
-        "summary": f"AI Score: {ai_score:.1f}/100 → {ai_recommendation} with {confidence_level} confidence targeting {ai_profit_potential:+.1f}% return"
+        "methodology": result['methodology'],
+        "summary": (
+            f"Rebound score {result['score']}/100 -> {result['recommendation']} "
+            f"({result['confidence'].lower()} confidence, "
+            f"{result['factors_used']}/{result['factors_total']} inputs available)"
+        ),
     }
 
+# Rebound score thresholds -> the sentiment label shown in the main table.
+# One model drives both the label and the recommendations panel, so the table
+# can no longer disagree with the picks below it.
+SENTIMENT_BANDS = [
+    (70, '🟢 Oversold Bounce'),
+    (58, '🟢 Constructive'),
+    (45, '📊 Mixed Signals'),
+    (0, '🔴 Weak Setup'),
+]
+
+
+def sentiment_for_score(score):
+    for threshold, label in SENTIMENT_BANDS:
+        if score >= threshold:
+            return label
+    return '🔴 Weak Setup'
+
+
 def calculate_enhanced_investment_analysis(losers_data, details_data):
-    """Enhanced analysis with AI predictions for ALL stocks - KEEPS original analyst data"""
-    # First get the original analysis (preserves all existing fields)
+    """Attach a rebound score and sentiment label to every stock.
+
+    This previously ran the full sophisticated predictor once per symbol to
+    derive a sentiment label -- roughly 0.9s of network calls each, 21.7s for a
+    25-symbol list, on top of the score already being computed separately for
+    the recommendations panel. Two independent models rated the same stock and
+    could disagree.
+
+    Now a single scoring pass over cached market data produces both, so the
+    label in the table and the pick below it always come from the same number.
+    """
     try:
         original_analysis = calculate_all_investment_analysis(losers_data, details_data)
     except Exception as e:
         logger.error(f"Original analysis failed: {str(e)}")
-        # If original analysis completely fails, create basic structure from losers_data
         original_analysis = []
         for stock in losers_data:
             original_analysis.append({
                 'Symbol': stock['Symbol'],
-                'Name': stock['Name'], 
-                'Current Price': 'N/A',
-                'Target Price': 'N/A',
-                'Potential Return %': 'N/A',
-                'Volume': stock.get('Volume', 'N/A'),
+                'Name': stock['Name'],
+                'Current Price': UNAVAILABLE_DISPLAY,
+                'Target Price': UNAVAILABLE_DISPLAY,
+                'Potential Return %': UNAVAILABLE_DISPLAY,
+                'Volume': stock.get('Volume', UNAVAILABLE_DISPLAY),
                 'Change Today': stock['Change'],
                 'Percent Change Today': stock['Percent Change'],
                 'Market Cap': stock.get('Market Cap', 'N/A')
             })
-    
+
     enhanced_analysis = []
-    
     for stock_analysis in original_analysis:
-        symbol = stock_analysis['Symbol']
-        
+        symbol = stock_analysis.get('Symbol', 'UNKNOWN')
+        enhanced = dict(stock_analysis)
+
         try:
-            # Generate AI Technical Sentiment using sophisticated analysis
-            enhanced_stock = stock_analysis.copy()  # Preserve everything from original
-            
-            print(f"DEBUG: Generating sophisticated sentiment for {symbol}")
-            
-            # Get sophisticated analysis
-            sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
-            
-            if sophisticated_result and sophisticated_result.get('timeframe_predictions', {}).get('short_term'):
-                # Extract short-term data for sentiment generation
-                short_term_data = sophisticated_result['timeframe_predictions']['short_term']
-                targets = list(short_term_data.values())
-                
-                # Calculate average probability and confidence levels
-                probabilities = [t.get('probability', 0) for t in targets]
-                avg_probability = sum(probabilities) / len(probabilities) if probabilities else 0
-                confidences = [t.get('confidence', 'Low') for t in targets]
-                
-                # Check for enhanced signals to refine sentiment
-                enhanced_signals = sophisticated_result.get('enhanced_signals', {})
-                active_signals = []
-                if enhanced_signals.get('volume_surge', {}).get('surge_detected'):
-                    active_signals.append('volume_surge')
-                if enhanced_signals.get('rsi_reversion', {}).get('oversold'):
-                    active_signals.append('rsi_oversold')
-                if enhanced_signals.get('bollinger_squeeze', {}).get('squeeze_detected'):
-                    active_signals.append('bollinger_squeeze')
-                
-                # Generate sophisticated sentiment
-                if avg_probability >= 85 and any(c in ['Very High', 'High'] for c in confidences):
-                    ai_sentiment = "🟢 Oversold Bounce"
-                    ai_emoji = "🟢"
-                    ai_color = "green"
-                elif avg_probability >= 70:
-                    ai_sentiment = "📊 Mixed Signals"
-                    ai_emoji = "📊"
-                    ai_color = "orange"
-                else:
-                    ai_sentiment = "🔴 Weak Setup"
-                    ai_emoji = "🔴"
-                    ai_color = "red"
-                    
-                print(f"DEBUG: {symbol} sophisticated sentiment: {ai_sentiment} (avg_prob: {avg_probability:.1f}%, signals: {len(active_signals)})")
-                
-            else:
-                # Fallback to simple sentiment based on price change if sophisticated analysis fails
-                print(f"DEBUG: {symbol} falling back to simple sentiment (no sophisticated data)")
-                current_change = 0
-                for field in ['Percent Change Today', 'Change Today', 'Percent Change']:
-                    raw_value = stock_analysis.get(field, '0%')
-                    change_str = str(raw_value).replace('%', '').replace('+', '').replace('$', '').replace('(', '').replace(')', '').strip()
-                    try:
-                        current_change = float(change_str)
-                        break
-                    except (ValueError, TypeError):
-                        continue
-                
-                # Simple fallback sentiment
-                if current_change <= -5:  # Significant drop
-                    ai_sentiment = "🟢 Oversold Bounce"
-                    ai_emoji = "🟢"
-                    ai_color = "green"
-                elif current_change <= -2:  # Moderate drop
-                    ai_sentiment = "📊 Mixed Signals"
-                    ai_emoji = "📊"
-                    ai_color = "orange"
-                else:  # Small drop or positive
-                    ai_sentiment = "🔴 Weak Setup"
-                    ai_emoji = "🔴"
-                    ai_color = "red"
-            
-            # Update stock with only the fields we actually use
-            enhanced_stock.update({
-                'AI Sentiment': ai_sentiment,  # Used in table column
-                'AI Emoji': ai_emoji,         # Used for display
-                'AI Color': ai_color          # Used for styling
-            })
-            
-            enhanced_analysis.append(enhanced_stock)
-            
+            result = score_stock(symbol, parse_money(stock_analysis.get('Current Price')))
         except Exception as e:
-            logger.error(f"CRITICAL: Failed to get sophisticated sentiment for {symbol}: {str(e)}")
-            print(f"ERROR for {symbol}: {str(e)}")  # Debug print
-            # Fallback - keep original analysis, add error AI fields
-            enhanced_stock = stock_analysis.copy()
-            enhanced_stock.update({
-                'AI Sentiment': '⚠️ Analysis Error',  # For table column display
-                'AI Emoji': '⚠️',
-                'AI Color': '#6c757d'
-            })
-            enhanced_analysis.append(enhanced_stock)
-    
+            logger.warning(f"Scoring failed for {symbol}: {type(e).__name__}: {e}")
+            result = None
+
+        if result and result.get('scored'):
+            enhanced['AI Sentiment'] = sentiment_for_score(result['score'])
+            enhanced['Rebound Score'] = result['score']
+            enhanced['Confidence'] = result['confidence']
+            enhanced['Coverage'] = result['coverage']
+            enhanced['Factors Used'] = result['factors_used']
+            enhanced['Factors Total'] = result['factors_total']
+        else:
+            # Not scored is a distinct state from scored-badly, and the label
+            # says so rather than defaulting to a bearish-looking verdict.
+            enhanced['AI Sentiment'] = '⚪ Insufficient data'
+            enhanced['Rebound Score'] = None
+            enhanced['Confidence'] = 'None'
+            enhanced['Coverage'] = result.get('coverage') if result else 0
+            enhanced['Score Reason'] = result.get('reason') if result else 'scoring failed'
+
+        enhanced_analysis.append(enhanced)
+
     return enhanced_analysis
 
-def filter_ai_recovery_potential(enhanced_analysis):
-    """Filter stocks using sophisticated short-term recovery analysis"""
-    ai_recovery_picks = []
-    
-    for stock in enhanced_analysis:
-        symbol = stock.get('Symbol', 'UNKNOWN')
-        ai_sentiment = stock.get('AI Sentiment', '🔴 Weak Setup')
-        
-        # Check AI Technical Sentiment (must be positive)
-        has_good_sentiment = ai_sentiment in ['🟢 Oversold Bounce', '📊 Mixed Signals']
-        
-        if not has_good_sentiment:
-            print(f"DEBUG: Skipping {symbol} - Poor sentiment: {ai_sentiment}")
-            continue
-            
-        try:
-            # Get sophisticated short-term analysis
-            print(f"DEBUG: Fetching short-term analysis for {symbol}")
-            sophisticated_result = sophisticated_predictor.predict_recovery_timeframes(symbol.upper())
-            
-            if not sophisticated_result:
-                print(f"DEBUG: No sophisticated analysis for {symbol}")
-                continue
-                
-            # Convert to the same format as the API endpoint
-            recovery_data = {
-                'sophisticated_analysis': sophisticated_result
-            }
-                
-            # Extract short-term predictions
-            timeframe_predictions = recovery_data.get('sophisticated_analysis', {}).get('timeframe_predictions', {})
-            short_term_data = timeframe_predictions.get('short_term', {})
-            
-            if not short_term_data:
-                print(f"DEBUG: No short-term data for {symbol}")
-                continue
-                
-            # Calculate short-term recovery score (average probability)
-            targets = list(short_term_data.values())
-            probabilities = [t.get('probability', 0) for t in targets]
-            short_term_score = sum(probabilities) / len(probabilities) if probabilities else 0
-            
-            # Apply signal multipliers (matching the JavaScript logic from loadRecoveryData)
-            enhanced_signals = recovery_data.get('sophisticated_analysis', {}).get('enhanced_signals', {})
-            signal_multiplier = 1.0
-            
-            if enhanced_signals.get('volume_surge', {}).get('surge_detected'):
-                signal_multiplier *= enhanced_signals['volume_surge'].get('surge_multiplier', 1.0)
-            if enhanced_signals.get('rsi_reversion', {}).get('oversold_detected'):
-                signal_multiplier *= enhanced_signals['rsi_reversion'].get('reversion_multiplier', 1.0)
-            if enhanced_signals.get('economic_regime', {}).get('regime'):
-                signal_multiplier *= enhanced_signals['economic_regime'].get('short_term_multiplier', 1.0)
-            if enhanced_signals.get('money_flow_index', {}).get('oversold_detected'):
-                signal_multiplier *= enhanced_signals['money_flow_index'].get('recovery_multiplier', 1.0)
-            if enhanced_signals.get('macd_histogram', {}).get('momentum_shift'):
-                signal_multiplier *= enhanced_signals['macd_histogram'].get('recovery_multiplier', 1.0)
-            if enhanced_signals.get('bollinger_squeeze', {}).get('signal_type') != 'neutral':
-                signal_multiplier *= enhanced_signals.get('bollinger_squeeze', {}).get('recovery_multiplier', 1.0)
-            if enhanced_signals.get('put_call_ratio', {}).get('extreme_sentiment'):
-                signal_multiplier *= enhanced_signals['put_call_ratio'].get('recovery_multiplier', 1.0)
-            if enhanced_signals.get('short_interest', {}).get('squeeze_potential'):
-                signal_multiplier *= enhanced_signals['short_interest'].get('recovery_multiplier', 1.0)
-                
-            final_short_term_score = min(95, short_term_score * signal_multiplier)
-            
-            # Filter criteria: Good sentiment + 80%+ short-term recovery score
-            meets_criteria = has_good_sentiment and final_short_term_score >= 80
-            
-            if meets_criteria:
-                # Add short-term score to stock data for sorting
-                stock['Short_Term_Recovery_Score'] = final_short_term_score
-                ai_recovery_picks.append(stock)
-                print(f"DEBUG: Including {symbol} - Sentiment: {ai_sentiment}, Short-term score: {final_short_term_score:.1f}%")
-            else:
-                print(f"DEBUG: Excluding {symbol} - Sentiment: {ai_sentiment}, Short-term score: {final_short_term_score:.1f}%")
-                
-        except Exception as e:
-            print(f"DEBUG: Error analyzing {symbol}: {str(e)}")
-            continue
-    
-    # Sort by Short-term Recovery Score (highest first)
-    ai_recovery_picks.sort(key=lambda x: x.get('Short_Term_Recovery_Score', 0), reverse=True)
-    
-    return ai_recovery_picks
+def score_stock(symbol, current_price=None):
+    """Score one symbol with the documented rebound model.
 
-# #7 Background Task API Endpoints
+    All inputs come from market_data, which caches aggressively, so scoring the
+    full loser list stays affordable on a small instance. Every input is
+    optional: score_rebound renormalises over whatever is actually available and
+    declines to score at all when too little is.
+    """
+    targets = market_data.analyst_target(symbol)
+    prof = market_data.profile(symbol)
+    tech = market_data.technicals(symbol)
+    ratings = market_data.analyst_recommendations(symbol)
+    options = market_data.options_flow(symbol)
+
+    price = current_price or (tech.value or {}).get('close')
+
+    return recommendation.score_rebound(
+        current_price=price,
+        target_mean=targets['mean'].value,
+        analyst_count=targets['analysts'].value,
+        ratings=ratings.value if ratings.ok else None,
+        technicals=tech.value if tech.ok else None,
+        put_call_ratio=(options.value or {}).get('put_call_ratio') if options.ok else None,
+        short_pct_float=prof['short_pct_float'].value,
+    )
+
+
+def filter_ai_recovery_potential(enhanced_analysis):
+    """Rank the loser list by rebound score and return the strongest setups.
+
+    This replaces a filter that gated on emoji sentiment strings and then ran
+    the full sophisticated predictor for every surviving symbol on every page
+    render -- several network calls per stock, on a 0.5 CPU instance. Scoring
+    now reads cached market data instead.
+
+    Only genuinely scored stocks are eligible. A stock whose data was too thin
+    to score is excluded rather than being ranked as though it scored zero.
+    """
+    picks = []
+
+    for stock in enhanced_analysis:
+        symbol = stock.get('Symbol')
+        if not symbol or symbol == 'ERROR':
+            continue
+
+        try:
+            price = parse_money(stock.get('Current Price'))
+            result = score_stock(symbol, price)
+        except Exception as e:
+            logger.warning(f"Scoring failed for {symbol}: {type(e).__name__}: {e}")
+            continue
+
+        if not result.get('scored'):
+            logger.info(f"{symbol} not scored: {result.get('reason')}")
+            continue
+
+        if result['score'] < MIN_REBOUND_SCORE:
+            continue
+
+        picks.append({
+            **stock,
+            'Rebound Score': result['score'],
+            'Recommendation': result['recommendation'],
+            'Recommendation Color': result['recommendation_color'],
+            'Confidence': result['confidence'],
+            'Coverage': result['coverage'],
+            'Factors Used': result['factors_used'],
+            'Factors Total': result['factors_total'],
+            'Top Factors': [
+                f"{f['label']}: {f['detail']}" for f in result['factors'][:3]
+            ],
+            'Missing Inputs': [m['label'] for m in result['missing']],
+        })
+
+    # Rank by score, then by how much of the model was observable, so a
+    # well-covered 72 outranks a thinly-covered 74.
+    picks.sort(key=lambda p: (p['Rebound Score'], p['Coverage']), reverse=True)
+    return picks
+
 @app.route('/api/tasks/start/<symbol>')
 @rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
 def start_background_analysis(symbol):
@@ -5839,17 +5431,23 @@ def get_professional_analysis(symbol):
             "options_flow": options_data,
             "institutional_flow": institutional_data,
             "economic_calendar": calendar_data,
+            # Each source may be unavailable independently, so read defensively
+            # and say "unavailable" rather than inventing a neutral reading.
             "overall_sentiment": {
-                "options_bias": options_data["flow_sentiment"]["direction"],
-                "institutional_bias": institutional_data["flow_direction"]["direction"], 
-                "volatility_outlook": calendar_data["impact_summary"]["volatility_outlook"]
+                "options_bias": (options_data.get("flow_sentiment") or {}).get("direction", "unavailable"),
+                "institutional_bias": (institutional_data.get("flow_direction") or {}).get("direction", "unavailable"),
+                "volatility_outlook": (calendar_data.get("impact_summary") or {}).get("volatility_outlook", "unavailable")
             },
             "trading_signals": [
-                *options_data["alerts"],
-                *institutional_data["smart_money_signals"], 
-                *calendar_data["trading_considerations"]
+                *options_data.get("alerts", []),
+                *institutional_data.get("smart_money_signals", []),
+                *calendar_data.get("trading_considerations", [])
             ],
-            "summary": f"Professional analysis: {options_data['flow_sentiment']['direction']} options flow, {institutional_data['flow_direction']['direction']} institutional activity, {calendar_data['impact_summary']['volatility_outlook']} economic volatility"
+            "summary": (
+                f"Options: {(options_data.get('flow_sentiment') or {}).get('direction', 'unavailable')}; "
+                f"institutional: {(institutional_data.get('flow_direction') or {}).get('direction', 'unavailable')}; "
+                f"economic volatility: {(calendar_data.get('impact_summary') or {}).get('volatility_outlook', 'unavailable')}"
+            )
         }
         
         # Add HTTP caching
@@ -5873,28 +5471,11 @@ def get_professional_analysis(symbol):
 def get_ai_stock_analysis(symbol):
     """Get comprehensive AI-powered stock analysis"""
     try:
-        # Get all professional analysis data
-        options_data = analyze_options_flow(symbol.upper())
-        institutional_data = track_institutional_flow(symbol.upper())
-        calendar_data = get_economic_calendar_impact(symbol.upper())
-        recovery_data = predict_stock_recovery(symbol.upper())
-        sentiment_data = analyze_social_sentiment(symbol.upper())
-        
-        # Get actual stock data (try to get current price from Yahoo)
-        try:
-            # Try to get current price from a quick Yahoo lookup
-            ticker = yf.Ticker(symbol.upper())
-            current_price = ticker.info.get('currentPrice', ticker.info.get('regularMarketPrice', 0))
-        except:
-            current_price = 0  # Will be handled in AI prediction
-        
-        stock_data = {'Symbol': symbol.upper(), 'Current Price': current_price}
-        
-        # Calculate AI prediction
-        ai_prediction = calculate_ai_rebound_prediction(
-            stock_data, options_data, institutional_data,
-            calendar_data, recovery_data, sentiment_data
-        )
+        # The scoring model pulls exactly the inputs it needs through
+        # market_data's cache. The previous version eagerly ran five separate
+        # analyses -- including the full sophisticated predictor -- and then
+        # used almost none of them.
+        ai_prediction = calculate_ai_rebound_prediction(symbol.upper())
         
         # Add HTTP caching
         etag = generate_etag(ai_prediction)

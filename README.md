@@ -3,32 +3,160 @@
 A Flask web application that pulls the Yahoo Finance daily losers screener and layers
 technical and sentiment analysis on top of it.
 
-## ⚠️ Current Data Status
+## 📊 Data Sources
 
-Several upstream providers stopped serving unauthenticated requests, and the code used
-to paper over those failures with substituted values. Those fallbacks have been removed:
-a field that cannot be sourced now renders as an em dash. Check `/health/sources` for the
-live status of every provider.
+Every field carries its provenance. A value that cannot be sourced renders as an
+em dash with the reason attached — it is never replaced by a substitute. Live
+provider status is at `/health/sources`.
 
 | Data | Source | Status |
 | --- | --- | --- |
 | Daily losers list | Yahoo screener `day_losers` | ✅ Live |
 | Prices, volume, market cap | Yahoo `v8/finance/chart` | ✅ Live |
-| Technicals (RSI, MACD, MFI, Bollinger, VIX, SPY) | `yfinance` | ✅ Live |
-| StockTwits message volume | StockTwits API | ✅ Live |
-| Analyst price targets | Yahoo `quoteSummary` | ❌ 401 — renders as — |
-| Options flow / put-call ratio | Yahoo `v7/finance/options` | ❌ 401 — renders as — |
-| Earnings dates | Yahoo `quoteSummary` | ❌ 401 — renders as — |
-| Reddit mentions | Reddit `search.json` | ❌ 403 — needs OAuth |
+| Analyst targets + spread + count | yfinance `targetMeanPrice` | ✅ Live |
+| Analyst rating spread | yfinance `recommendations` | ✅ Live |
+| Options chain / put-call ratio | yfinance `option_chain` | ✅ Live |
+| Earnings dates | yfinance `calendar` | ✅ Live |
+| Headlines | yfinance `news` | ✅ Live |
+| Sector / industry | yfinance `info` | ✅ Live |
+| Short interest | yfinance `shortPercentOfFloat` | ✅ Live |
+| Institutional ownership + 13F holders | yfinance `institutional_holders` | ✅ Live |
+| RSI-14, Bollinger %B, 20-day gap | computed from real OHLCV | ✅ Live |
+| FOMC meeting dates | federalreserve.gov | ✅ Live |
+| StockTwits sentiment + volume | StockTwits API | ✅ Live |
+| CPI / jobs / GDP / retail dates | FRED `release/dates` | ⚙️ Needs `FRED_API_KEY` |
+| Reddit mentions | Reddit OAuth API | ⚙️ Needs `REDDIT_CLIENT_ID`/`SECRET` |
 
-**Removed entirely** because no free data source exists for them: dark pool volume,
-hedge fund / mutual fund / pension / ETF ownership splits, execution quality
-(price impact, slippage, efficiency), and Twitter mention counts. These were previously
-computed from arithmetic on unrelated inputs and displayed as reported figures.
+### Deliberately not reported
 
-Anything still calculated rather than reported — such as the institutional/retail volume
-split — is tagged `estimated` in its API payload, with an `estimate_basis` explaining
-what it is inferred from.
+No free source publishes these, so they are absent rather than approximated:
+
+- **Dark pool / off-exchange volume** — FINRA publishes ATS data on a 2–4 week delay
+- **Intraday institutional vs retail split** — not disclosed at that granularity
+- **Execution quality** (price impact, slippage) — requires order-level fill data
+- **Twitter/X mention counts** — the API starts at roughly $100/month
+
+Anything computed rather than reported is tagged `estimated` in its payload with
+an `estimate_basis` naming what it was inferred from.
+
+## 🎯 Recommendation Methodology
+
+The rebound score measures how closely a stock matches conditions that
+historically accompany mean reversion. **It is not a return forecast and not
+investment advice.**
+
+Six factors, weighted:
+
+| Factor | Weight | Basis |
+| --- | --- | --- |
+| Analyst consensus upside | 0.28 | Distance to `targetMeanPrice`, on a concave curve, damped by analyst count |
+| Technical mean reversion | 0.24 | Wilder RSI-14, Bollinger %B, gap below the 20-day mean |
+| Analyst rating spread | 0.16 | Buy/sell balance, strong calls weighted double |
+| Options positioning | 0.14 | Put/call ratio, read contrarian at extremes |
+| Short interest | 0.10 | Percentage of float short, as squeeze potential |
+| Volume confirmation | 0.08 | Volume vs 20-day average, as a capitulation signal |
+
+Four rules make the number honest:
+
+1. **A factor contributes only when its data is real.** Missing inputs are not
+   scored 50. Assigning a neutral score asserts "we looked and it was average"
+   when nothing was looked at, and it drags every result toward the middle.
+2. **Weights renormalise over available factors.** Three real factors produce a
+   score built from three real factors, not one diluted by three imaginary ones.
+3. **Coverage is reported with the score.** A 74 from six inputs and a 74 from
+   three are different claims, and confidence reflects that.
+4. **Below three available factors, no score is produced.** Declining to answer
+   is the correct output when the inputs are not there.
+
+Per-factor contributions and effective weights are returned by
+`/api/ai-analysis/<symbol>`, so any score can be recomputed by hand.
+
+## 📉 Backtest: does the score actually work?
+
+A model that has never been compared against realised outcomes is an opinion
+with arithmetic attached. `backtest.py` scores stocks at past dates using **only
+data available on that date**, then measures what actually happened.
+
+```bash
+python backtest.py --years 6 --step-days 10
+```
+
+**Result — 9,126 point-in-time observations, 65 symbols, 6 years:**
+
+| Score bucket | n | 5d excess | 20d excess | 60d excess | 20d win rate |
+| --- | --- | --- | --- | --- | --- |
+| 70+ (strong) | 761 | +0.57% | **+1.97%** | +0.71% | 62.3% |
+| 58–70 (constructive) | 1,427 | +0.08% | +0.41% | +1.04% | 57.3% |
+| 45–58 (neutral) | 1,877 | −0.09% | +0.06% | +0.81% | 54.0% |
+| <45 (weak) | 5,061 | −0.07% | **−0.43%** | −0.70% | 53.2% |
+
+Rank correlation between score and realised return: **+0.032 (5d), +0.043 (20d),
++0.024 (60d)**.
+
+### Reading this honestly
+
+**The signal is real but weak.** Bucket ordering is monotonic at 5- and 20-day
+horizons, and the top-versus-bottom spread is about 2.4 percentage points over
+20 days. A rank correlation of +0.04 is small — it is not nothing, and it is
+nowhere near a reliable predictor.
+
+**Signal decays past 20 days.** At 60 days the ordering breaks down. If this
+model is useful at all, it is over the short horizon it was designed for.
+
+**A shorter window told a different story.** At 3 years (2,015 observations) the
+top bucket had only 117 samples and *underperformed* the second bucket. That
+reversed with more data, which is exactly why the smaller sample should not be
+trusted — and a reminder of how easily a backtest can be talked into saying
+whatever you want.
+
+### What is NOT validated
+
+Only the **technical factors** (RSI, Bollinger %B, 20-day gap, relative volume)
+can be recomputed point-in-time from OHLCV. Analyst targets, rating spreads,
+options chains and short interest are available only as of *now* — there is no
+historical snapshot, and using today's values at a past date is look-ahead bias,
+which reliably manufactures results that evaporate in live use.
+
+Those excluded factors carry **68% of the model's nominal weight**. The headline
+result covers the other 32%. The full model is unvalidated.
+
+Also excluded: transaction costs, slippage, borrow costs and dividends. The
+universe is chosen today, so delisted companies are absent and the sample skews
+toward survivors.
+
+**A backtest describes the past. It is not evidence of future performance, and
+this application is not investment advice.**
+
+## ⚡ Caching
+
+Lifetimes follow how fast each field actually moves, which is what keeps this
+affordable on a 0.5 CPU / 512 MB instance:
+
+- Quotes 5 min, technicals 30 min, options 15 min, news 1 h, targets 6 h,
+  earnings 24 h, holders 7 d, FOMC calendar 7 d
+- **All lifetimes stretch 8× while the market is closed** — prices cannot change
+  overnight, so refetching then spends the request budget for nothing
+- **Failures are split**: an outage retries in 60 s, but a structural absence
+  (no options chain, no analyst coverage) is held 6 h, since re-asking every
+  minute is a guaranteed-negative request repeated forever
+- **Jitter on every TTL** so 25 symbols cannot expire in the same second
+- **Cache keys carry a schema version**, so a payload shape change cannot
+  deserialise stale Redis entries into code that no longer matches
+- The rendered page tracks the session: 10 min while open, 12 h once closed
+
+Cold page render is ~5 s for 25 symbols (provider calls are warmed
+concurrently); warm render is ~0.03 s.
+
+## 🧪 Tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+35 regression tests, each corresponding to a defect that actually shipped: the
+provenance rules, the zero-volume `ZeroDivisionError`, money parsing, scoring
+renormalisation, phrase extraction, and cache lifetime behaviour. They run
+offline with no network access.
 
 ## 🚀 Features Overview
 

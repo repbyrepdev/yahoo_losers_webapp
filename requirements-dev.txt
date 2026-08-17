@@ -1,0 +1,3 @@
+# Test-only dependencies. The runtime install (requirements.txt) stays lean so
+# the Starter instance does not pull test tooling into its image.
+pytest>=7.0.0
