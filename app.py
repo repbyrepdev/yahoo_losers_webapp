@@ -23,6 +23,7 @@ import structlog
 from celery import Celery
 import hashlib
 from sophisticated_timeframe import SophisticatedTimeframePredictor
+from provenance import Sourced, safe_ratio, UNAVAILABLE_DISPLAY
 
 app = Flask(__name__)
 
@@ -40,8 +41,11 @@ app.config['COMPRESS_MIMETYPES'] = ['text/html', 'text/css', 'text/xml',
 app.config['COMPRESS_LEVEL'] = 6
 app.config['COMPRESS_MIN_SIZE'] = 500
 
-# #6 Security Headers & CORS  
-CORS(app, origins=["*"], supports_credentials=True)
+# #6 Security Headers & CORS
+# No cookies or auth are used, so credentials must stay off. Pairing a wildcard
+# origin with supports_credentials makes Flask-CORS reflect whatever Origin the
+# caller sends, which defeats the point of an origin check entirely.
+CORS(app, origins=os.environ.get('CORS_ORIGINS', '*').split(','), supports_credentials=False)
 app.config['CORS_HEADERS'] = 'Content-Type'
 
 # #5 Structured Logging & APM
@@ -207,6 +211,10 @@ CACHE_DURATION_HOURS = 24
 # Rate limiting configuration
 MAX_REQUESTS_PER_MINUTE = 30
 MAX_AI_REQUESTS_PER_MINUTE = 10
+
+# Minimum upside required for a stock to be listed as high potential.
+# Overridable so it can be recalibrated once real analyst targets are wired in.
+MIN_UPSIDE_PERCENT = float(os.environ.get('MIN_UPSIDE_PERCENT', 65))
 
 def rate_limit(max_per_minute=MAX_REQUESTS_PER_MINUTE):
     """Rate limiting decorator"""
@@ -486,40 +494,54 @@ def get_stock_details(symbols):
                 prev_close = meta.get('previousClose', 0)
                 volume = meta.get('regularMarketVolume', 0)
                 
-                # Try to get analyst price target from financials endpoint
-                target_price = None
+                # Analyst consensus price target.
+                #
+                # This endpoint began requiring authentication and now returns 401,
+                # so this resolves to unavailable until the yfinance migration lands.
+                # It previously fell back to `current_price * 1.15`, which meant every
+                # stock displayed a fabricated target and an identical 15% upside.
+                # A failed fetch must never invent a price.
+                target = Sourced.unavailable('yahoo:targetMeanPrice', 'not fetched')
                 try:
                     target_url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=financialData"
                     target_response = session.get(target_url, headers=headers, timeout=8)
                     target_response.raise_for_status()
                     target_data = target_response.json()
-                    
-                    if 'quoteSummary' in target_data and target_data['quoteSummary']['result']:
+
+                    financial_data = {}
+                    if 'quoteSummary' in target_data and target_data['quoteSummary'].get('result'):
                         financial_data = target_data['quoteSummary']['result'][0].get('financialData', {})
-                        target_mean = financial_data.get('targetMeanPrice', {})
-                        if isinstance(target_mean, dict) and 'raw' in target_mean:
-                            target_price = target_mean['raw']
-                except:
-                    # Conservative fallback - use modest 15% upside estimate
-                    target_price = current_price * 1.15  # 15% conservative target
-                
+
+                    target_mean = financial_data.get('targetMeanPrice', {})
+                    if isinstance(target_mean, dict) and target_mean.get('raw'):
+                        target = Sourced.live(target_mean['raw'], 'yahoo:targetMeanPrice')
+                    else:
+                        target = Sourced.unavailable('yahoo:targetMeanPrice', 'no analyst consensus published')
+                except requests.RequestException as e:
+                    target = Sourced.unavailable('yahoo:targetMeanPrice', f'upstream unavailable ({type(e).__name__})')
+                except (ValueError, KeyError, IndexError) as e:
+                    target = Sourced.unavailable('yahoo:targetMeanPrice', f'unexpected payload ({type(e).__name__})')
+
                 stock_details.append({
                     'Symbol': symbol,
-                    'Current Price': f"${current_price:.2f}" if current_price else 'N/A',
-                    'Previous Close': f"${prev_close:.2f}" if prev_close else 'N/A',
+                    'Current Price': f"${current_price:.2f}" if current_price else UNAVAILABLE_DISPLAY,
+                    'Previous Close': f"${prev_close:.2f}" if prev_close else UNAVAILABLE_DISPLAY,
                     'Volume': format_volume(volume),
-                    'Price Target': f"${target_price:.2f}" if target_price else 'N/A'
+                    'Price Target': target.format('.2f', prefix='$'),
+                    'Price Target Source': target.source if target.ok else f'unavailable: {target.reason}'
                 })
                 
         except Exception as e:
             logger.warning(f"Failed to get details for {symbol}: {str(e)}")
-            # Add with basic info if API call fails
+            # Nothing was retrieved for this symbol. Every field stays empty
+            # rather than being filled with a placeholder that reads as data.
             stock_details.append({
                 'Symbol': symbol,
-                'Current Price': 'N/A',
-                'Previous Close': 'N/A', 
-                'Volume': 'N/A',
-                'Price Target': 'N/A'
+                'Current Price': UNAVAILABLE_DISPLAY,
+                'Previous Close': UNAVAILABLE_DISPLAY,
+                'Volume': UNAVAILABLE_DISPLAY,
+                'Price Target': UNAVAILABLE_DISPLAY,
+                'Price Target Source': f'unavailable: quote fetch failed ({type(e).__name__})'
             })
     
     logger.info(f"Retrieved details for {len(stock_details)} stocks from Yahoo Finance API")
@@ -539,6 +561,22 @@ def format_volume(volume):
     else:
         return f"{volume:,.0f}"
 
+def parse_money(raw):
+    """Parse a display string like '$12.34' into a float.
+
+    Returns None for anything that is not a number, including the em dash used
+    for unavailable values. Callers must treat None as 'no data' and must not
+    substitute a default.
+    """
+    if raw is None:
+        return None
+    text = str(raw).replace('$', '').replace(',', '').strip()
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def calculate_all_investment_analysis(losers_data, details_data):
     """Calculate investment analysis for ALL stocks (no filtering)"""
     all_analysis = []
@@ -552,26 +590,23 @@ def calculate_all_investment_analysis(losers_data, details_data):
             details = details_dict[symbol]
             
             try:
-                # Clean and convert prices (handle both string and numeric values)
-                current_price_value = details['Current Price']
-                current_price_str = str(current_price_value).replace('$', '').replace(',', '') if current_price_value != 'N/A' else '0'
-                
-                target_price_value = details['Price Target']
-                target_price_str = str(target_price_value).replace('$', '').replace(',', '') if target_price_value != 'N/A' else '0'
-                
-                current_price = float(current_price_str) if current_price_str != '0' else 0
-                target_price = float(target_price_str) if target_price_str != '0' else 0
-                
-                potential_return = 0
-                if current_price > 0 and target_price > 0:
+                current_price = parse_money(details['Current Price'])
+                target_price = parse_money(details['Price Target'])
+
+                # Upside is only meaningful when both sides are real. Without a
+                # genuine analyst target this stays empty instead of resolving to
+                # the flat 15% that the old fabricated fallback produced.
+                potential_return = None
+                if current_price and target_price:
                     potential_return = ((target_price - current_price) / current_price) * 100
-                
+
                 all_analysis.append({
                     'Symbol': symbol,
                     'Name': stock['Name'],
-                    'Current Price': current_price if current_price > 0 else 'N/A',
-                    'Target Price': target_price if target_price > 0 else 'N/A',
-                    'Potential Return %': round(potential_return, 2) if potential_return != 0 else 'N/A',
+                    'Current Price': current_price if current_price else UNAVAILABLE_DISPLAY,
+                    'Target Price': target_price if target_price else UNAVAILABLE_DISPLAY,
+                    'Potential Return %': round(potential_return, 2) if potential_return is not None else UNAVAILABLE_DISPLAY,
+                    'Target Source': details.get('Price Target Source', 'unknown'),
                     'Volume': details['Volume'],
                     'Change Today': stock['Change'],
                     'Percent Change Today': stock['Percent Change'],
@@ -580,14 +615,15 @@ def calculate_all_investment_analysis(losers_data, details_data):
                 
             except (ValueError, TypeError) as e:
                 logger.error(f"Error calculating potential for {symbol}: {str(e)}")
-                # Still add the stock with available data
+                # Still list the stock, but with the price fields left empty.
                 all_analysis.append({
                     'Symbol': symbol,
                     'Name': stock['Name'],
-                    'Current Price': 'N/A',
-                    'Target Price': 'N/A',
-                    'Potential Return %': 'N/A',
-                    'Volume': details.get('Volume', 'N/A'),
+                    'Current Price': UNAVAILABLE_DISPLAY,
+                    'Target Price': UNAVAILABLE_DISPLAY,
+                    'Potential Return %': UNAVAILABLE_DISPLAY,
+                    'Target Source': f'unavailable: {type(e).__name__}',
+                    'Volume': details.get('Volume', UNAVAILABLE_DISPLAY),
                     'Change Today': stock['Change'],
                     'Percent Change Today': stock['Percent Change'],
                     'Market Cap': stock.get('Market Cap', 'N/A')
@@ -597,15 +633,20 @@ def calculate_all_investment_analysis(losers_data, details_data):
     return all_analysis
 
 def calculate_investment_potential(all_analysis):
-    """Step 3: Filter high-potential investments from all analysis"""
+    """Step 3: Filter high-potential investments from all analysis.
+
+    The threshold is configurable because the previous hard-coded 65 was tuned
+    against fabricated targets that made every stock read as exactly 15% upside,
+    so it was never calibrated against real analyst consensus.
+    """
+    min_upside = MIN_UPSIDE_PERCENT
+
     high_potential = []
-    
     for analysis in all_analysis:
-        if (analysis['Potential Return %'] != 'N/A' and 
-            isinstance(analysis['Potential Return %'], (int, float)) and 
-            analysis['Potential Return %'] > 65):
+        upside = analysis['Potential Return %']
+        if isinstance(upside, (int, float)) and upside > min_upside:
             high_potential.append(analysis)
-    
+
     return high_potential
 
 def format_results_as_html(losers_data, details_data, all_analysis, recommendations, status):
@@ -1048,26 +1089,26 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         }
         
         /* ========================================================================
-         * REAL DATA SOURCES USED THROUGHOUT THIS APPLICATION:
+         * DATA SOURCES AND THEIR CURRENT STATUS
          * ========================================================================
-         * 
-         * 📊 YAHOO FINANCE APIs:
-         *    - Daily losers: finance.yahoo.com/screener/predefined/day_losers
-         *    - Stock quotes: query1.finance.yahoo.com/v8/finance/chart/{symbol}
-         *    - Analyst data: query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}
-         *    - Options chain: query1.finance.yahoo.com/v7/finance/options/{symbol}
-         *    - Earnings calendar: quoteSummary?modules=calendarEvents
-         * 
-         * 📱 SOCIAL MEDIA APIs:
-         *    - Reddit API: reddit.com/search.json?q=${symbol} (real mentions)
-         *    - StockTwits API: api.stocktwits.com/api/2/streams/symbol/{symbol}.json
-         * 
-         * 🔮 SOPHISTICATED ANALYSIS ENGINE:
-         *    - 6 recovery targets: previous close, 5-day high, 20-day MA, support, analyst, fair value
-         *    - Real technical indicators: RSI, support levels, volume analysis
-         *    - Market conditions: VIX volatility, SPY trend analysis
-         * 
-         * 🚫 NO FAKE/RANDOM DATA: All analysis based on actual financial market data
+         *
+         * WORKING:
+         *    - Daily losers:  query1.finance.yahoo.com/v1/finance/screener (day_losers)
+         *    - Stock quotes:  query1.finance.yahoo.com/v8/finance/chart/{symbol}
+         *    - StockTwits:    api.stocktwits.com/api/2/streams/symbol/{symbol}.json
+         *    - Technicals:    RSI, MACD, Bollinger, MFI, VIX and SPY via yfinance
+         *
+         * CURRENTLY UNAVAILABLE (these now render as an em dash, never a
+         * substituted value -- see provenance.py):
+         *    - Analyst targets:  quoteSummary/financialData returns 401
+         *    - Options chain:    v7/finance/options returns 401
+         *    - Earnings dates:   quoteSummary/calendarEvents returns 401
+         *    - Reddit mentions:  search.json returns 403 without OAuth
+         *
+         * The banner that used to sit here claimed no fabricated data was in
+         * use. That was untrue: several fields were invented on failure. Those
+         * fallbacks are gone. Anything still computed rather than reported is
+         * tagged `estimated` in its payload.
          * ======================================================================== */
         
         // Auto-refresh functionality
@@ -1590,14 +1631,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     </div>` : ''}
                 </div>
                 
-                ${!isNewFormat ? `<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin: 20px 0; text-align: center;">
+                ${!isNewFormat ? `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; text-align: center;">
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
                         <div style="font-size: 24px; font-weight: bold; color: #ff4757;">${sentiment.reddit_mentions || 0}</div>
                         <div style="font-size: 12px; color: #666;">Reddit Mentions</div>
-                    </div>
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
-                        <div style="font-size: 24px; font-weight: bold; color: #1da1f2;">${sentiment.twitter_mentions || 0}</div>
-                        <div style="font-size: 12px; color: #666;">Twitter Mentions</div>
                     </div>
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px;">
                         <div style="font-size: 24px; font-weight: bold; color: #2ecc71;">${sentiment.stocktwits_mentions || 0}</div>
@@ -3553,10 +3590,56 @@ def health_check():
         
     except Exception as e:
         return {
-            "status": "unhealthy", 
+            "status": "unhealthy",
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }, 503
+
+# Upstream providers this app depends on. Checked by /health/sources so that a
+# provider going dark is visible immediately instead of silently degrading the
+# data behind a fallback.
+UPSTREAM_SOURCES = {
+    "yahoo_screener": "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_losers&count=1",
+    "yahoo_chart": "https://query1.finance.yahoo.com/v8/finance/chart/AAPL",
+    "yahoo_quote_summary": "https://query1.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=financialData",
+    "yahoo_options": "https://query1.finance.yahoo.com/v7/finance/options/AAPL",
+    "reddit_search": "https://www.reddit.com/search.json?q=%24AAPL&limit=1",
+    "stocktwits": "https://api.stocktwits.com/api/2/streams/symbol/AAPL.json",
+}
+
+
+@app.route('/health/sources')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def health_sources():
+    """Report which upstream providers are actually reachable right now.
+
+    Every provider that fails here corresponds to a field the UI will render as
+    an em dash. This endpoint exists because three providers began returning
+    401/403 and nothing surfaced it -- the failures were absorbed by fallbacks
+    that produced invented values.
+    """
+    headers = {'User-Agent': 'Mozilla/5.0 (compatible; StockAnalyzer/1.0)'}
+    results = {}
+
+    for name, url in UPSTREAM_SOURCES.items():
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            results[name] = {
+                "reachable": response.ok,
+                "http_status": response.status_code,
+            }
+        except requests.RequestException as e:
+            results[name] = {"reachable": False, "error": type(e).__name__}
+
+    degraded = sorted(name for name, r in results.items() if not r["reachable"])
+
+    return {
+        "status": "degraded" if degraded else "ok",
+        "degraded_sources": degraded,
+        "sources": results,
+        "timestamp": datetime.now().isoformat(),
+    }, (200 if not degraded else 207)
+
 
 @app.route('/metrics')
 @rate_limit(MAX_REQUESTS_PER_MINUTE)
@@ -3965,22 +4048,34 @@ def export_csv():
         output = io.StringIO()
         
         # Write header
-        output.write("Symbol,Company Name,AI Technical Sentiment,Current Price,Price Target,Potential Return %,Change Today,Percent Change Today,Volume,Market Cap,Previous Close\n")
+        output.write("Symbol,Company Name,AI Technical Sentiment,Current Price,Target Price,Potential Return %,Target Source,Change Today,Percent Change Today,Volume,Market Cap\n")
         
-        # Write data rows
+        # Write data rows.
+        #
+        # These cells were previously built by calling .replace() directly on the
+        # values, which raised AttributeError as soon as one was a float -- and
+        # 'Current Price' is a float, so the whole export returned an error page.
+        # cell() coerces first, so a numeric value can no longer break the export.
+        def cell(analysis, key, strip=''):
+            value = analysis.get(key, '')
+            text = '' if value is None else str(value)
+            for char in strip:
+                text = text.replace(char, '')
+            return text.replace(',', ';')
+
         for analysis in all_analysis:
             row = [
-                analysis.get('Symbol', ''),
-                analysis.get('Company Name', '').replace(',', ';'),  # Replace commas to avoid CSV issues
-                analysis.get('AI Sentiment', '').replace(',', ';'),  # AI Technical Sentiment
-                analysis.get('Current Price', '').replace('$', ''),
-                analysis.get('Price Target', '').replace('$', ''),
-                str(analysis.get('Potential Return %', '')).replace('%', ''),
-                analysis.get('Change Today', '').replace('$', ''),
-                analysis.get('Percent Change Today', '').replace('%', ''),
-                analysis.get('Volume', ''),
-                analysis.get('Market Cap', ''),
-                analysis.get('Previous Close', '').replace('$', '')
+                cell(analysis, 'Symbol'),
+                cell(analysis, 'Name'),
+                cell(analysis, 'AI Sentiment'),
+                cell(analysis, 'Current Price', '$'),
+                cell(analysis, 'Target Price', '$'),
+                cell(analysis, 'Potential Return %', '%'),
+                cell(analysis, 'Target Source'),
+                cell(analysis, 'Change Today', '$'),
+                cell(analysis, 'Percent Change Today', '%'),
+                cell(analysis, 'Volume'),
+                cell(analysis, 'Market Cap'),
             ]
             output.write(','.join(row) + '\n')
         
@@ -4613,7 +4708,6 @@ def analyze_social_sentiment(symbol):
     """
     # Get REAL social media metrics from actual APIs
     reddit_mentions = 0
-    twitter_mentions = 0
     stocktwits_mentions = 0
     
     # Real Reddit API - search for stock mentions
@@ -4641,20 +4735,11 @@ def analyze_social_sentiment(symbol):
         print(f"DEBUG: StockTwits API failed for {symbol}: {e}")
         stocktwits_mentions = 0
     
-    # Twitter/X mentions - use web scraping since API is restricted
-    try:
-        # Search for recent tweets mentioning the symbol
-        twitter_search_url = f"https://twitter.com/search?q=%24{symbol}&src=typed_query&f=live"
-        # Note: This would need selenium or similar for real implementation
-        # For now, estimate based on other social data
-        twitter_mentions = max(reddit_mentions * 2, stocktwits_mentions * 3)
-        print(f"DEBUG: Estimated {twitter_mentions} Twitter mentions for {symbol}")
-    except Exception as e:
-        print(f"DEBUG: Twitter estimation failed for {symbol}: {e}")
-        twitter_mentions = 0
-    
-    # Calculate REAL panic level based on actual mention volume
-    total_mentions = reddit_mentions + twitter_mentions + stocktwits_mentions
+    # Twitter/X mentions are not collected. There is no free API for them, and
+    # the previous value was max(reddit_mentions * 2, stocktwits_mentions * 3) --
+    # arithmetic on other platforms' counts, reported under a Twitter label.
+
+    total_mentions = reddit_mentions + stocktwits_mentions
     if total_mentions == 0:
         panic_level = 3.0  # Neutral when no data
     else:
@@ -4662,7 +4747,7 @@ def analyze_social_sentiment(symbol):
         mention_factor = min(total_mentions / 500, 10)  # Scale mentions to 1-10
         panic_level = max(1.0, min(10.0, mention_factor))
     
-    print(f"DEBUG: Real social data for {symbol}: Reddit={reddit_mentions}, Twitter={twitter_mentions}, StockTwits={stocktwits_mentions}, Panic={panic_level:.1f}")
+    logger.info(f"Social data for {symbol}: Reddit={reddit_mentions}, StockTwits={stocktwits_mentions}, Panic={panic_level:.1f}")
     
     # Generate panic level description
     if panic_level >= 8:
@@ -4718,10 +4803,12 @@ def analyze_social_sentiment(symbol):
         "panic_color": panic_color,
         "overall_sentiment": overall_sentiment,
         "reddit_mentions": reddit_mentions,
-        "twitter_mentions": twitter_mentions,
         "stocktwits_mentions": stocktwits_mentions,
         "trending_phrases": trending,
-        "social_volume": "high" if (reddit_mentions + twitter_mentions) > 2000 else "moderate" if (reddit_mentions + twitter_mentions) > 500 else "low"
+        # Thresholds reflect what these sources can actually return: Reddit search
+        # caps at 100 results and a StockTwits stream page holds ~30 messages, so
+        # the previous 2000/500 cut-offs were unreachable and every stock read low.
+        "social_volume": "high" if total_mentions > 90 else "moderate" if total_mentions > 40 else "low"
     }
 
 # ============================================================================= 
@@ -4881,7 +4968,9 @@ def analyze_options_flow(symbol):
         "smart_money_indicators": {
             "block_trades": block_trades,
             "sweep_activity": sweep_activity,
-            "dark_pool_prints": min(block_trades + sweep_activity, 8)  # Estimate based on other real activity
+            # dark_pool_prints removed: it was min(block_trades + sweep_activity, 8),
+            # an arithmetic expression presented as off-exchange print counts.
+            # Real ATS data comes from FINRA and is wired up separately.
         },
         "key_strikes": {
             "most_active_calls": strikes_otm[:3],
@@ -4924,8 +5013,10 @@ def track_institutional_flow(symbol):
                 volume_data = result.get('indicators', {}).get('quote', [{}])[0].get('volume', [])
                 
                 if volume_data:
-                    # Get recent volume (last trading day)
-                    recent_volume = [v for v in volume_data if v is not None]
+                    # Drop falsy bars, not just None. Yahoo returns 0-volume bars
+                    # outside regular hours, and a 0 here previously propagated into
+                    # an unguarded division further down and crashed the request.
+                    recent_volume = [v for v in volume_data if v]
                     if recent_volume:
                         total_volume = int(recent_volume[-1])  # Most recent volume
                         
@@ -4957,17 +5048,26 @@ def track_institutional_flow(symbol):
                         print(f"DEBUG: Real institutional data for {symbol}: Total Volume={total_volume:,}, Institutional={institutional_percentage:.1%}")
                         
     except Exception as e:
-        print(f"DEBUG: Failed to get real institutional data for {symbol}: {e}")
-        # Conservative fallback 
-        total_volume = 1000000  # 1M shares default
-        institutional_volume = int(total_volume * 0.5)  # 50% institutional
-        retail_volume = total_volume - institutional_volume
-        buy_volume = int(institutional_volume * 0.5)  # Neutral
-        sell_volume = institutional_volume - buy_volume
-        net_flow = 0
-    
+        # No invented volume here. This previously defaulted to a flat 1,000,000
+        # shares split 50/50, which rendered as a real reading of the tape.
+        logger.warning(f"Institutional volume unavailable for {symbol}: {type(e).__name__}: {e}")
+        total_volume = 0
+
+    if not total_volume:
+        return {
+            "symbol": symbol,
+            "timestamp": datetime.now().isoformat(),
+            "available": False,
+            "reason": "no volume data returned for this symbol",
+            "volume_analysis": {},
+            "flow_direction": {},
+            "smart_money_signals": [],
+            "summary": "Institutional volume unavailable"
+        }
+
     # Flow classification
-    if abs(net_flow) / institutional_volume > 0.3:
+    net_flow_ratio = abs(safe_ratio(abs(net_flow), institutional_volume, default=0))
+    if net_flow_ratio > 0.3:
         flow_strength = "strong"
         if net_flow > 0:
             flow_direction = "accumulation"
@@ -4977,7 +5077,7 @@ def track_institutional_flow(symbol):
             flow_direction = "distribution"
             flow_color = "#dc3545" 
             flow_emoji = "🔴"
-    elif abs(net_flow) / institutional_volume > 0.1:
+    elif net_flow_ratio > 0.1:
         flow_strength = "moderate"
         flow_direction = "accumulation" if net_flow > 0 else "distribution"
         flow_color = "#ffc107"
@@ -4988,70 +5088,49 @@ def track_institutional_flow(symbol):
         flow_color = "#6c757d"
         flow_emoji = "⚪"
     
-    # Estimate institution types based on total volume and stock characteristics
-    # Higher volume stocks typically have more diverse institutional ownership
-    volume_factor = min(total_volume / 10000000, 1.0)  # Scale factor based on 10M volume
-    
-    institution_breakdown = {
-        "hedge_funds": round(0.25 + volume_factor * 0.15, 2),    # 25-40%
-        "mutual_funds": round(0.30 - volume_factor * 0.10, 2),  # 20-30%
-        "pension_funds": round(0.15 - volume_factor * 0.05, 2), # 10-15%
-        "etfs": round(0.20 + volume_factor * 0.05, 2),          # 20-25%
-        "other": 0.0
-    }
-    institution_breakdown["other"] = round(1.0 - sum(institution_breakdown.values()), 2)
-    
-    # Estimate dark pool activity based on institutional volume
-    # Higher institutional activity = higher dark pool usage
-    institutional_ratio = institutional_volume / total_volume if total_volume > 0 else 0.5
-    dark_pool_percentage = 0.15 + (institutional_ratio - 0.5) * 0.2  # 15-35% range
-    dark_pool_volume = int(total_volume * dark_pool_percentage)
-    dark_pool_ratio = dark_pool_volume / total_volume if total_volume > 0 else 0.25
-    
-    # Calculate price impact based on actual volume vs average
-    # Higher than normal volume = higher price impact
-    if total_volume > 0 and 'volume_ratio' in locals():
-        volume_impact = (volume_ratio - 1) * 0.01  # Scale volume ratio to price impact
-        price_impact = max(-0.03, min(0.03, volume_impact))  # -3% to +3%
-    else:
-        price_impact = 0.0
-    
-    # Efficiency based on spread and volume (estimated)
-    efficiency = max(0.75, min(0.95, 0.85 + (institutional_ratio - 0.5) * 0.2))
-    
+    # Removed from this response because none of it had a data source:
+    #
+    #   institution_breakdown  hedge fund / mutual fund / pension / ETF splits
+    #                          derived from a volume ratio. No 13F data was ever
+    #                          fetched. Real ownership comes from SEC filings.
+    #   dark_pool_analysis     0.15 + (institutional_ratio - 0.5) * 0.2. Off-exchange
+    #                          volume is not in any Yahoo feed. FINRA publishes the
+    #                          real figures on a delayed basis.
+    #   execution_quality      price impact, efficiency and slippage were clamp
+    #                          formulas. These require order-level fill data.
+    #
+    # The institutional/retail split below is still an estimate rather than a
+    # reported figure, so it is labelled as derived instead of being presented
+    # as a reading of the tape.
+    institutional_ratio = safe_ratio(institutional_volume, total_volume)
+
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
+        "available": True,
         "volume_analysis": {
             "total_volume": f"{total_volume:,}",
+            "total_volume_source": "yahoo:chart/volume",
             "institutional_volume": f"{institutional_volume:,}",
-            "retail_volume": f"{retail_volume:,}", 
-            "institutional_percentage": round(institutional_volume / total_volume * 100, 1)
+            "retail_volume": f"{retail_volume:,}",
+            "institutional_percentage": round(institutional_ratio * 100, 1) if institutional_ratio is not None else None,
+            "estimated": True,
+            "estimate_basis": "inferred from volume relative to its 10-bar average; not a reported institutional split"
         },
         "flow_direction": {
             "net_flow": f"{net_flow:+,}",
             "direction": flow_direction,
             "strength": flow_strength,
             "color": flow_color,
-            "emoji": flow_emoji
-        },
-        "institution_breakdown": institution_breakdown,
-        "dark_pool_analysis": {
-            "volume": f"{dark_pool_volume:,}",
-            "percentage": round(dark_pool_ratio * 100, 1),
-            "interpretation": "High" if dark_pool_ratio > 0.3 else "Normal" if dark_pool_ratio > 0.2 else "Low"
-        },
-        "execution_quality": {
-            "price_impact": f"{price_impact:+.2%}",
-            "execution_efficiency": f"{efficiency:.1%}",
-            "slippage": f"{max(0.001, min(0.01, 0.005 - efficiency * 0.004)):.3%}"  # Better efficiency = less slippage
+            "emoji": flow_emoji,
+            "estimated": True,
+            "estimate_basis": "inferred from price direction; not order flow"
         },
         "smart_money_signals": [
-            f"{flow_emoji} {flow_strength.title()} {flow_direction}",
-            f"🏛️ {institution_breakdown['hedge_funds']:.1%} Hedge Fund Flow",
-            f"📊 {dark_pool_ratio:.1%} Dark Pool Activity" 
+            f"{flow_emoji} {flow_strength.title()} {flow_direction} (estimated)",
+            f"📊 {total_volume:,} shares traded"
         ],
-        "summary": f"Institutions showing {flow_strength} {flow_direction} with {dark_pool_ratio:.1%} dark pool activity"
+        "summary": f"Estimated {flow_strength} {flow_direction} based on volume and price direction"
     }
 
 def get_economic_calendar_impact(symbol):
@@ -5197,7 +5276,11 @@ def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data
     from datetime import datetime, timedelta
     
     symbol = stock_data['Symbol']
-    current_price = float(stock_data.get('Current Price', 0)) if isinstance(stock_data.get('Current Price'), str) and stock_data.get('Current Price').replace('$', '').replace(',', '').replace('.', '').isdigit() else 0
+    # The previous guard required a str, but the only caller passes a float from
+    # yfinance, so this always resolved to 0. Passing a '$12.34' string instead
+    # raised ValueError, because the guard stripped '$' to test isdigit() but
+    # then called float() on the unstripped text. parse_money handles both.
+    current_price = parse_money(stock_data.get('Current Price')) or 0
     
     # Initialize scoring system (0-100)
     ai_score = 0
@@ -5234,32 +5317,32 @@ def calculate_ai_rebound_prediction(stock_data, options_data, institutional_data
         
     ai_score += (options_score * options_weight / 100)
     
-    # 2. INSTITUTIONAL FLOW ANALYSIS (30% weight) 
+    # 2. INSTITUTIONAL FLOW ANALYSIS (30% weight)
     institutional_weight = 30
-    if institutional_data['flow_direction']['direction'] == 'accumulation':
-        if institutional_data['flow_direction']['strength'] == 'strong':
+    institutional_flow = institutional_data.get('flow_direction') or {}
+    if institutional_flow.get('direction') == 'accumulation':
+        if institutional_flow.get('strength') == 'strong':
             institutional_score = 90
             confidence_factors.append("🟢 Strong Institutional Accumulation")
         else:
             institutional_score = 70
             confidence_factors.append("🟡 Moderate Institutional Accumulation")
-    elif institutional_data['flow_direction']['direction'] == 'distribution':
-        if institutional_data['flow_direction']['strength'] == 'strong':
+    elif institutional_flow.get('direction') == 'distribution':
+        if institutional_flow.get('strength') == 'strong':
             institutional_score = 10
             risk_factors.append("🔴 Strong Institutional Distribution")
         else:
             institutional_score = 30
             risk_factors.append("🟡 Moderate Institutional Distribution")
     else:
+        # Also the path when volume was unavailable entirely, in which case this
+        # contributes a neutral 50 rather than a score built on invented volume.
         institutional_score = 50
         confidence_factors.append("⚪ Balanced Institutional Flow")
-    
-    # Dark pool consideration
-    dark_pool_pct = institutional_data['dark_pool_analysis']['percentage']
-    if dark_pool_pct > 30:
-        institutional_score += 5
-        confidence_factors.append("📊 High Dark Pool Activity")
-        
+
+    # The dark pool adjustment that sat here was driven by a fabricated
+    # percentage, so it has been removed rather than re-weighted.
+
     ai_score += (institutional_score * institutional_weight / 100)
     
     # 3. ECONOMIC CALENDAR IMPACT (20% weight)
