@@ -94,6 +94,31 @@ Both are free. Nothing is required — an unconfigured source reports itself
 unavailable rather than being filled in with a guess, and `/health/sources`
 shows which are live.
 
+## ⚠️ The timeframe tabs are a heuristic, not a probability
+
+The Short / Medium / Long Term tabs come from `sophisticated_timeframe.py`,
+which is **not** the validated scoring model and has not been rebuilt.
+
+Its `_calculate_recovery_probability` starts from a hard-coded base of 70 and
+applies fixed integer adjustments:
+
+```python
+base_probability = 70              # assumed, not measured
+if upside_percent > 20:  base -= 15
+if volatility == 'extreme': base += 15
+base += momentum_score * 3
+return max(10, min(90, base))      # then * signal_multiplier, capped at 95
+```
+
+No component was fitted to historical outcomes. Displaying that as "X%
+probability" asserts a measurement nobody made, so it is now labelled
+**"setup score"** with a warning on each tab.
+
+The rebound score in the main table and the recommendations panel is a
+different system — that one is documented above and backtested below.
+
+**Rebuilding this module on the validated model is the main outstanding work.**
+
 ## 📉 Backtest: does the score actually work?
 
 A model that has never been compared against realised outcomes is an opinion

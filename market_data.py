@@ -205,6 +205,7 @@ def _info(symbol: str) -> dict:
             "target_low": info.get("targetLowPrice"),
             "analysts": info.get("numberOfAnalystOpinions"),
             "recommendation": info.get("recommendationKey"),
+            "name": info.get("longName") or info.get("shortName"),
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "short_pct_float": info.get("shortPercentOfFloat"),
@@ -292,6 +293,7 @@ def profile(symbol: str) -> Dict[str, Sourced]:
         held_sourced = field("held_pct_institutions")
 
     return {
+        "name": field("name"),
         "sector": field("sector"),
         "industry": field("industry"),
         "short_pct_float": field("short_pct_float"),
