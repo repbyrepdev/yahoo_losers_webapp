@@ -1,0 +1,41 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # The suite is offline by design, so CI needs no credentials and cannot
+        # be broken by a provider outage.
+        run: python -m pytest tests/ -q
+
+      - name: Check for reintroduced fabrication patterns
+        # A grep guard for the specific shapes that caused the original defects:
+        # a price target derived from the current price, and hardcoded volume
+        # fallbacks presented as real readings.
+        run: |
+          if grep -nE "current_price \* 1\.1|= 1000000  # 1M shares" app.py; then
+            echo "::error::A fabricated fallback pattern was reintroduced"
+            exit 1
+          fi
+          if grep -nE "^\s+except:\s*$" app.py; then
+            echo "::error::Bare except found; use a typed except that reports unavailable"
+            exit 1
+          fi

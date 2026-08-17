@@ -282,7 +282,10 @@ def get_memory_usage():
             'vms': memory_info.vms / 1024 / 1024,  # MB
             'percent': process.memory_percent()
         }
-    except:
+    except (psutil.Error, OSError) as e:
+        # Monitoring only. Zeroes here are a reading of the process, not of
+        # market data, so they cannot be mistaken for a financial figure.
+        logger.debug(f"Memory probe unavailable: {type(e).__name__}")
         return {'rss': 0, 'vms': 0, 'percent': 0}
 
 def cleanup_resources():
@@ -3489,9 +3492,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <!-- Disclaimer -->
                     <div style="background: rgba(255,193,7,0.1); border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 20px 0;">
                         <p style="margin: 0; font-size: 13px; color: #fff8dc; line-height: 1.5;">
-                            <strong>⚠️ Disclaimer:</strong> This analysis is for informational purposes only and should not be considered as financial advice. 
-                            Stock investments carry risk, and past performance does not guarantee future results. 
-                            Always consult with a qualified financial advisor before making investment decisions.
+                            <strong>⚠️ Disclaimer:</strong> This is a technical demonstration, not financial advice.
+                            The rebound score measures how closely a stock matches conditions that have historically
+                            preceded mean reversion. It is <strong>not a prediction of future returns</strong>.
+                            <br><br>
+                            <strong>What the evidence actually shows:</strong> a backtest over 9,126 point-in-time
+                            observations found the technical factors carry a <em>weak</em> positive signal
+                            (rank correlation +0.04 at a 20-day horizon), with roughly a 2.4 percentage point spread
+                            between the highest- and lowest-scoring buckets. The majority of the model's weight comes
+                            from analyst data that <strong>cannot be backtested</strong> with this data source and is
+                            therefore unvalidated. The backtest also excludes trading costs, and its universe carries
+                            survivorship bias.
+                            <br><br>
+                            Stock investments carry risk and past performance does not guarantee future results.
+                            Consult a qualified financial advisor before making investment decisions.
                         </p>
                     </div>
                     
@@ -3931,7 +3945,8 @@ def get_market_status():
                 "message": f"🟢 Markets Open",
                 "time_to_close": time_display
             }
-    except:
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        logger.warning(f"Market status unavailable: {type(e).__name__}: {e}")
         return {
             "status": "unknown",
             "message": "❓ Market Status Unknown", 
@@ -3995,7 +4010,8 @@ def get_comprehensive_market_analysis():
                 'recovery_impact': recovery_impact,
                 'interpretation': f"VIX at {current_vix:.1f} indicates {vix_regime.lower()} market conditions."
             }
-        except:
+        except Exception as e:
+            logger.warning(f"VIX analysis unavailable: {type(e).__name__}: {e}")
             analysis['vix_analysis'] = {
                 'current_vix': 'N/A',
                 'regime': 'Unknown',
@@ -4048,7 +4064,8 @@ def get_comprehensive_market_analysis():
                 }
             else:
                 raise Exception("Insufficient SPY data")
-        except:
+        except Exception as e:
+            logger.warning(f"SPY trend unavailable: {type(e).__name__}: {e}")
             analysis['market_trend'] = {
                 'trend': 'Unknown',
                 'description': 'Unable to analyze market trend',

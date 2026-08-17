@@ -71,6 +71,62 @@ Four rules make the number honest:
 Per-factor contributions and effective weights are returned by
 `/api/ai-analysis/<symbol>`, so any score can be recomputed by hand.
 
+## 📉 Backtest: does the score actually work?
+
+A model that has never been compared against realised outcomes is an opinion
+with arithmetic attached. `backtest.py` scores stocks at past dates using **only
+data available on that date**, then measures what actually happened.
+
+```bash
+python backtest.py --years 6 --step-days 10
+```
+
+**Result — 9,126 point-in-time observations, 65 symbols, 6 years:**
+
+| Score bucket | n | 5d excess | 20d excess | 60d excess | 20d win rate |
+| --- | --- | --- | --- | --- | --- |
+| 70+ (strong) | 761 | +0.57% | **+1.97%** | +0.71% | 62.3% |
+| 58–70 (constructive) | 1,427 | +0.08% | +0.41% | +1.04% | 57.3% |
+| 45–58 (neutral) | 1,877 | −0.09% | +0.06% | +0.81% | 54.0% |
+| <45 (weak) | 5,061 | −0.07% | **−0.43%** | −0.70% | 53.2% |
+
+Rank correlation between score and realised return: **+0.032 (5d), +0.043 (20d),
++0.024 (60d)**.
+
+### Reading this honestly
+
+**The signal is real but weak.** Bucket ordering is monotonic at 5- and 20-day
+horizons, and the top-versus-bottom spread is about 2.4 percentage points over
+20 days. A rank correlation of +0.04 is small — it is not nothing, and it is
+nowhere near a reliable predictor.
+
+**Signal decays past 20 days.** At 60 days the ordering breaks down. If this
+model is useful at all, it is over the short horizon it was designed for.
+
+**A shorter window told a different story.** At 3 years (2,015 observations) the
+top bucket had only 117 samples and *underperformed* the second bucket. That
+reversed with more data, which is exactly why the smaller sample should not be
+trusted — and a reminder of how easily a backtest can be talked into saying
+whatever you want.
+
+### What is NOT validated
+
+Only the **technical factors** (RSI, Bollinger %B, 20-day gap, relative volume)
+can be recomputed point-in-time from OHLCV. Analyst targets, rating spreads,
+options chains and short interest are available only as of *now* — there is no
+historical snapshot, and using today's values at a past date is look-ahead bias,
+which reliably manufactures results that evaporate in live use.
+
+Those excluded factors carry **68% of the model's nominal weight**. The headline
+result covers the other 32%. The full model is unvalidated.
+
+Also excluded: transaction costs, slippage, borrow costs and dividends. The
+universe is chosen today, so delisted companies are absent and the sample skews
+toward survivors.
+
+**A backtest describes the past. It is not evidence of future performance, and
+this application is not investment advice.**
+
 ## ⚡ Caching
 
 Lifetimes follow how fast each field actually moves, which is what keeps this
