@@ -407,7 +407,7 @@ def generate_etag(data):
         content = str(data)
     return hashlib.md5(content.encode()).hexdigest()
 
-def add_cache_headers(response, max_age=3600):
+def add_cache_headers(response, max_age=60):
     """Add cache control headers to response"""
     response.headers['Cache-Control'] = f'public, max-age={max_age}'
     response.headers['Vary'] = 'Accept-Encoding'
@@ -1199,6 +1199,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // Render a measured probability with the evidence behind it. When the
         // measurement could not be made, show an em dash and the reason --
         // never a number.
+
+        // All API reads bypass the browser HTTP cache. The payload shapes
+        // evolve, and a cached hour-old response made every backend fix
+        // invisible -- the page kept replaying the old data. Server-side
+        // caching keeps these requests cheap.
+        function fetch2(url, opts) { return fetch(url, Object.assign({cache: 'no-store'}, opts || {})); }
+
         function probabilityBadge(target) {
             if (!target || target.probability_available !== true) {
                 const why = (target && target.probability_reason) || 'not measured';
@@ -1389,7 +1396,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch AI analysis powered by REAL Yahoo Finance analyst recommendation data
             // Data Source: Yahoo Finance API - recommendation trends, earnings history, analyst downgrades
-            fetch('/api/news-analysis/' + symbol)
+            fetch2('/api/news-analysis/' + symbol)
                 .then(response => response.json())
                 .then(data => {
                     analysisCache[symbol] = data.analysis;
@@ -1526,7 +1533,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch SOPHISTICATED recovery prediction using REAL multi-target analysis
             // Data Sources: Yahoo Finance (prices, volumes, analyst targets), yfinance (technical indicators)
-            fetch('/api/recovery-prediction/' + symbol)
+            fetch2('/api/recovery-prediction/' + symbol)
                 .then(response => response.json())
                 .then(data => {
                     const recoveryData = data.prediction;
@@ -1670,7 +1677,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             
             // Fetch REAL social sentiment from Reddit API and StockTwits API
             // Data Sources: Reddit search API, StockTwits streaming API, real mention counts and sentiment
-            fetch('/api/social-sentiment/' + symbol)
+            fetch2('/api/social-sentiment/' + symbol)
                 .then(response => response.json())
                 .then(data => {
                     sentimentCache[symbol] = data.sentiment;
@@ -1803,9 +1810,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Fetch REAL social sentiment and sophisticated recovery analysis in parallel
             // Data Sources: Reddit API + StockTwits API + Yahoo Finance sophisticated multi-target analysis
             Promise.all([
-                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
+                fetch2('/api/social-sentiment/' + symbol).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
+            fetch2('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
             ]).then(([sentimentData, recoveryData]) => {
                 // Cache the results
                 sentimentCache[symbol] = sentimentData.sentiment;
@@ -1956,10 +1963,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             // Fetch ALL THREE REAL analysis types in parallel for comprehensive stock analysis
             // Data Sources: Yahoo Finance analyst data + Reddit/StockTwits APIs + Sophisticated multi-target recovery
             Promise.all([
-                fetch('/api/news-analysis/' + symbol).then(response => response.json()),
-                fetch('/api/social-sentiment/' + symbol).then(response => response.json()),
+                fetch2('/api/news-analysis/' + symbol).then(response => response.json()),
+                fetch2('/api/social-sentiment/' + symbol).then(response => response.json()),
                 // FORCE BROWSER RELOAD - VERSION 2.1 - CACHE_BUSTER_20250906
-            fetch('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
+            fetch2('/api/sophisticated-timeframe/' + symbol).then(response => response.json())
             ]).then(([aiData, sentimentData, recoveryData]) => {
                 // Cache all results
                 analysisCache[symbol] = aiData.analysis;
@@ -2274,7 +2281,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 </div>
             `;
             
-            fetch('/api/sophisticated-timeframe/' + symbol)
+            fetch2('/api/sophisticated-timeframe/' + symbol)
                 .then(response => response.json())
                 .then(data => {
                     const recovery = data;
@@ -2633,7 +2640,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 dataPromise = Promise.resolve(recovery.sophisticated_analysis);
             } else {
                 // Fetch the data
-                dataPromise = fetch('/api/sophisticated-timeframe/' + symbol)
+                dataPromise = fetch2('/api/sophisticated-timeframe/' + symbol)
                     .then(response => response.json())
                     .then(data => data.sophisticated_analysis);
             }
@@ -2965,7 +2972,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 dataPromise = Promise.resolve(recovery.sophisticated_analysis);
             } else {
                 // Fetch the data
-                dataPromise = fetch('/api/sophisticated-timeframe/' + symbol)
+                dataPromise = fetch2('/api/sophisticated-timeframe/' + symbol)
                     .then(response => response.json())
                     .then(data => data.sophisticated_analysis);
             }
@@ -3611,7 +3618,7 @@ def index():
             
             response = make_response(render_template_string(html_template, **cached_results))
             response.headers['ETag'] = etag
-            return add_cache_headers(response, max_age=1800)  # 30 min cache
+            return add_cache_headers(response, max_age=60)
         
         # No valid cache, perform fresh analysis
         logger.info("No valid cache, performing fresh analysis...")
@@ -3673,7 +3680,7 @@ def index():
             
         response = make_response(render_template_string(html_template, **template_vars))
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=900)  # 15 min cache for fresh data
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error(f"Error in main analysis: {str(e)}")
@@ -4302,7 +4309,7 @@ def get_recovery_prediction(symbol):
         response = make_response(json.dumps(api_response))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=1800)  # 30 min cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error(f"Error predicting recovery for {symbol}: {str(e)}")
@@ -4454,7 +4461,7 @@ def get_sophisticated_timeframe(symbol):
         response = make_response(json.dumps(api_response, indent=2, default=json_serializer))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=1800)  # 30 min cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error(f"Sophisticated timeframe API error for {symbol}: {str(e)}")
@@ -5561,7 +5568,7 @@ def get_options_flow(symbol):
         response = make_response(jsonify(options_data))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=300)  # 5 min cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error("Failed to get options flow", symbol=symbol, error=str(e))
@@ -5584,7 +5591,7 @@ def get_institutional_flow(symbol):
         response = make_response(jsonify(institutional_data))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=600)  # 10 min cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error("Failed to get institutional flow", symbol=symbol, error=str(e))
@@ -5607,7 +5614,7 @@ def get_economic_calendar(symbol):
         response = make_response(jsonify(calendar_data))
         response.headers['Content-Type'] = 'application/json' 
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=3600)  # 1 hour cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error("Failed to get economic calendar", symbol=symbol, error=str(e))
@@ -5659,7 +5666,7 @@ def get_professional_analysis(symbol):
         response = make_response(jsonify(professional_analysis))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=300)  # 5 min cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error("Failed to get professional analysis", symbol=symbol, error=str(e))
@@ -5686,7 +5693,7 @@ def get_ai_stock_analysis(symbol):
         response = make_response(jsonify(ai_prediction))
         response.headers['Content-Type'] = 'application/json'
         response.headers['ETag'] = etag
-        return add_cache_headers(response, max_age=300)  # 5 min cache
+        return add_cache_headers(response, max_age=60)
         
     except Exception as e:
         logger.error("Failed to get AI analysis", symbol=symbol, error=str(e))
