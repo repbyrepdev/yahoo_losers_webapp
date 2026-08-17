@@ -589,3 +589,42 @@ class TestOhlcvRoundTrip:
                                                  "open": [1], "high": [1], "low": [1],
                                                  "close": [1], "volume": [1]}, 600)
         assert market_data.ohlcv_frame("BADX") is None
+
+
+class TestTableSummaries:
+    """The table's summary columns come from cache and sort by conviction."""
+
+    def test_rows_sort_scored_first_then_by_score(self, monkeypatch):
+        import app
+        monkeypatch.setattr(app, "calculate_all_investment_analysis",
+                            lambda l, d: [
+                                {'Symbol': 'LOW', 'Name': 'x', 'Current Price': 5.0,
+                                 'Change Today': '-1', 'Percent Change Today': '-1%'},
+                                {'Symbol': 'NONE', 'Name': 'x', 'Current Price': 5.0,
+                                 'Change Today': '-1', 'Percent Change Today': '-1%'},
+                                {'Symbol': 'HIGH', 'Name': 'x', 'Current Price': 5.0,
+                                 'Change Today': '-1', 'Percent Change Today': '-1%'},
+                            ])
+        def fake_score(symbol, price=None, full=False):
+            return {'LOW': {'scored': True, 'score': 41.0, 'recommendation': 'x',
+                            'recommendation_color': '', 'confidence': 'Low',
+                            'coverage': 0.5, 'factors_used': 3, 'factors_total': 6},
+                    'NONE': {'scored': False, 'reason': 'thin', 'coverage': 0.2,
+                             'recommendation': 'Insufficient data',
+                             'recommendation_color': ''},
+                    'HIGH': {'scored': True, 'score': 88.0, 'recommendation': 'x',
+                             'recommendation_color': '', 'confidence': 'High',
+                             'coverage': 1.0, 'factors_used': 6, 'factors_total': 6}}[symbol]
+        monkeypatch.setattr(app, "score_stock", fake_score)
+        out = app.calculate_enhanced_investment_analysis([], [])
+        assert [r['Symbol'] for r in out] == ['HIGH', 'LOW', 'NONE']
+        for row in out:
+            for key in ('P Short', 'P Medium', 'P Long'):
+                assert 'display' in row[key] and 'sort' in row[key]
+
+    def test_horizon_summary_unavailable_without_cached_history(self):
+        import app
+        out = app._horizon_summaries("NOCACHEXYZ", target_price=10.0)
+        for band in out.values():
+            assert band['display'] == '—'
+            assert band['sort'] == -1.0

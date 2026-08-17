@@ -1204,6 +1204,31 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         // evolve, and a cached hour-old response made every backend fix
         // invisible -- the page kept replaying the old data. Server-side
         // caching keeps these requests cheap.
+
+        // Client-side column sort for the loser tables. Numeric cells carry
+        // their sortable value in data-val so display strings stay free-form.
+        function sortLoserTable(th, col, kind) {
+            const table = th.closest('table');
+            const body = table.querySelector('tbody');
+            const dir = th.dataset.dir === 'desc' ? 'asc' : 'desc';
+            table.querySelectorAll('th').forEach(h => delete h.dataset.dir);
+            th.dataset.dir = dir;
+            const rows = [...body.querySelectorAll('tr')];
+            rows.sort((a, b) => {
+                const ca = a.cells[col], cb = b.cells[col];
+                let va, vb;
+                if (kind === 'num') {
+                    va = parseFloat(ca?.dataset.val ?? ca?.innerText) || -Infinity;
+                    vb = parseFloat(cb?.dataset.val ?? cb?.innerText) || -Infinity;
+                } else {
+                    va = (ca?.innerText || '').trim(); vb = (cb?.innerText || '').trim();
+                    return dir === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
+                }
+                return dir === 'desc' ? vb - va : va - vb;
+            });
+            rows.forEach(r => body.appendChild(r));
+        }
+
         function fetch2(url, opts) { return fetch(url, Object.assign({cache: 'no-store'}, opts || {})); }
 
         function probabilityBadge(target) {
@@ -3386,12 +3411,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <table>
                         <thead>
                             <tr>
-                                <th>Symbol</th>
-                                <th>AI Technical Sentiment</th>
-                                <th>Current Price</th>
-                                <th>Today's Change</th>
-                                <th>Today's Change %</th>
-                                <th>Volume</th>
+                                <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
+                                <th onclick="sortLoserTable(this, 1, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
+                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside. Click to sort.">Upside</th>
+                                <th onclick="sortLoserTable(this, 3, 'num')" title="Measured frequency of reaching yesterday's close within 7 trading days, over this stock's own history. Click to sort.">P(prev close, 7d)</th>
+                                <th onclick="sortLoserTable(this, 4, 'num')" title="Measured frequency of reaching the 20-day mean within 21 trading days. Click to sort.">P(20d MA, 21d)</th>
+                                <th onclick="sortLoserTable(this, 5, 'num')" title="Measured frequency of reaching the analyst consensus within ~6 months. Click to sort.">P(target, 6mo)</th>
+                                <th onclick="sortLoserTable(this, 6, 'num')">Current Price</th>
+                                <th onclick="sortLoserTable(this, 7, 'num')">Today's %</th>
                                 <th>Analysis</th>
                             </tr>
                         </thead>
@@ -3401,11 +3428,23 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
-                                <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
-                                <td>${{ "%.2f"|format(stock['Current Price']) }}</td>
-                                <td class="negative">{{ stock['Change Today'] }}</td>
-                                <td class="negative">{{ stock['Percent Change Today'] }}</td>
-                                <td>{{ stock.Volume }}</td>
+                                <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
+                                    {% if stock.get('Rebound Score') is not none %}
+                                        <strong>{{ stock.get('Rebound Score') }}</strong><span style="color: var(--text-secondary); font-size: 11px;"> /100 · {{ stock.get('Confidence','') }} conf · {{ stock.get('Factors Used', '?') }}/{{ stock.get('Factors Total', 6) }} inputs</span>
+                                        <div style="font-size: 11px; color: var(--text-secondary);">{{ stock.get('AI Sentiment', '') }}</div>
+                                    {% else %}
+                                        <span title="{{ stock.get('Score Reason', 'insufficient data') }}">&#8212;</span>
+                                        <div style="font-size: 11px; color: var(--text-secondary);">{{ stock.get('AI Sentiment', '') }}</div>
+                                    {% endif %}
+                                </td>
+                                <td data-val="{{ stock['Potential Return %'] if stock['Potential Return %'] != '\u2014' else -999 }}">
+                                    {% if stock['Potential Return %'] != '\u2014' %}+{{ stock['Potential Return %'] }}%<div style="font-size: 10px; color: var(--text-secondary);">{{ stock.get('Analyst Count') or '?' }} analysts</div>{% else %}&#8212;{% endif %}
+                                </td>
+                                <td data-val="{{ stock['P Short']['sort'] }}" title="{{ stock['P Short'].get('detail','') }}">{{ stock['P Short']['display'] }}</td>
+                                <td data-val="{{ stock['P Medium']['sort'] }}" title="{{ stock['P Medium'].get('detail','') }}">{{ stock['P Medium']['display'] }}</td>
+                                <td data-val="{{ stock['P Long']['sort'] }}" title="{{ stock['P Long'].get('detail','') }}">{{ stock['P Long']['display'] }}</td>
+                                <td data-val="{{ stock['Current Price'] }}">${{ "%.2f"|format(stock['Current Price']) }}</td>
+                                <td class="negative" data-val="{{ stock['Percent Change Today']|replace('%','') }}">{{ stock['Percent Change Today'] }}</td>
                                 <td>
                                     <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}', '{{ stock.Name }}')" 
                                             style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">
@@ -3464,12 +3503,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <table>
                         <thead>
                             <tr>
-                                <th>Symbol</th>
-                                <th>AI Technical Sentiment</th>
-                                <th>Current Price</th>
-                                <th>Today's Change</th>
-                                <th>Today's Change %</th>
-                                <th>Volume</th>
+                                <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
+                                <th onclick="sortLoserTable(this, 1, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
+                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside. Click to sort.">Upside</th>
+                                <th onclick="sortLoserTable(this, 3, 'num')" title="Measured frequency of reaching yesterday's close within 7 trading days, over this stock's own history. Click to sort.">P(prev close, 7d)</th>
+                                <th onclick="sortLoserTable(this, 4, 'num')" title="Measured frequency of reaching the 20-day mean within 21 trading days. Click to sort.">P(20d MA, 21d)</th>
+                                <th onclick="sortLoserTable(this, 5, 'num')" title="Measured frequency of reaching the analyst consensus within ~6 months. Click to sort.">P(target, 6mo)</th>
+                                <th onclick="sortLoserTable(this, 6, 'num')">Current Price</th>
+                                <th onclick="sortLoserTable(this, 7, 'num')">Today's %</th>
                                 <th>Analysis</th>
                             </tr>
                         </thead>
@@ -3479,17 +3520,25 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                 </td>
-                                <td>{{ stock.get('AI Sentiment', '🤖 Analyzing...') }}</td>
-                                <td>
-                                    {% if stock['Current Price'] == 'N/A' %}
-                                        {{ stock['Current Price'] }}
+                                <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
+                                    {% if stock.get('Rebound Score') is not none %}
+                                        <strong>{{ stock.get('Rebound Score') }}</strong><span style="color: var(--text-secondary); font-size: 11px;"> /100 · {{ stock.get('Confidence','') }} conf · {{ stock.get('Factors Used', '?') }}/{{ stock.get('Factors Total', 6) }} inputs</span>
+                                        <div style="font-size: 11px; color: var(--text-secondary);">{{ stock.get('AI Sentiment', '') }}</div>
                                     {% else %}
-                                        ${{ "%.2f"|format(stock['Current Price']) }}
+                                        <span title="{{ stock.get('Score Reason', 'insufficient data') }}">&#8212;</span>
+                                        <div style="font-size: 11px; color: var(--text-secondary);">{{ stock.get('AI Sentiment', '') }}</div>
                                     {% endif %}
                                 </td>
-                                <td class="negative">{{ stock['Change Today'] }}</td>
-                                <td class="negative">{{ stock['Percent Change Today'] }}</td>
-                                <td>{{ stock.Volume }}</td>
+                                <td data-val="{{ stock['Potential Return %'] if stock['Potential Return %'] != '\u2014' else -999 }}">
+                                    {% if stock['Potential Return %'] != '\u2014' %}+{{ stock['Potential Return %'] }}%<div style="font-size: 10px; color: var(--text-secondary);">{{ stock.get('Analyst Count') or '?' }} analysts</div>{% else %}&#8212;{% endif %}
+                                </td>
+                                <td data-val="{{ stock['P Short']['sort'] }}" title="{{ stock['P Short'].get('detail','') }}">{{ stock['P Short']['display'] }}</td>
+                                <td data-val="{{ stock['P Medium']['sort'] }}" title="{{ stock['P Medium'].get('detail','') }}">{{ stock['P Medium']['display'] }}</td>
+                                <td data-val="{{ stock['P Long']['sort'] }}" title="{{ stock['P Long'].get('detail','') }}">{{ stock['P Long']['display'] }}</td>
+                                <td data-val="{{ stock['Current Price'] if stock['Current Price'] not in ('N/A', '\u2014') else -1 }}">
+                                    {% if stock['Current Price'] in ('N/A', '\u2014') %}&#8212;{% else %}${{ "%.2f"|format(stock['Current Price']) }}{% endif %}
+                                </td>
+                                <td class="negative" data-val="{{ stock['Percent Change Today']|replace('%','') }}">{{ stock['Percent Change Today'] }}</td>
                                 <td>
                                     <button class="ai-button" onclick="showUltimateAnalysis('{{ stock.Symbol }}', '{{ stock.Name }}')" style="background: linear-gradient(45deg, #007bff, #28a745, #fd7e14); color: white; font-weight: bold; font-size: 11px; padding: 4px 8px;">🤖📱🔮 Analysis</button>
                                 </td>
@@ -4224,7 +4273,7 @@ def export_csv():
         output = io.StringIO()
         
         # Write header
-        output.write("Symbol,Company Name,AI Technical Sentiment,Current Price,Target Price,Potential Return %,Target Source,Change Today,Percent Change Today,Volume,Market Cap\n")
+        output.write("Symbol,Company Name,Rebound Score,Confidence,AI Technical Sentiment,Current Price,Target Price,Potential Return %,P Prev Close 7d,P MA20 21d,P Target 6mo,Target Source,Change Today,Percent Change Today,Volume,Market Cap\n")
         
         # Write data rows.
         #
@@ -4243,10 +4292,15 @@ def export_csv():
             row = [
                 cell(analysis, 'Symbol'),
                 cell(analysis, 'Name'),
+                cell(analysis, 'Rebound Score'),
+                cell(analysis, 'Confidence'),
                 cell(analysis, 'AI Sentiment'),
                 cell(analysis, 'Current Price', '$'),
                 cell(analysis, 'Target Price', '$'),
                 cell(analysis, 'Potential Return %', '%'),
+                str((analysis.get('P Short') or {}).get('display', '')).replace(',', ';'),
+                str((analysis.get('P Medium') or {}).get('display', '')).replace(',', ';'),
+                str((analysis.get('P Long') or {}).get('display', '')).replace(',', ';'),
                 cell(analysis, 'Target Source'),
                 cell(analysis, 'Change Today', '$'),
                 cell(analysis, 'Percent Change Today', '%'),
@@ -5335,6 +5389,51 @@ def sentiment_for_score(score):
     return '🔴 Weak Setup'
 
 
+
+def _horizon_summaries(symbol, target_price=None):
+    """Per-row recovery odds for the table, from cached data only.
+
+    Three concrete, checkable questions, one per horizon: how often has this
+    stock reached yesterday's close within 7 trading days, its 20-day mean
+    within 21, and the analyst consensus within 126. Each cell carries the
+    measured frequency with its sample size, or an em dash when the input is
+    genuinely absent. No fetches happen here -- closes, the moving average and
+    the target all come from the caches the background warmer maintains.
+    """
+    empty = {"display": UNAVAILABLE_DISPLAY, "sort": -1.0}
+    out = {"short": dict(empty), "medium": dict(empty), "long": dict(empty)}
+
+    history = market_data.price_history(symbol, allow_fetch=False)
+    if not history.ok or len(history.value) < 2:
+        return out
+    closes = np.array(history.value, dtype=float)
+    price = closes[-1]
+    if not price:
+        return out
+
+    tech = market_data.technicals(symbol, allow_fetch=False)
+    ma20 = (tech.value or {}).get("ma20") if tech.ok else None
+
+    def measure(key, level, horizon_key):
+        if not level or level <= price:
+            return
+        upside = (level / price - 1.0) * 100.0
+        sourced = timeframes.target_probability(closes, upside, horizon_key)
+        if sourced.ok:
+            v = sourced.value
+            pct = v["probability"] * 100
+            out[key] = {
+                "display": f"{pct:.0f}%",
+                "detail": f"{v['hits']}/{v['windows']} windows, +{upside:.1f}% needed",
+                "sort": round(pct, 1),
+            }
+
+    measure("short", closes[-2], "short")
+    measure("medium", ma20, "medium")
+    measure("long", target_price, "long")
+    return out
+
+
 def calculate_enhanced_investment_analysis(losers_data, details_data):
     """Attach a rebound score and sentiment label to every stock.
 
@@ -5394,8 +5493,26 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
             enhanced['Coverage'] = result.get('coverage') if result else 0
             enhanced['Score Reason'] = result.get('reason') if result else 'scoring failed'
 
+        try:
+            horizons = _horizon_summaries(symbol, parse_money(enhanced.get('Target Price')))
+        except Exception as e:
+            logger.warning(f"Horizon summary failed for {symbol}: {type(e).__name__}: {e}")
+            horizons = {k: {"display": UNAVAILABLE_DISPLAY, "sort": -1.0}
+                        for k in ("short", "medium", "long")}
+        enhanced['P Short'] = horizons['short']
+        enhanced['P Medium'] = horizons['medium']
+        enhanced['P Long'] = horizons['long']
+
         enhanced_analysis.append(enhanced)
 
+    # Highest conviction first: scored stocks above unscored, then by the
+    # backtested rebound score, coverage as the tiebreak. This is the "value
+    # prop" ordering the table renders with; column headers re-sort client-side.
+    enhanced_analysis.sort(
+        key=lambda e: (e.get('Rebound Score') is not None,
+                       e.get('Rebound Score') or -1,
+                       e.get('Coverage') or 0),
+        reverse=True)
     return enhanced_analysis
 
 def score_stock(symbol, current_price=None, full=False):
