@@ -3822,10 +3822,14 @@ def metrics():
 def refresh_cache():
     """Manual cache refresh endpoint"""
     try:
-        # Clear every layer, not just the rendered page. Leaving the provider
-        # cache in place meant a refresh redisplayed the same failures -- a
-        # rate-limit entry in particular is held for 15 minutes by design.
-        cleared = market_data.clear_cache()
+        # Clear the rendered page. The provider cache is deliberately kept:
+        # rebuilding it costs dozens of throttled upstream requests and takes
+        # minutes, so wiping it here meant the very next render found nothing
+        # and cached an empty page for another full period. Pass ?deep=1 to
+        # clear it as well, which is only wanted when the cached data itself is
+        # suspect.
+        deep = request.args.get('deep') in ('1', 'true', 'yes')
+        cleared = market_data.clear_cache() if deep else 0
         if USE_REDIS and redis_client is not None:
             try:
                 redis_client.delete('yahoo_losers_cache')
