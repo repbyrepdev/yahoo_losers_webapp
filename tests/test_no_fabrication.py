@@ -508,3 +508,53 @@ class TestRecentIPOs:
         assert out["t"]["probability_available"] is False
         assert "probability" not in out["t"]
         assert "confidence" not in out["t"]
+
+
+class TestInlineJavaScriptScope:
+    """Identifiers used in the page's JS must be defined where they're used.
+
+    Two shipped crashes motivate this: probabilityBadge(target) inside loops
+    whose variable was named prediction, and ${targetsBreakdown} inside
+    functions that only defined mediumTargetsBreakdown. Each killed an entire
+    tab render inside its catch handler, so the page showed a blank tab with
+    no console error.
+    """
+
+    def _functions(self):
+        import re
+        import app as app_module
+        import inspect
+        src = inspect.getsource(app_module)
+        # Split the inline script into function bodies by declaration.
+        spans = [(m.start(), m.group(1)) for m in
+                 re.finditer(r'function\s+(\w+)\s*\(', src)]
+        out = {}
+        for i, (start, name) in enumerate(spans):
+            end = spans[i + 1][0] if i + 1 < len(spans) else len(src)
+            out[name] = src[start:end]
+        return out
+
+    def test_template_identifiers_resolve(self):
+        import re
+        functions = self._functions()
+        top_level = set(functions)  # function declarations are global
+        # Identifiers this codebase introduced and renders via ${...}.
+        watched = {"targetsBreakdown", "mediumTargetsBreakdown",
+                   "longTermTargetsBreakdown", "heuristicNote",
+                   "shortTermFinalScoreSummary", "mediumFinalScoreSummary",
+                   "longTermFinalScoreSummary", "probabilityBadge",
+                   "socialDisplay"}
+        failures = []
+        for fn_name, body in functions.items():
+            declared = set(re.findall(r'(?:const|let|var)\s+(\w+)', body))
+            declared |= set(re.findall(r'forEach\(\(\[?\s*(\w+)(?:,\s*(\w+))?\]?',
+                                       body) and
+                            [x for pair in re.findall(
+                                r'forEach\(\(\[?\s*(\w+)(?:,\s*(\w+))?\]?', body)
+                             for x in pair if x])
+            used = set(re.findall(r'\$\{(\w+)[\.\(\}]', body))
+            used |= set(re.findall(r'\$\{(\w+)\s', body))
+            for ident in used & watched:
+                if ident not in declared and ident not in top_level:
+                    failures.append(f"{ident} used in {fn_name} but not defined there")
+        assert failures == [], failures
