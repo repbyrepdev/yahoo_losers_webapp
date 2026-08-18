@@ -1407,18 +1407,20 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         function probabilityBadge(target) {
             if (!target || target.probability_available !== true) {
                 const why = (target && target.probability_reason) || 'not measured';
-                return `<span style="color:#e9ecef; font-weight:600;">\u2014</span>
-                        <span style="color:#ced4da; font-size:11px;"> (${why})</span>`;
+                return `<span style="color:#e9ecef; font-weight:600;" title="${why}">\u2014</span>`;
             }
-            const pct = Number(target.probability).toFixed(1);
+            const pct = Number(target.probability).toFixed(0);
             const tone = target.probability >= 50 ? '#7bed9f'
                        : target.probability >= 25 ? '#ffd97d' : '#ff9f9f';
-            const ev = (target.expected_value !== undefined && target.expected_value !== null)
-                ? ` <span style="color:${target.expected_value >= 0 ? '#7bed9f' : '#ff9f9f'}; font-size:11px;" title="Expected value of buy-now, take-profit-at-target-or-exit-at-horizon: P(hit) x gain + P(miss) x median miss outcome (${target.miss_median_return}%), all measured from this stock's history">EV ${target.expected_value >= 0 ? '+' : ''}${Number(target.expected_value).toFixed(1)}%</span>` : '';
-            const ci = (target.ci_low !== undefined && target.ci_high !== undefined)
-                ? ` <span style="color:#dee2e6; font-size:11px;">(&plusmn; CI ${Number(target.ci_low).toFixed(0)}\u2013${Number(target.ci_high).toFixed(0)}%)</span>` : '';
-            return `<span style="color:${tone}; font-weight:700;">${pct}%</span>${ev}${ci}
-                    <span style="color:#e9ecef; font-size:11px;"> ${target.evidence || ''}</span>`;
+            const ciText = (target.ci_low !== undefined && target.ci_low !== null)
+                ? `95% confidence interval ${Number(target.ci_low).toFixed(0)}\u2013${Number(target.ci_high).toFixed(0)}%. ` : '';
+            const tip = `${target.evidence || ''}. ${ciText}Odds = how often this stock reached this gain within the window, over its own history.`;
+            let evLine = '';
+            if (target.expected_value !== undefined && target.expected_value !== null) {
+                const evTone = target.expected_value >= 0 ? '#7bed9f' : '#ff9f9f';
+                evLine = `<div style="font-size:11px; color:${evTone};" title="Expected gain if bought now and sold at the target or at the horizon end: odds x gain + miss-odds x median miss outcome (${target.miss_median_return}%). All measured, no assumptions.">EV ${target.expected_value >= 0 ? '+' : ''}${Number(target.expected_value).toFixed(1)}%</div>`;
+            }
+            return `<div style="text-align:right; display:inline-block;" title="${tip}"><div style="color:${tone}; font-weight:800; font-size:17px; line-height:1.1;">${pct}% <span style="font-size:10px; font-weight:600; color:#e9ecef;">odds</span></div>${evLine}</div>`;
         }
 
         function socialDisplay(sentiment) {
@@ -2338,12 +2340,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </div>
                         </div>
                         
-                        <!-- Mathematical Breakdown Section for Short Term -->
-                        <div id="recovery-breakdown" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2); display: none;">
-                            <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
-                            <div id="recovery-breakdown-content" style="font-size: 14px; line-height: 1.6; color: #ffffff;">
-                                <!-- Content will be populated by JavaScript -->
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -2358,12 +2354,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </div>
                         </div>
                         
-                        <!-- Mathematical Breakdown Section for Medium Term -->
-                        <div id="mediumterm-breakdown" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2); display: none;">
-                            <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
-                            <div id="mediumterm-breakdown-content" style="font-size: 14px; line-height: 1.6; color: #ffffff;">
-                                <!-- Content will be populated by JavaScript -->
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -2378,12 +2368,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </div>
                         </div>
                         
-                        <!-- Mathematical Breakdown Section for Long Term -->
-                        <div id="longterm-breakdown" style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; margin: 15px 0; color: white; border: 1px solid rgba(255,255,255,0.2); display: none;">
-                            <h5 style="margin: 0 0 15px 0; text-align: center; color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">🧮 Mathematical Breakdown</h5>
-                            <div id="longterm-breakdown-content" style="font-size: 14px; line-height: 1.6; color: #ffffff;">
-                                <!-- Content will be populated by JavaScript -->
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -2511,7 +2495,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     // Calculate overall score from short-term targets (consistent with medium/long-term)
                     const avgProbability = targets.length > 0 ? targets.reduce((sum, t) => sum + (t.probability || 0), 0) / targets.length : 0;
-                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. EV is P(hit) &times; gain + P(miss) &times; the median outcome of the windows that missed. Past frequency is not a forecast.</div>`;
+                    const heuristicNote = `<div style="font-size: 12px; color: #f8f9fa; margin: 10px 0; opacity: 0.9;" title="Odds: the share of historical windows in which this stock actually reached the target within the horizon, from its own price history. EV: expected gain if bought now and sold at target or horizon end, with the misses priced in at their median outcome. Past frequency is not a forecast.">\u2139\ufe0f <strong>Odds</strong> = how often this gain actually happened before \u00b7 <strong>EV</strong> = expected gain with the misses priced in \u00b7 hover anything for the evidence</div>`;
                     
                     // Calculate final score with signal multipliers for header (matching medium/long-term pattern)
                     const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
@@ -2545,10 +2529,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     const shortTermFinalScoreSummary = (function(list){
                         const measured = list.filter(t => t && t.probability_available === true);
-                        if (!measured.length) return { text: '\u2014', sub: 'no measurable targets' };
+                        if (!measured.length) return { text: '\u2014', sub: 'not enough trading history to measure' };
                         const best = measured.reduce((a, b) => (b.probability > a.probability ? b : a));
                         return { text: Number(best.probability).toFixed(0) + '%',
-                                 sub: 'best measured target (' + measured.length + ' measured)' };
+                                 sub: 'best target odds \u00b7 ' + measured.length + ' targets measured' };
                     })(Object.values(targets || {}));
                     
                     // Header with confidence levels matching other sections
@@ -2585,13 +2569,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             
                             shortTermTargets += `
                                 <div style="background: rgba(0,0,0,0.30); border-radius: 8px; padding: 15px; border-left: 4px solid ${confidenceColor}; box-shadow: 0 1px 3px rgba(0,0,0,0.25);">
-                                    <div style="display: flex; justify-content: between; align-items: center; margin-bottom: 8px;">
-                                        <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
+                                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px;">
+                                        <div style="font-size: 16px; font-weight: 700; color: #ffffff; line-height: 1.3;">
                                             ${target.description || targetName}
+                                            <div style="font-size: 11px; font-weight: 400; color: #f1f3f5; margin-top: 2px;">${target.evidence || ''}</div>
                                         </div>
-                                        <div style="font-size: 13px; text-align: right;">
-                                            ${probabilityBadge(target)}
-                                        </div>
+                                        ${probabilityBadge(target)}
                                     </div>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                         <div>
@@ -2616,181 +2599,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         recoveryData.innerHTML += '</div>';
                     }
                     
-                    // Add mathematical breakdown
-                    const breakdownElement = document.getElementById('recovery-breakdown');
-                    const breakdownContent = document.getElementById('recovery-breakdown-content');
-                    if (breakdownElement && breakdownContent && Object.keys(shortTermData).length > 0) {
-                        
-                        // Check for enhanced signals
-                        const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
-                        let signalsDisplay = '';
-                        
-                        // Volume Surge Signal
-                        if (enhancedSignals.volume_surge?.surge_detected) {
-                            const volumeData = enhancedSignals.volume_surge;
-                            signalsDisplay += `
-                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(0,255,0,0.1); border-radius: 4px; border-left: 3px solid #28a745;">
-                                    <strong style="color: #28a745;">📈 Volume Surge:</strong> ${volumeData.volume_ratio}x average
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(volume surge raises this score by ${Math.round((volumeData.surge_multiplier - 1) * 100)}%)</span>
-                                </div>`;
-                        }
-                        
-                        // RSI Oversold Signal
-                        if (enhancedSignals.rsi_reversion?.oversold) {
-                            const rsiData = enhancedSignals.rsi_reversion;
-                            signalsDisplay += `
-                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(255,193,7,0.1); border-radius: 4px; border-left: 3px solid #ffc107;">
-                                    <strong style="color: #ffc107;">🎯 RSI Oversold:</strong> ${rsiData.rsi} (${rsiData.signal_strength})
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(mean reversion likely)</span>
-                                </div>`;
-                        }
-                        
-                        // Economic Regime Signal  
-                        if (enhancedSignals.economic_regime?.regime) {
-                            const regimeData = enhancedSignals.economic_regime;
-                            const regimeBoost = regimeData.regime_multipliers?.short || 1.0;
-                            const regimeColor = regimeBoost > 1.2 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
-                            signalsDisplay += `
-                                <div style="margin-bottom: 8px; padding: 8px; background: rgba(128,128,128,0.1); border-radius: 4px; border-left: 3px solid ${regimeColor};">
-                                    <strong style="color: ${regimeColor};">🌡️ Market Regime:</strong> VIX ${regimeData.vix_level} (${regimeData.regime.replace('_', ' ')})
-                                    <span style="color: rgba(255,255,255,0.8); font-size: 12px;">(${regimeData.recovery_environment})</span>
-                                </div>`;
-                        }
-
-                        // Build detailed mathematical breakdown for short-term
-                        const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
-                        let targetsBreakdown = '';
-                        let totalWeightedScore = 0;
-                        let totalWeight = 0;
-                        
-                        // Show each target's calculation
-                        Object.entries(shortTermData).forEach(([targetName, target]) => {
-                            const displayName = targetName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            const weight = targetName === 'previous_close' ? 1.0 : 
-                                          targetName === '5day_high' ? 0.9 : 
-                                          targetName === '10day_ma' ? 0.8 : 0.7;
-                            
-                            totalWeightedScore += (target.probability || 0) * weight;
-                            totalWeight += weight;
-                            
-                            targetsBreakdown += `
-                                <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: #ffffff; font-weight: 600;">${displayName}:</span>
-                                        <span>${probabilityBadge(target)}</span>
-                                    </div>
-                                    <div style="font-size: 11px; color: #dee2e6;">
-                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%)${target.median_days_to_hit ? ' • median ' + target.median_days_to_hit + 'd to reach' : ''}
-                                    </div>
-                                </div>`;
-                        });
-                        
-                        const baseScore = totalWeight > 0 ? totalWeightedScore / totalWeight : 0;
-                        
-                        // Calculate signal effects for short-term
-                        let signalEffects = '';
-                        let signalMultiplier = 1.0;
-                        
-                        if (enhancedSignals.volume_surge?.surge_detected) {
-                            const volumeBoost = enhancedSignals.volume_surge.surge_multiplier;
-                            signalMultiplier *= volumeBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #28a745;">
-                                    ✓ Volume Surge: ${volumeBoost.toFixed(2)}x multiplier (${Math.round((volumeBoost - 1) * 100)}% boost)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.rsi_reversion?.oversold_detected) {
-                            const rsiBoost = enhancedSignals.rsi_reversion.reversion_multiplier;
-                            signalMultiplier *= rsiBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #ffc107;">
-                                    ✓ RSI Oversold: ${rsiBoost.toFixed(2)}x multiplier (RSI ${enhancedSignals.rsi_reversion.rsi_value})
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.economic_regime?.regime) {
-                            const regimeBoost = enhancedSignals.economic_regime.short_term_multiplier || 1.0;
-                            signalMultiplier *= regimeBoost;
-                            const regimeColor = regimeBoost > 1.1 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
-                                    ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
-                                </div>`;
-                        }
-                        
-                        // NEW HIGH-ACCURACY SIGNALS
-                        if (enhancedSignals.money_flow_index?.oversold_detected) {
-                            const mfiBoost = enhancedSignals.money_flow_index.recovery_multiplier;
-                            signalMultiplier *= mfiBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #17a2b8;">
-                                    ✓ Money Flow Index: ${mfiBoost.toFixed(2)}x multiplier (MFI ${enhancedSignals.money_flow_index.mfi_value} - volume confirmed)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.macd_histogram?.momentum_shift) {
-                            const macdBoost = enhancedSignals.macd_histogram.recovery_multiplier;
-                            signalMultiplier *= macdBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #dc3545;">
-                                    ✓ MACD Histogram: ${macdBoost.toFixed(2)}x multiplier (${enhancedSignals.macd_histogram.signal_type.replace('_', ' ')})
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
-                            const bbBoost = enhancedSignals.bollinger_squeeze.recovery_multiplier;
-                            signalMultiplier *= bbBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #6610f2;">
-                                    ✓ Bollinger Bands: ${bbBoost.toFixed(2)}x multiplier (${enhancedSignals.bollinger_squeeze.signal_type.replace('_', ' ')})
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
-                            const pcBoost = enhancedSignals.put_call_ratio.recovery_multiplier;
-                            signalMultiplier *= pcBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #fd7e14;">
-                                    ✓ Put/Call Ratio: ${pcBoost.toFixed(2)}x multiplier (P/C ${enhancedSignals.put_call_ratio.pc_ratio} - contrarian)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.short_interest?.squeeze_potential) {
-                            const siBoost = enhancedSignals.short_interest.recovery_multiplier;
-                            signalMultiplier *= siBoost;
-                            signalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #e83e8c;">
-                                    ✓ Short Squeeze: ${siBoost.toFixed(2)}x multiplier (${enhancedSignals.short_interest.short_percent}% short interest)
-                                </div>`;
-                        }
-                        
-                        const finalScore = Math.min(95, baseScore * signalMultiplier);
-                        
-                        breakdownContent.innerHTML = `
-                            <div style="margin-bottom: 12px;">
-                                <strong style="color: #ffffff; font-size: 14px;">Measured hit rates</strong>
-                                <div style="font-size: 12px; color: #f1f3f5; margin-top: 6px; line-height: 1.55;">
-                                    Each figure is how often this stock actually reached that target
-                                    within the horizon, counted over its own price history.
-                                </div>
-                                ${targetsBreakdown}
-                            </div>
-
-                            <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">Why there is no combined score</div>
-                                <div style="font-size: 12px; color: #f1f3f5; line-height: 1.55;">
-                                    Targets differ in size, so their hit rates are not comparable and
-                                    averaging them would not describe anything real. This panel
-                                    previously showed a weighted score multiplied by a "signal
-                                    multiplier" and capped at 95, which is why every target displayed
-                                    an identical 95% and the arithmetic read 95% &times; 1.88 = 95%.
-                                    Each target now stands on its own measured frequency.
-                                </div>
-                            </div>
-                        `;
-                        breakdownElement.style.display = 'block';
-                    }
                 })
                 .catch(error => {
                     console.error('Recovery data error:', error);
@@ -2869,7 +2677,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(mediumTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. EV is P(hit) &times; gain + P(miss) &times; the median outcome of the windows that missed. Past frequency is not a forecast.</div>`;
+                    const heuristicNote = `<div style="font-size: 12px; color: #f8f9fa; margin: 10px 0; opacity: 0.9;" title="Odds: the share of historical windows in which this stock actually reached the target within the horizon, from its own price history. EV: expected gain if bought now and sold at target or horizon end, with the misses priced in at their median outcome. Past frequency is not a forecast.">\u2139\ufe0f <strong>Odds</strong> = how often this gain actually happened before \u00b7 <strong>EV</strong> = expected gain with the misses priced in \u00b7 hover anything for the evidence</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -2913,10 +2721,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     const mediumFinalScoreSummary = (function(list){
                         const measured = list.filter(t => t && t.probability_available === true);
-                        if (!measured.length) return { text: '\u2014', sub: 'no measurable targets' };
+                        if (!measured.length) return { text: '\u2014', sub: 'not enough trading history to measure' };
                         const best = measured.reduce((a, b) => (b.probability > a.probability ? b : a));
                         return { text: Number(best.probability).toFixed(0) + '%',
-                                 sub: 'best measured target (' + measured.length + ' measured)' };
+                                 sub: 'best target odds \u00b7 ' + measured.length + ' targets measured' };
                     })(Object.values(predictions || {}));
                     
                     // Header with confidence levels matching other sections
@@ -2955,9 +2763,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                     <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
                                         ${prediction.description || targetName}
                                     </div>
-                                    <div style="font-size: 13px; text-align: right;">
-                                        ${probabilityBadge(prediction)}
-                                    </div>
+                                    ${probabilityBadge(prediction)}
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                     <div>
@@ -2979,150 +2785,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     mediumtermData.innerHTML += mediumTermTargets + '</div>';
                     
-                    // Add mathematical breakdown
-                    const breakdownElement = document.getElementById('mediumterm-breakdown');
-                    const breakdownContent = document.getElementById('mediumterm-breakdown-content');
-                    if (breakdownElement && breakdownContent) {
-                        const totalTargets = predictions.length;
-                        const highConfTargets = predictions.filter(p => p.confidence === 'Very High' || p.confidence === 'High').length;
-                        const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
-                        
-                        // Build detailed mathematical breakdown for medium-term using window data
-                        const recoveryData = window.currentRecoveryData || {};
-                        const mediumTermData = recoveryData.sophisticated_analysis?.timeframe_predictions?.medium_term || {};
-                        const enhancedSignals = recoveryData.sophisticated_analysis?.enhanced_signals || {};
-                        let mediumTargetsBreakdown = '';
-                        let mediumTotalWeightedScore = 0;
-                        let mediumTotalWeight = 0;
-                        
-                        // Show each medium-term target's calculation
-                        Object.entries(mediumTermData).forEach(([targetName, target]) => {
-                            const displayName = targetName.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            const weight = targetName === '20day_ma' ? 1.0 : 
-                                          targetName === 'support_bounce' ? 0.9 : 
-                                          targetName === 'fair_value' ? 0.8 : 0.7;
-                            
-                            mediumTotalWeightedScore += (target.probability || 0) * weight;
-                            mediumTotalWeight += weight;
-                            
-                            mediumTargetsBreakdown += `
-                                <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: #ffffff; font-weight: 500;">${displayName}:</span>
-                                        <span>${probabilityBadge(target)}</span>
-                                    </div>
-                                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
-                                        Target: $${target.target_price} (+${Math.round((target.upside_percent || 0) * 10) / 10}%)${target.median_days_to_hit ? ' • median ' + target.median_days_to_hit + 'd to reach' : ''}
-                                    </div>
-                                </div>`;
-                        });
-                        
-                        const mediumBaseScore = mediumTotalWeight > 0 ? mediumTotalWeightedScore / mediumTotalWeight : avgProbability;
-                        
-                        // Calculate medium-term signal effects (reduced impact)
-                        let mediumSignalEffects = '';
-                        let mediumSignalMultiplier = 1.0;
-                        
-                        if (enhancedSignals.volume_surge?.surge_detected) {
-                            const volumeBoost = 1.0 + ((enhancedSignals.volume_surge.surge_multiplier - 1.0) * 0.5); // 50% impact for medium-term
-                            mediumSignalMultiplier *= volumeBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #28a745;">
-                                    ✓ Volume Surge: ${volumeBoost.toFixed(2)}x multiplier (50% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.rsi_reversion?.oversold_detected) {
-                            const rsiBoost = 1.0 + ((enhancedSignals.rsi_reversion.reversion_multiplier - 1.0) * 0.7); // 70% impact for medium-term
-                            mediumSignalMultiplier *= rsiBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #ffc107;">
-                                    ✓ RSI Oversold: ${rsiBoost.toFixed(2)}x multiplier (70% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.economic_regime?.regime) {
-                            const regimeBoost = enhancedSignals.economic_regime.medium_term_multiplier || 1.0;
-                            mediumSignalMultiplier *= regimeBoost;
-                            const regimeColor = regimeBoost > 1.1 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
-                                    ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
-                                </div>`;
-                        }
-                        
-                        // NEW HIGH-ACCURACY INDICATORS (Medium-term with reduced impact)
-                        if (enhancedSignals.money_flow_index?.oversold_detected) {
-                            const mfiBoost = 1.0 + ((enhancedSignals.money_flow_index.recovery_multiplier - 1.0) * 0.5); // 50% impact
-                            mediumSignalMultiplier *= mfiBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #17a2b8;">
-                                    ✓ Money Flow Index: ${mfiBoost.toFixed(2)}x multiplier (50% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.macd_histogram?.momentum_shift) {
-                            const macdBoost = 1.0 + ((enhancedSignals.macd_histogram.recovery_multiplier - 1.0) * 0.7); // 70% impact
-                            mediumSignalMultiplier *= macdBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #dc3545;">
-                                    ✓ MACD Histogram: ${macdBoost.toFixed(2)}x multiplier (70% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
-                            const bbBoost = 1.0 + ((enhancedSignals.bollinger_squeeze.recovery_multiplier - 1.0) * 0.6); // 60% impact
-                            mediumSignalMultiplier *= bbBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #6610f2;">
-                                    ✓ Bollinger Bands: ${bbBoost.toFixed(2)}x multiplier (60% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
-                            const pcBoost = 1.0 + ((enhancedSignals.put_call_ratio.recovery_multiplier - 1.0) * 0.4); // 40% impact
-                            mediumSignalMultiplier *= pcBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #fd7e14;">
-                                    ✓ Put/Call Ratio: ${pcBoost.toFixed(2)}x multiplier (40% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.short_interest?.squeeze_potential) {
-                            const siBoost = 1.0 + ((enhancedSignals.short_interest.recovery_multiplier - 1.0) * 0.3); // 30% impact
-                            mediumSignalMultiplier *= siBoost;
-                            mediumSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #e83e8c;">
-                                    ✓ Short Squeeze: ${siBoost.toFixed(2)}x multiplier (30% medium-term impact)
-                                </div>`;
-                        }
-                        
-                        const mediumFinalScore = Math.min(90, mediumBaseScore * mediumSignalMultiplier);
-                        
-                        breakdownContent.innerHTML = `
-                            <div style="margin-bottom: 12px;">
-                                <strong style="color: #ffffff; font-size: 14px;">Measured hit rates</strong>
-                                <div style="font-size: 12px; color: #f1f3f5; margin-top: 6px; line-height: 1.55;">
-                                    Each figure is how often this stock actually reached that target
-                                    within the horizon, counted over its own price history.
-                                </div>
-                                ${mediumTargetsBreakdown}
-                            </div>
-
-                            <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">Why there is no combined score</div>
-                                <div style="font-size: 12px; color: #f1f3f5; line-height: 1.55;">
-                                    Targets differ in size, so their hit rates are not comparable and
-                                    averaging them would not describe anything real. This panel
-                                    previously showed a weighted score multiplied by a "signal
-                                    multiplier" and capped at 95, which is why every target displayed
-                                    an identical 95% and the arithmetic read 95% &times; 1.88 = 95%.
-                                    Each target now stands on its own measured frequency.
-                                </div>
-                            </div>
-                        `;
-                        breakdownElement.style.display = 'block';
-                    }
                 })
                 .catch(error => {
                     console.error('Medium-term data error:', error);
@@ -3200,7 +2862,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(longTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. EV is P(hit) &times; gain + P(miss) &times; the median outcome of the windows that missed. Past frequency is not a forecast.</div>`;
+                    const heuristicNote = `<div style="font-size: 12px; color: #f8f9fa; margin: 10px 0; opacity: 0.9;" title="Odds: the share of historical windows in which this stock actually reached the target within the horizon, from its own price history. EV: expected gain if bought now and sold at target or horizon end, with the misses priced in at their median outcome. Past frequency is not a forecast.">\u2139\ufe0f <strong>Odds</strong> = how often this gain actually happened before \u00b7 <strong>EV</strong> = expected gain with the misses priced in \u00b7 hover anything for the evidence</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -3244,10 +2906,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     const longTermFinalScoreSummary = (function(list){
                         const measured = list.filter(t => t && t.probability_available === true);
-                        if (!measured.length) return { text: '\u2014', sub: 'no measurable targets' };
+                        if (!measured.length) return { text: '\u2014', sub: 'not enough trading history to measure' };
                         const best = measured.reduce((a, b) => (b.probability > a.probability ? b : a));
                         return { text: Number(best.probability).toFixed(0) + '%',
-                                 sub: 'best measured target (' + measured.length + ' measured)' };
+                                 sub: 'best target odds \u00b7 ' + measured.length + ' targets measured' };
                     })(Object.values(predictions || {}));
                     
                     // Header with confidence levels matching other sections
@@ -3286,9 +2948,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                     <div style="font-size: 16px; font-weight: bold; color: #ffffff;">
                                         ${prediction.description || targetName}
                                     </div>
-                                    <div style="font-size: 13px; text-align: right;">
-                                        ${probabilityBadge(prediction)}
-                                    </div>
+                                    ${probabilityBadge(prediction)}
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center;">
                                     <div>
@@ -3310,149 +2970,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     longtermData.innerHTML += longTermTargets + '</div>';
                     
-                    // Add mathematical breakdown
-                    const breakdownElement = document.getElementById('longterm-breakdown');
-                    const breakdownContent = document.getElementById('longterm-breakdown-content');
-                    if (breakdownElement && breakdownContent) {
-                        const totalTargets = predictions.length;
-                        const highConfTargets = predictions.filter(p => p.confidence === 'Very High' || p.confidence === 'High').length;
-                        const avgUpside = predictions.reduce((sum, p) => sum + parseFloat(p.upside_percent || 0), 0) / totalTargets;
-                        
-                        // Build detailed mathematical breakdown for long-term (analyst targets)
-                        const recoveryData = window.currentRecoveryData || {};
-                        const enhancedSignals = recoveryData.sophisticated_analysis?.enhanced_signals || {};
-                        let longTermTargetsBreakdown = '';
-                        let longTermTotalWeightedScore = 0;
-                        let longTermTotalWeight = 0;
-                        
-                        // Show each analyst target's calculation
-                        predictions.forEach((target, index) => {
-                            const weight = target.confidence === 'Very High' ? 1.0 :
-                                          target.confidence === 'High' ? 1.0 : 
-                                          target.confidence === 'Medium' ? 0.8 : 0.6;
-                            const probability = parseFloat(target.probability || 0);
-                            
-                            longTermTotalWeightedScore += probability * weight;
-                            longTermTotalWeight += weight;
-                            
-                            longTermTargetsBreakdown += `
-                                <div style="margin: 6px 0; padding: 6px; background: rgba(0,0,0,0.26); border-radius: 4px;">
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: #ffffff; font-weight: 500;">${target.target_type || 'Analyst Target'}:</span>
-                                        <span>${probabilityBadge(target)}</span>
-                                    </div>
-                                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">
-                                        Target: $${target.target_price} (+${Math.round((parseFloat(target.upside_percent) || 0) * 10) / 10}%)${target.median_days_to_hit ? ' • median ' + target.median_days_to_hit + 'd to reach' : ''}
-                                    </div>
-                                </div>`;
-                        });
-                        
-                        const longTermBaseScore = longTermTotalWeight > 0 ? longTermTotalWeightedScore / longTermTotalWeight : avgProbability;
-                        
-                        // Calculate long-term signal effects (minimal impact)
-                        let longTermSignalEffects = '';
-                        let longTermSignalMultiplier = 1.0;
-                        
-                        if (enhancedSignals.volume_surge?.surge_detected) {
-                            const volumeBoost = 1.0 + ((enhancedSignals.volume_surge.surge_multiplier - 1.0) * 0.25); // 25% impact for long-term
-                            longTermSignalMultiplier *= volumeBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #28a745;">
-                                    ✓ Volume Surge: ${volumeBoost.toFixed(2)}x multiplier (25% long-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.rsi_reversion?.oversold_detected) {
-                            const rsiBoost = 1.0 + ((enhancedSignals.rsi_reversion.reversion_multiplier - 1.0) * 0.4); // 40% impact for long-term
-                            longTermSignalMultiplier *= rsiBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #ffc107;">
-                                    ✓ RSI Oversold: ${rsiBoost.toFixed(2)}x multiplier (40% long-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.economic_regime?.regime) {
-                            const regimeBoost = enhancedSignals.economic_regime.long_term_multiplier || 1.0;
-                            longTermSignalMultiplier *= regimeBoost;
-                            const regimeColor = regimeBoost > 1.1 ? '#28a745' : regimeBoost > 1.0 ? '#ffc107' : '#dc3545';
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: ${regimeColor};">
-                                    ✓ Market Regime: ${regimeBoost.toFixed(2)}x multiplier (VIX ${enhancedSignals.economic_regime.vix_level})
-                                </div>`;
-                        }
-                        
-                        // NEW HIGH-ACCURACY INDICATORS (Long-term with minimal impact)
-                        if (enhancedSignals.money_flow_index?.oversold_detected) {
-                            const mfiBoost = 1.0 + ((enhancedSignals.money_flow_index.recovery_multiplier - 1.0) * 0.25); // 25% impact
-                            longTermSignalMultiplier *= mfiBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #17a2b8;">
-                                    ✓ Money Flow Index: ${mfiBoost.toFixed(2)}x multiplier (25% long-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.macd_histogram?.momentum_shift) {
-                            const macdBoost = 1.0 + ((enhancedSignals.macd_histogram.recovery_multiplier - 1.0) * 0.4); // 40% impact
-                            longTermSignalMultiplier *= macdBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #dc3545;">
-                                    ✓ MACD Histogram: ${macdBoost.toFixed(2)}x multiplier (40% long-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.bollinger_squeeze && enhancedSignals.bollinger_squeeze.signal_type !== 'neutral') {
-                            const bbBoost = 1.0 + ((enhancedSignals.bollinger_squeeze.recovery_multiplier - 1.0) * 0.3); // 30% impact
-                            longTermSignalMultiplier *= bbBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #6610f2;">
-                                    ✓ Bollinger Bands: ${bbBoost.toFixed(2)}x multiplier (30% long-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.put_call_ratio?.extreme_sentiment) {
-                            const pcBoost = 1.0 + ((enhancedSignals.put_call_ratio.recovery_multiplier - 1.0) * 0.2); // 20% impact
-                            longTermSignalMultiplier *= pcBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #fd7e14;">
-                                    ✓ Put/Call Ratio: ${pcBoost.toFixed(2)}x multiplier (20% long-term impact)
-                                </div>`;
-                        }
-                        
-                        if (enhancedSignals.short_interest?.squeeze_potential) {
-                            const siBoost = 1.0 + ((enhancedSignals.short_interest.recovery_multiplier - 1.0) * 0.15); // 15% impact
-                            longTermSignalMultiplier *= siBoost;
-                            longTermSignalEffects += `
-                                <div style="margin: 4px 0; font-size: 12px; color: #e83e8c;">
-                                    ✓ Short Squeeze: ${siBoost.toFixed(2)}x multiplier (15% long-term impact)
-                                </div>`;
-                        }
-                        
-                        const longTermFinalScore = Math.min(85, longTermBaseScore * longTermSignalMultiplier);
-                        
-                        breakdownContent.innerHTML = `
-                            <div style="margin-bottom: 12px;">
-                                <strong style="color: #ffffff; font-size: 14px;">Measured hit rates</strong>
-                                <div style="font-size: 12px; color: #f1f3f5; margin-top: 6px; line-height: 1.55;">
-                                    Each figure is how often this stock actually reached that target
-                                    within the horizon, counted over its own price history.
-                                </div>
-                                ${longTermTargetsBreakdown}
-                            </div>
-
-                            <div style="padding: 10px; background: rgba(0,0,0,0.28); border-radius: 6px; margin: 10px 0;">
-                                <div style="color: #ffffff; font-weight: 600; margin-bottom: 4px;">Why there is no combined score</div>
-                                <div style="font-size: 12px; color: #f1f3f5; line-height: 1.55;">
-                                    Targets differ in size, so their hit rates are not comparable and
-                                    averaging them would not describe anything real. This panel
-                                    previously showed a weighted score multiplied by a "signal
-                                    multiplier" and capped at 95, which is why every target displayed
-                                    an identical 95% and the arithmetic read 95% &times; 1.88 = 95%.
-                                    Each target now stands on its own measured frequency.
-                                </div>
-                            </div>
-                        `;
-                        breakdownElement.style.display = 'block';
-                    }
                 })
                 .catch(error => {
                     console.error('Long-term data error:', error);
@@ -3554,13 +3071,6 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             <div class="section">
                 <h2 style="margin-bottom: 24px; text-align: left;">📈 Market Overview</h2>
                 <div class="metrics-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 8px;">
-                    {% if market_analysis.macro %}
-                    <div style="grid-column: 1 / -1; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary);">
-                        {% for m in market_analysis.macro %}
-                        <span>📐 {{ m.label }}: <strong style="color: var(--text-primary);">{{ '%.2f'|format(m.value) }}%</strong> <em style="font-size: 11px;">({{ m.as_of }}, FRED)</em></span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
                     <!-- VIX Volatility Card -->
                     <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
                         <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">📊 VOLATILITY INDEX</div>
@@ -3576,7 +3086,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <div style="font-size: 13px; color: var(--text-secondary); font-weight: 500;">SPY • {{ market_analysis.market_trend.trend }}</div>
                         <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; opacity: 0.8;">
                             {% if market_analysis.market_trend.week_change != 'N/A' %}
-                                {{ market_analysis.market_trend.week_change|round(2) }}% this week
+                                {% if market_analysis.market_trend.week_change is number %}{{ market_analysis.market_trend.week_change|round(2) }}% this week{% else %}weekly change unavailable{% endif %}
                             {% else %}
                                 Market data loading...
                             {% endif %}
@@ -3596,6 +3106,18 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             {% endif %}
                         </div>
                     </div>
+                    {% if market_analysis.macro %}
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
+                        <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">📐 MACRO CONTEXT</div>
+                        {% for m in market_analysis.macro %}
+                        <div style="margin-bottom: 6px;">
+                            <span style="font-size: 20px; font-weight: 700; color: var(--text-primary);">{{ '%.2f'|format(m.value) }}%</span>
+                            <div style="font-size: 12px; color: var(--text-secondary);">{{ m.label }} <em>({{ m.as_of }})</em></div>
+                        </div>
+                        {% endfor %}
+                        <div style="font-size: 11px; color: var(--text-secondary);">FRED, refreshed in background</div>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
                 
@@ -3639,6 +3161,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
             <div class="section">
                 <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
+                <p style="font-size: 12px; color: var(--text-secondary); margin: 4px 0 10px;">Odds = how often that recovery actually happened in this stock's own history. Hover any number for its evidence. Click a column header to sort.</p>
+
                 {% if recommendations %}
                     <div class="card-sorter" data-target="cards-recs">
                         <span>Sort:</span>
@@ -3652,12 +3176,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
                                 <th onclick="sortLoserTable(this, 1, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
-                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside. Click to sort.">Upside</th>
-                                <th onclick="sortLoserTable(this, 3, 'num')" title="Measured frequency of reaching yesterday's close within 7 trading days, over this stock's own history. Click to sort.">P(prev close, 7d)</th>
-                                <th onclick="sortLoserTable(this, 4, 'num')" title="Measured frequency of reaching the 20-day mean within 21 trading days. Click to sort.">P(20d MA, 21d)</th>
-                                <th onclick="sortLoserTable(this, 5, 'num')" title="Measured frequency of reaching the analyst consensus within ~6 months. Click to sort.">P(target, 6mo)</th>
-                                <th onclick="sortLoserTable(this, 6, 'num')">Current Price</th>
-                                <th onclick="sortLoserTable(this, 7, 'num')">Today's %</th>
+                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
+                                <th onclick="sortLoserTable(this, 3, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
+                                <th onclick="sortLoserTable(this, 4, 'num')" title="How often it reached its 20-day average within a month. Click to sort.">Recovery odds<br><span style="font-weight:400; font-size:10px;">1 month</span></th>
+                                <th onclick="sortLoserTable(this, 5, 'num')" title="How often it achieved the analyst-consensus gain within ~6 months. Click to sort.">Target odds<br><span style="font-weight:400; font-size:10px;">6 months</span></th>
+                                <th onclick="sortLoserTable(this, 6, 'num')">Price</th>
+                                <th onclick="sortLoserTable(this, 7, 'num')">Today</th>
                                 <th>Analysis</th>
                             </tr>
                         </thead>
@@ -3706,7 +3230,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <h4 style="color: var(--text-primary); margin-bottom: 10px;">📊 Current Market Snapshot:</h4>
                             <ul style="margin: 0; color: var(--text-secondary);">
                                 <li><strong>VIX Level:</strong> {{ market_analysis.vix_analysis.current_vix }} ({{ market_analysis.vix_analysis.regime }})</li>
-                                <li><strong>Market Trend:</strong> {{ market_analysis.market_trend.trend }} (SPY {{ market_analysis.market_trend.week_change|round(2) if market_analysis.market_trend.week_change != 'N/A' else 'N/A' }}%)</li>
+                                <li><strong>Market Trend:</strong> {{ market_analysis.market_trend.trend }} (SPY {{ market_analysis.market_trend.week_change|round(2) if market_analysis.market_trend.week_change is number else 'N/A' }}%)</li>
                                 <li><strong>Recovery Environment:</strong> {{ market_analysis.vix_analysis.recovery_impact }}</li>
                             </ul>
                         </div>
@@ -3737,7 +3261,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
             <div class="section">
                 <h2 style="text-align: left;">📊 Complete Analysis (All Daily Losers)</h2>
-                <p><em>Comprehensive analysis of all daily losers with AI recovery predictions and market insights.</em></p>
+                <p style="font-size: 12px; color: var(--text-secondary); margin: 4px 0 10px;">Odds = how often that recovery actually happened in this stock's own history. Hover any number for its evidence. Click a column header to sort.</p>
                 {% if all_analysis %}
                     <div class="card-sorter" data-target="cards-all">
                         <span>Sort:</span>
@@ -3751,12 +3275,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
                                 <th onclick="sortLoserTable(this, 1, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
-                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside. Click to sort.">Upside</th>
-                                <th onclick="sortLoserTable(this, 3, 'num')" title="Measured frequency of reaching yesterday's close within 7 trading days, over this stock's own history. Click to sort.">P(prev close, 7d)</th>
-                                <th onclick="sortLoserTable(this, 4, 'num')" title="Measured frequency of reaching the 20-day mean within 21 trading days. Click to sort.">P(20d MA, 21d)</th>
-                                <th onclick="sortLoserTable(this, 5, 'num')" title="Measured frequency of reaching the analyst consensus within ~6 months. Click to sort.">P(target, 6mo)</th>
-                                <th onclick="sortLoserTable(this, 6, 'num')">Current Price</th>
-                                <th onclick="sortLoserTable(this, 7, 'num')">Today's %</th>
+                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
+                                <th onclick="sortLoserTable(this, 3, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
+                                <th onclick="sortLoserTable(this, 4, 'num')" title="How often it reached its 20-day average within a month. Click to sort.">Recovery odds<br><span style="font-weight:400; font-size:10px;">1 month</span></th>
+                                <th onclick="sortLoserTable(this, 5, 'num')" title="How often it achieved the analyst-consensus gain within ~6 months. Click to sort.">Target odds<br><span style="font-weight:400; font-size:10px;">6 months</span></th>
+                                <th onclick="sortLoserTable(this, 6, 'num')">Price</th>
+                                <th onclick="sortLoserTable(this, 7, 'num')">Today</th>
                                 <th>Analysis</th>
                             </tr>
                         </thead>

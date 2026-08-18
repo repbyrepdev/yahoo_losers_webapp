@@ -211,10 +211,8 @@ def horizon_distribution(closes: np.ndarray, horizon_bars: int) -> Optional[dict
 
 def describe(measured: dict) -> str:
     """Plain statement of the evidence, for display next to the number."""
-    low, high = wilson_interval(measured["hits"], measured["windows"])
-    return (f"{measured['hits']} of {measured['windows']} historical "
-            f"{measured['horizon_bars']}-day windows "
-            f"(95% CI {low*100:.0f}-{high*100:.0f}%)")
+    return (f"{measured['hits']}/{measured['windows']} past "
+            f"{measured['horizon_bars']}-day windows")
 
 
 def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) -> Dict[str, dict]:
