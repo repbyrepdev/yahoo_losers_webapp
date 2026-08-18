@@ -280,8 +280,10 @@ A cold render now costs **13 requests**:
 At a 10-minute page cache that is roughly **80 requests an hour against a limit
 near 2,000** — about 4%.
 
-The cache warms progressively: the first render resolves ~11 of 25 analyst
-targets, the second ~21, and symbols still pending show an em dash with
+A background thread warms the entire losers list in a single paced pass
+(one batched history request, then one profile call per symbol spaced 0.8s
+apart -- a trickle, not a burst), so the full cache is ready about a minute
+after the universe changes. Any symbol not yet warmed shows an em dash with
 "not fetched yet" rather than a substituted value.
 
 `/health/sources` probes yfinance directly, because the raw Yahoo endpoints it
