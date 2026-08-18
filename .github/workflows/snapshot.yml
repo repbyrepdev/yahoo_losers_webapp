@@ -1,0 +1,89 @@
+name: nightly-snapshot
+
+# Records the day's full model output into data/snapshots/ so the track
+# record accumulates from real, committed history. Git is the tamper-evident
+# store: rewriting a past recommendation would leave a diff.
+#
+# Runs after the close on trading days; also triggerable by hand.
+
+on:
+  schedule:
+    - cron: '45 21 * * 1-5'   # 5:45 PM ET (4:45 during DST) — after close
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch today's snapshot from the live app
+        run: |
+          set -euo pipefail
+          # Generous timeout: full-factor scoring for ~25 symbols is throttled
+          # on purpose and takes a couple of minutes.
+          curl -sS --fail --max-time 280 --retry 2 --retry-delay 30 \
+            "https://yahoo-losers-webapp.onrender.com/api/snapshot" -o /tmp/snapshot.json
+          python3 - <<'EOF'
+          import json, sys
+          snap = json.load(open('/tmp/snapshot.json'))
+          assert snap.get('date') and isinstance(snap.get('universe'), list), 'malformed snapshot'
+          scored = [r for r in snap['universe'] if r.get('score') is not None]
+          print(f"date={snap['date']} universe={len(snap['universe'])} scored={len(scored)}")
+          # Refuse to commit an empty day: a rate-limited upstream must not
+          # write a blank page into the permanent record.
+          if not scored:
+              print('no scored rows; refusing to commit'); sys.exit(1)
+          EOF
+
+      - name: Commit to the permanent record
+        run: |
+          set -euo pipefail
+          DATE=$(python3 -c "import json;print(json.load(open('/tmp/snapshot.json'))['date'])")
+          mkdir -p data/snapshots
+          cp /tmp/snapshot.json "data/snapshots/${DATE}.json"
+          git config user.name  "snapshot-bot"
+          git config user.email "snapshot-bot@users.noreply.github.com"
+          git add data/snapshots/
+          git diff --cached --quiet && { echo "no changes"; exit 0; }
+          git commit -m "Record snapshot ${DATE}"
+          git push
+
+      - name: Post the daily digest issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF' > /tmp/digest.md
+          import json
+          snap = json.load(open('/tmp/snapshot.json'))
+          rows = [r for r in snap['universe'] if r.get('score') is not None]
+          rows.sort(key=lambda r: r['score'], reverse=True)
+          print(f"Top of today's board — model v{snap['model_version']}, {len(rows)} scored.\n")
+          print("| Symbol | Score | Conf | Analyst upside |")
+          print("|---|---|---|---|")
+          for r in rows[:8]:
+              upside = '—'
+              if r.get('analyst_target_mean') and r.get('price'):
+                  upside = f"{(r['analyst_target_mean']/r['price']-1)*100:+.1f}% ({r.get('analyst_count','?')} an.)"
+              print(f"| {r['symbol']} | {r['score']:.1f} | {r.get('confidence','')} | {upside} |")
+          print("\nScores measure similarity to historical mean-reversion setups — "
+                "not return forecasts, not advice. Full record: "
+                "https://yahoo-losers-webapp.onrender.com/track-record")
+          EOF
+          DATE=$(python3 -c "import json;print(json.load(open('/tmp/snapshot.json'))['date'])")
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Daily picks — ${DATE}" \
+            --body-file /tmp/digest.md \
+            --label "daily-digest" || \
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Daily picks — ${DATE}" \
+            --body-file /tmp/digest.md

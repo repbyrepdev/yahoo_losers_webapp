@@ -710,6 +710,66 @@ def ohlcv_frame(symbol: str, period: str = "1y"):
         return None
 
 
+
+FINRA_SHORT_URL = "https://cdn.finra.org/equity/regsho/daily/CNMSshvol{yyyymmdd}.txt"
+
+
+def finra_short_volume(symbol: str) -> Sourced:
+    """Reported short-sale share of volume, from FINRA's daily RegSHO file.
+
+    One file covers every symbol, so it is fetched once per day and parsed
+    into the cache; per-symbol reads never touch the network. Volumes in the
+    feed are fractional share counts. T+1 data by nature, and labelled so.
+    """
+    source = "finra:regsho-daily"
+
+    def produce():
+        import requests as _rq
+        from datetime import date as _date, timedelta as _td
+
+        last_error = "no recent file found"
+        probe = _date.today()
+        for _ in range(6):  # walk back over weekends/holidays
+            url = FINRA_SHORT_URL.format(yyyymmdd=probe.strftime("%Y%m%d"))
+            try:
+                _throttle()
+                response = _rq.get(url, timeout=30)
+            except _rq.RequestException as e:
+                return {"ok": False, "reason": f"finra unreachable ({type(e).__name__})"}
+            if response.status_code == 200 and "|" in response.text[:100]:
+                table = {}
+                for line in response.text.splitlines()[1:]:
+                    parts = line.split("|")
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        short = float(parts[2])
+                        total = float(parts[4])
+                    except ValueError:
+                        continue
+                    if total > 0:
+                        table[parts[1]] = {
+                            "short_ratio": round(short / total, 4),
+                            "short_volume": round(short),
+                            "total_volume": round(total),
+                        }
+                if table:
+                    return {"ok": True, "as_of": probe.isoformat(), "table": table}
+                last_error = "file parsed empty"
+            else:
+                last_error = f"HTTP {response.status_code}"
+            probe -= _td(days=1)
+        return {"ok": False, "reason": last_error}
+
+    payload = _cached("finra:daily", 20 * 60 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    row = payload["table"].get(symbol.upper())
+    if not row:
+        return Sourced.unavailable(source, "symbol not in FINRA consolidated file")
+    return Sourced.live({**row, "as_of": payload["as_of"]}, source)
+
+
 def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
     """Top institutional holders, by name, from 13F filings."""
     source = "yfinance:institutional_holders"
@@ -924,6 +984,9 @@ def _warm_loop():
                 batch_history(batch)
                 for symbol in batch:
                     _info(symbol)
+                # One global file serves every symbol; warming it here keeps
+                # the first modal open of the day off a 3MB download.
+                finra_short_volume(batch[0])
                 save_cache_to_disk()
                 logger.info(f"background warm completed {len(batch)} symbols")
             except Exception as e:

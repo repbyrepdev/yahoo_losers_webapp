@@ -10,6 +10,7 @@ import ssl
 import logging
 import pickle
 import time
+from collections import deque
 from functools import wraps
 import gc
 import psutil
@@ -29,6 +30,7 @@ import recommendation
 import econ_calendar
 import social
 import timeframes
+import tracking
 
 app = Flask(__name__)
 
@@ -1287,6 +1289,15 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
         // Client-side column sort for the loser tables. Numeric cells carry
         // their sortable value in data-val so display strings stay free-form.
+        // Uncaught browser errors land server-side; swallowed-catch bugs
+        // spent hours invisible tonight, so silence is no longer an option.
+        function reportClientError(msg, src, line) {
+            try { navigator.sendBeacon('/api/client-error',
+                new Blob([JSON.stringify({msg, src, line})], {type: 'application/json'})); } catch (e) {}
+        }
+        window.addEventListener('error', (e) => reportClientError(e.message, e.filename, e.lineno));
+        window.addEventListener('unhandledrejection', (e) => reportClientError('unhandledrejection: ' + (e.reason && e.reason.message || e.reason), '', 0));
+
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -1365,7 +1376,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const pct = Number(target.probability).toFixed(1);
             const tone = target.probability >= 50 ? '#7bed9f'
                        : target.probability >= 25 ? '#ffd97d' : '#ff9f9f';
-            return `<span style="color:${tone}; font-weight:700;">${pct}%</span>
+            const ci = (target.ci_low !== undefined && target.ci_high !== undefined)
+                ? ` <span style="color:#dee2e6; font-size:11px;">(&plusmn; CI ${Number(target.ci_low).toFixed(0)}\u2013${Number(target.ci_high).toFixed(0)}%)</span>` : '';
+            return `<span style="color:${tone}; font-weight:700;">${pct}%</span>${ci}
                     <span style="color:#e9ecef; font-size:11px;"> ${target.evidence || ''}</span>`;
         }
 
@@ -1624,6 +1637,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <h4 style="margin: 0 0 10px 0; color: var(--text-primary);">
                             Recent headlines${(analysis.headlines && analysis.headlines.count) ? ' (' + analysis.headlines.count + ')' : ''}
                         </h4>
+                        ${analysis.fall_reason ? `<div style="margin: 0 0 10px 0;">
+                            <span title="${analysis.fall_reason.basis}" style="background: rgba(108,92,231,0.18); border: 1px solid #6c5ce7; border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--text-primary);">
+                                Likely reason: <strong>${analysis.fall_reason.label}</strong>
+                            </span></div>` : ''}
                         ${(analysis.headlines && analysis.headlines.available && analysis.headlines.items.length)
                             ? analysis.headlines.items.map(h => `
                                 <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color);">
@@ -3482,6 +3499,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <a href="/export/csv" style="background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
                         📊 Export CSV
                     </a>
+                    <a href="/track-record" style="background-color: #6c5ce7; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
+                        📜 Track Record
+                    </a>
+                    <a href="/methodology" style="background-color: #444c56; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
+                        📖 Methodology
+                    </a>
                     <span style="font-size: 12px; color: var(--text-secondary); margin-left: 15px;">{{ timestamp.split(' (')[0] }}</span>
                 </div>
             </div>
@@ -3534,7 +3557,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             {% macro stock_cards(rows, section_id) %}
             <div class="stock-cards" id="cards-{{ section_id }}">
                 {% for stock in rows %}
-                <div class="stock-card"
+                <div class="stock-card" role="button" tabindex="0"
+                     aria-label="Open full analysis for {{ stock.Symbol }}"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
                      data-score="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}"
                      data-upside="{{ stock['Potential Return %'] if stock['Potential Return %'] != '\u2014' else -999 }}"
                      data-p7="{{ stock['P Short']['sort'] }}"
@@ -3571,7 +3596,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 {% if recommendations %}
                     <div class="card-sorter" data-target="cards-recs">
                         <span>Sort:</span>
-                        <button class="sort-chip active" onclick="sortCards('cards-recs', 'score', this)">Score</button>
+                        <button class="sort-chip active" aria-pressed="true" onclick="sortCards('cards-recs', 'score', this)">Score</button>
                         <button class="sort-chip" onclick="sortCards('cards-recs', 'upside', this)">Upside</button>
                         <button class="sort-chip" onclick="sortCards('cards-recs', 'p7', this)">7d odds</button>
                     </div>
@@ -3670,7 +3695,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 {% if all_analysis %}
                     <div class="card-sorter" data-target="cards-all">
                         <span>Sort:</span>
-                        <button class="sort-chip active" onclick="sortCards('cards-all', 'score', this)">Score</button>
+                        <button class="sort-chip active" aria-pressed="true" onclick="sortCards('cards-all', 'score', this)">Score</button>
                         <button class="sort-chip" onclick="sortCards('cards-all', 'upside', this)">Upside</button>
                         <button class="sort-chip" onclick="sortCards('cards-all', 'p7', this)">7d odds</button>
                     </div>
@@ -3909,6 +3934,179 @@ def index():
     except Exception as e:
         logger.error(f"Error in main analysis: {str(e)}")
         return f"<h1>Error occurred during analysis: {str(e)}</h1><p>Please try refreshing the page.</p>"
+
+
+@app.route('/api/snapshot')
+@rate_limit(MAX_AI_REQUESTS_PER_MINUTE)
+def api_snapshot():
+    """One day's full model output, for the nightly recorder to commit.
+
+    Runs the complete scoring (all six factors, fetches allowed) for today's
+    losers, and quotes every symbol picked in recent snapshots so forward
+    returns stay computable after names drop off the losers list. Called once
+    a day by the GitHub Action; the throttle keeps the burst legal.
+    """
+    losers_data, status = scrape_yahoo_losers()
+    if not status.get("success"):
+        return jsonify({"error": "losers list unavailable", "detail": status.get("message")}), 503
+
+    symbols = [s["Symbol"] for s in losers_data if s.get("Symbol") and s["Symbol"] != "ERROR"]
+    market_data.batch_history(symbols)
+
+    universe = []
+    for stock in losers_data:
+        symbol = stock.get("Symbol")
+        if not symbol or symbol == "ERROR":
+            continue
+        try:
+            result = score_stock(symbol, full=True)
+        except Exception as e:
+            logger.warning(f"snapshot scoring failed for {symbol}: {type(e).__name__}")
+            result = {"scored": False, "reason": type(e).__name__}
+        tech = market_data.technicals(symbol, allow_fetch=False)
+        price = (tech.value or {}).get("close") if tech.ok else None
+        targets = market_data.analyst_target(symbol, allow_fetch=False)
+        row = {
+            "symbol": symbol,
+            "price": price,
+            "score": result.get("score") if result.get("scored") else None,
+            "confidence": result.get("confidence"),
+            "coverage": result.get("coverage"),
+            "not_scored_reason": None if result.get("scored") else result.get("reason"),
+            "factors": {f["key"]: {"score": f["score"], "detail": f["detail"]}
+                        for f in result.get("factors", []) if f.get("key")} if result.get("scored") else {},
+            "analyst_target_mean": targets["mean"].value if targets["mean"].ok else None,
+            "analyst_count": targets["analysts"].value if targets["analysts"].ok else None,
+        }
+        universe.append(row)
+
+    prior = [s for s in tracking.tracked_symbols() if s not in set(symbols)]
+    tracked_prices = {}
+    if prior:
+        market_data.batch_history(prior)
+        for symbol in prior:
+            history = market_data.price_history(symbol, allow_fetch=False)
+            if history.ok and history.value:
+                tracked_prices[symbol] = history.value[-1]
+
+    return jsonify(tracking.build_snapshot(universe, tracked_prices))
+
+
+@app.route('/track-record')
+def track_record_page():
+    """Realized forward returns of every logged pick, computed from git history."""
+    record = tracking.compute_track_record()
+    rows = ""
+    for pick in record["picks"][:60]:
+        rets = pick.get("returns", {})
+        def cell(h):
+            r = rets.get(str(h))
+            if not r:
+                return '<td class="pending">pending</td>'
+            tone = '#2ecc71' if r['pct'] > 0 else '#e74c3c'
+            return f'<td style="color:{tone}">{r["pct"]:+.1f}%</td>'
+        rows += (f'<tr><td>{pick["date"]}</td><td class="sym">{pick["symbol"]}</td>'
+                 f'<td>{pick["score"]:.1f}</td><td>${pick["entry"]:.2f}</td>'
+                 f'{cell(7)}{cell(30)}</tr>')
+
+    def agg(h):
+        e = record["horizons"].get(str(h), {})
+        if not e.get("n_picks"):
+            return f"<p>No picks have reached the {h}-day horizon yet.</p>"
+        parts = [f"<strong>{e['n_picks']}</strong> resolved picks, mean <strong>{e.get('picks_mean', 0):+.2f}%</strong>, "
+                 f"win rate <strong>{e.get('picks_win_rate', 0):.0%}</strong>"]
+        if e.get("baseline_mean") is not None:
+            parts.append(f" vs unpicked-losers baseline {e['baseline_mean']:+.2f}% "
+                         f"(excess <strong>{e.get('excess', 0):+.2f}%</strong>, n={e['n_baseline']})")
+        return f"<p>{''.join(parts)}</p>"
+
+    body = f"""
+    <h1>📜 Track Record</h1>
+    <p class="sub">Every recommendation this app has logged, joined with the prices its own later
+    snapshots recorded. Snapshots are committed to
+    <a href="https://github.com/repbyrepdev/yahoo_losers_webapp/tree/main/data/snapshots">git</a>,
+    so this history is tamper-evident &mdash; rewriting it would leave a diff.</p>
+    <p class="sub">Recording began <strong>{record['first_date'] or 'today'}</strong> &middot;
+    {record['snapshot_days']} snapshot day(s) &middot; model v{record['model_version']} &middot;
+    picks are scores &ge; {record['pick_threshold']:.0f} &middot; {record['pending']} pick(s) awaiting a forward price.</p>
+    <h2>~7 calendar days</h2>{agg(7)}
+    <h2>~30 calendar days</h2>{agg(30)}
+    <h2>Individual picks</h2>
+    <table><thead><tr><th>Date</th><th>Symbol</th><th>Score</th><th>Entry</th>
+    <th>~7d</th><th>~30d</th></tr></thead><tbody>{rows or '<tr><td colspan=6>No picks logged yet &mdash; the first snapshot lands tonight.</td></tr>'}</tbody></table>
+    <p class="sub">Horizons match to the nearest snapshot (&plusmn;40%), so "7d" is calendar-approximate.
+    Returns ignore dividends and costs. A young record proves little either way; that is why it is dated.</p>
+    """
+    return _simple_page("Track Record", body)
+
+
+@app.route('/methodology')
+def methodology_page():
+    """The README, rendered in-app, so the methodology ships with the product."""
+    try:
+        import markdown as _md
+        with open(os.path.join(os.path.dirname(__file__), "README.md"), encoding="utf-8") as fh:
+            html = _md.markdown(fh.read(), extensions=["tables", "fenced_code"])
+    except Exception as e:
+        logger.warning(f"methodology render failed: {type(e).__name__}")
+        html = "<p>Methodology temporarily unavailable.</p>"
+    return _simple_page("Methodology", html)
+
+
+_CLIENT_ERRORS = deque(maxlen=50)
+
+
+@app.route('/api/client-error', methods=['POST'])
+@rate_limit(10)
+def client_error():
+    """Browser-side failures, logged server-side.
+
+    Tonight's tab-blanking bugs lived inside swallowed catch handlers and were
+    invisible from the server. This gives them somewhere to land.
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        entry = {
+            "at": datetime.now().isoformat(),
+            "msg": str(payload.get("msg", ""))[:300],
+            "src": str(payload.get("src", ""))[:200],
+            "line": payload.get("line"),
+        }
+        _CLIENT_ERRORS.append(entry)
+        logger.error(f"client-error: {entry['msg']} @ {entry['src']}:{entry['line']}")
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
+@app.route('/api/client-errors')
+def client_errors():
+    return jsonify({"errors": list(_CLIENT_ERRORS)})
+
+
+def _simple_page(title, body_html):
+    """Shared shell for the static-ish pages, matching the app's dark theme."""
+    return f"""<!DOCTYPE html><html><head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0d1117"><title>{title} — Daily Losers</title>
+    <style>
+      body {{ background: #0d1117; color: #e6edf3; font-family: -apple-system, system-ui, sans-serif;
+             max-width: 900px; margin: 0 auto; padding: 20px; line-height: 1.6; }}
+      a {{ color: #6c8dff; }}
+      h1, h2, h3 {{ color: #fff; }} code, pre {{ background: #161b22; border-radius: 6px; padding: 2px 6px; }}
+      pre {{ padding: 12px; overflow-x: auto; }}
+      table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
+      th, td {{ border: 1px solid #30363d; padding: 8px 10px; text-align: left; font-size: 14px; }}
+      th {{ background: #161b22; }}
+      .sub {{ color: #8b949e; font-size: 14px; }} .sym {{ color: #6c8dff; font-weight: 700; }}
+      .pending {{ color: #8b949e; font-style: italic; }}
+      .nav {{ margin-bottom: 18px; }}
+    </style></head><body>
+    <div class="nav"><a href="/">&larr; Dashboard</a> &middot; <a href="/track-record">Track record</a>
+    &middot; <a href="/methodology">Methodology</a></div>
+    {body_html}
+    </body></html>"""
+
 
 @app.route('/sw.js')
 def service_worker():
@@ -4782,6 +4980,34 @@ def get_news_analysis(symbol):
             "error": str(e)
         })
 
+
+# Why-it-fell buckets, display-only. Keyword matching over real headlines; the
+# label carries no scoring weight until the snapshot record is deep enough to
+# measure whether recovery odds actually differ by reason.
+FALL_REASONS = [
+    ("Earnings miss", ("miss", "misses", "falls short", "disappoint", "q1", "q2", "q3", "q4", "quarterly results", "earnings call")),
+    ("Guidance cut", ("guidance", "outlook", "forecast", "lowers", "cuts forecast", "warns")),
+    ("Dilution / offering", ("offering", "dilution", "share sale", "secondary", "convertible", "priced", "raises capital")),
+    ("Analyst downgrade", ("downgrade", "downgrades", "cut to", "lowers rating", "underweight", "sell rating")),
+    ("Legal / regulatory", ("lawsuit", "probe", "investigation", "sec ", "fda", "recall", "fine", "settlement")),
+    ("Sector / market move", ("sector", "peers", "market", "sympathy", "broad", "tariff", "rates", "macro")),
+]
+
+
+def classify_fall_reason(headlines):
+    """Best-guess reason for the drop, from real headline text, with the match."""
+    text = " ".join((h.get("title") or "") for h in (headlines or [])).lower()
+    if not text.strip():
+        return {"label": "No headlines", "matched": None, "basis": "no recent headlines to classify"}
+    for label, needles in FALL_REASONS:
+        for needle in needles:
+            if needle in text:
+                return {"label": label, "matched": needle,
+                        "basis": "keyword match over recent headlines; display-only, carries no scoring weight"}
+    return {"label": "Unclassified", "matched": None,
+            "basis": "no known pattern matched the recent headlines"}
+
+
 def analyze_stock_news(symbol):
     """Recent headlines plus the current analyst rating spread.
 
@@ -4808,6 +5034,7 @@ def analyze_stock_news(symbol):
             "count": len(news.value) if news.ok else 0,
             "reason": None if news.ok else news.reason,
         },
+        "fall_reason": classify_fall_reason(news.value if news.ok else []),
         "analyst_posture": {
             "available": ratings.ok,
             "source": ratings.source,
@@ -5381,6 +5608,8 @@ def track_institutional_flow(symbol):
     else:
         ownership["reason"] = held.reason
 
+    short_vol = market_data.finra_short_volume(symbol)
+
     signals = []
     if ownership.get("pct_held") is not None:
         signals.append(f"🏛️ {ownership['pct_held']:.1%} held by institutions")
@@ -5389,11 +5618,18 @@ def track_institutional_flow(symbol):
     if volume_ratio is not None:
         descriptor = "elevated" if volume_ratio > 1.5 else "normal" if volume_ratio > 0.7 else "light"
         signals.append(f"📊 Volume {volume_ratio:.2f}x 20-day average ({descriptor})")
+    if short_vol.ok:
+        signals.append(f"🩳 {short_vol.value['short_ratio']:.0%} of volume sold short (FINRA, {short_vol.value['as_of']})")
 
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
         "available": held.ok or holders.ok,
+        "short_volume": (
+            {"available": True, "source": short_vol.source, **short_vol.value}
+            if short_vol.ok else
+            {"available": False, "source": short_vol.source, "reason": short_vol.reason}
+        ),
         "ownership": ownership,
         "top_holders": {
             "available": holders.ok,

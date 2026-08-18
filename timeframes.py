@@ -105,10 +105,29 @@ def target_probability(closes: np.ndarray, target_pct: float, band: str) -> Sour
     return Sourced.live(measured, source)
 
 
+def wilson_interval(hits: int, windows: int, z: float = 1.96):
+    """95% Wilson score interval for a proportion.
+
+    Reported beside every hit rate so a thin sample cannot masquerade as a
+    solid one: 20/59 reads plus-or-minus twelve points, 1004/1233 plus-or-minus
+    two. Overlapping windows are not independent, so the true uncertainty is
+    somewhat wider than this -- stated in the methodology rather than hidden.
+    """
+    if windows <= 0:
+        return (0.0, 0.0)
+    p = hits / windows
+    denom = 1 + z * z / windows
+    centre = (p + z * z / (2 * windows)) / denom
+    half = (z / denom) * ((p * (1 - p) / windows + z * z / (4 * windows ** 2)) ** 0.5)
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
 def describe(measured: dict) -> str:
     """Plain statement of the evidence, for display next to the number."""
+    low, high = wilson_interval(measured["hits"], measured["windows"])
     return (f"{measured['hits']} of {measured['windows']} historical "
-            f"{measured['horizon_bars']}-day windows")
+            f"{measured['horizon_bars']}-day windows "
+            f"(95% CI {low*100:.0f}-{high*100:.0f}%)")
 
 
 def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) -> Dict[str, dict]:
@@ -141,9 +160,12 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) ->
                                       f"{'s' if median_days != 1 else ''} (median)")
                 entry["timeframe_source"] = "empirical:price-history"
 
+            ci_low, ci_high = wilson_interval(measured["hits"], measured["windows"])
             entry.update({
                 "probability_available": True,
                 "probability": round(measured["probability"] * 100, 1),
+                "ci_low": round(ci_low * 100, 1),
+                "ci_high": round(ci_high * 100, 1),
                 "evidence": describe(measured),
                 "hits": measured["hits"],
                 "windows": measured["windows"],

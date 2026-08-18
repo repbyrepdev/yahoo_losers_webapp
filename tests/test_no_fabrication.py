@@ -628,3 +628,127 @@ class TestTableSummaries:
         for band in out.values():
             assert band['display'] == '—'
             assert band['sort'] == -1.0
+
+
+class TestWilsonIntervals:
+    """Every hit rate carries a confidence interval, so thin samples show it."""
+
+    def test_thin_sample_is_visibly_wide(self):
+        import timeframes
+        low, high = timeframes.wilson_interval(20, 59)
+        assert high - low > 0.2          # ±10+ points on 59 windows
+        low2, high2 = timeframes.wilson_interval(1004, 1233)
+        assert high2 - low2 < 0.05       # fat sample, tight interval
+
+    def test_bounds_stay_in_range(self):
+        import timeframes
+        for hits, windows in ((0, 50), (50, 50), (1, 1233)):
+            low, high = timeframes.wilson_interval(hits, windows)
+            assert 0.0 <= low <= high <= 1.0
+
+    def test_zero_windows_does_not_divide(self):
+        import timeframes
+        assert timeframes.wilson_interval(0, 0) == (0.0, 0.0)
+
+    def test_annotated_targets_carry_the_interval(self):
+        import numpy as np
+        import timeframes
+        closes = np.array([100.0, 103.0, 99.0, 101.0] * 40)
+        out = timeframes.annotate_targets(closes, {"t": {"upside_percent": 2.0}}, "short")
+        assert "ci_low" in out["t"] and "ci_high" in out["t"]
+        assert out["t"]["ci_low"] <= out["t"]["probability"] <= out["t"]["ci_high"]
+
+
+class TestFallReason:
+    """The why-it-fell label comes from real headline text, display-only."""
+
+    def setup_method(self):
+        import app
+        self.classify = app.classify_fall_reason
+
+    def test_earnings_language_classifies(self):
+        out = self.classify([{"title": "Acme misses Q2 estimates, shares slide"}])
+        assert out["label"] == "Earnings miss"
+        assert out["matched"]
+
+    def test_offering_language_classifies(self):
+        out = self.classify([{"title": "Acme announces $200M secondary offering"}])
+        assert out["label"] == "Dilution / offering"
+
+    def test_no_headlines_says_so(self):
+        out = self.classify([])
+        assert out["label"] == "No headlines"
+
+    def test_unmatched_text_is_unclassified_not_guessed(self):
+        out = self.classify([{"title": "Acme appoints new head of design"}])
+        assert out["label"] == "Unclassified"
+
+    def test_label_carries_its_basis(self):
+        out = self.classify([{"title": "Analyst downgrades Acme to underweight"}])
+        assert "display-only" in out["basis"]
+
+
+class TestTrackRecord:
+    """Forward returns come only from prices the record actually contains."""
+
+    def _write(self, tmp_path, day, universe, tracked=None):
+        import json
+        snap = {"date": day, "model_version": "test", "universe": universe,
+                "tracked_prices": tracked or {}}
+        (tmp_path / f"{day}.json").write_text(json.dumps(snap))
+
+    def test_pick_joins_with_later_recorded_price(self, tmp_path):
+        import tracking
+        self._write(tmp_path, "2026-08-01",
+                    [{"symbol": "AAA", "price": 10.0, "score": 80.0},
+                     {"symbol": "BBB", "price": 20.0, "score": 40.0}])
+        self._write(tmp_path, "2026-08-08", [], tracked={"AAA": 11.0, "BBB": 19.0})
+        record = tracking.compute_track_record(str(tmp_path))
+        seven = record["horizons"]["7"]
+        assert seven["n_picks"] == 1
+        assert seven["picks_mean"] == 10.0          # +10% on AAA
+        assert seven["baseline_mean"] == -5.0       # -5% on BBB
+        assert seven["excess"] == 15.0
+
+    def test_unresolved_pick_is_pending_not_dropped(self, tmp_path):
+        import tracking
+        self._write(tmp_path, "2026-08-01",
+                    [{"symbol": "AAA", "price": 10.0, "score": 90.0}])
+        record = tracking.compute_track_record(str(tmp_path))
+        assert record["pending"] == 1
+        assert record["horizons"]["7"].get("n_picks", 0) == 0
+
+    def test_empty_directory_reports_honestly(self, tmp_path):
+        import tracking
+        record = tracking.compute_track_record(str(tmp_path))
+        assert record["snapshot_days"] == 0
+        assert record["picks"] == []
+
+    def test_tracked_symbols_covers_recent_universe(self, tmp_path):
+        import tracking
+        from datetime import date, timedelta
+        recent = (date.today() - timedelta(days=3)).isoformat()
+        self._write(tmp_path, recent, [{"symbol": "CCC", "price": 5.0, "score": 75.0}])
+        assert "CCC" in tracking.tracked_symbols(str(tmp_path))
+
+
+class TestFinraParsing:
+    """The RegSHO feed carries fractional volumes; parsing must not choke."""
+
+    def test_fractional_volumes_parse(self, monkeypatch):
+        import market_data
+
+        class FakeResponse:
+            status_code = 200
+            text = ("Date|Symbol|ShortVolume|ShortExemptVolume|TotalVolume|Market\n"
+                    "20260817|WING|468113.5|7|828936.2|B,Q,N\n"
+                    "20260817|ZERO|100|0|0|B,Q,N\n")
+
+        import requests as rq
+        monkeypatch.setattr(rq, "get", lambda *a, **k: FakeResponse())
+        market_data._cache._local.pop("finra:daily", None)
+        sourced = market_data.finra_short_volume("WING")
+        assert sourced.ok
+        assert abs(sourced.value["short_ratio"] - 0.5647) < 0.001
+        # zero-total row is skipped, not divided by
+        assert not market_data.finra_short_volume("ZERO").ok
