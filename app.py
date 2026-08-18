@@ -734,6 +734,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#0d1117">
+        <link rel="manifest" href="/static/manifest.json">
+        <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+        <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
         <title>Yahoo Finance Daily Losers Analysis</title>
         <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
         <meta http-equiv="Pragma" content="no-cache">
@@ -1080,6 +1084,49 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 100% { transform: rotate(360deg); }
             }
             
+            /* Mobile stock cards. Desktop keeps the dense table; below
+               768px each stock becomes a tappable card, which beats swiping a
+               nine-column table sideways on a phone. */
+            .stock-cards { display: none; }
+            .card-sorter { display: none; }
+            @media (max-width: 768px) {
+                .table-wrap { display: none; }
+                .stock-cards { display: grid; gap: 10px; }
+                .card-sorter {
+                    display: flex; align-items: center; gap: 8px;
+                    margin: 4px 0 12px; font-size: 12px; color: var(--text-secondary);
+                }
+                .sort-chip {
+                    background: var(--bg-tertiary); color: var(--text-secondary);
+                    border: 1px solid var(--border-color); border-radius: 999px;
+                    padding: 6px 12px; font-size: 12px; cursor: pointer;
+                }
+                .sort-chip.active { background: #6c5ce7; color: #fff; border-color: #6c5ce7; }
+            }
+            .stock-card {
+                background: var(--bg-secondary); border: 1px solid var(--border-color);
+                border-radius: 12px; padding: 12px 14px; cursor: pointer;
+                box-shadow: var(--shadow);
+            }
+            .stock-card:active { transform: scale(0.985); }
+            .card-top { display: flex; align-items: baseline; gap: 10px; }
+            .card-symbol { font-size: 18px; font-weight: 700; color: #6c8dff; }
+            .card-price { color: var(--text-primary); font-weight: 600; }
+            .card-change { margin-left: auto; color: #e74c3c; font-weight: 700; }
+            .card-score-row { display: flex; align-items: baseline; gap: 6px; margin: 6px 0 8px; flex-wrap: wrap; }
+            .card-score { font-size: 22px; font-weight: 800; color: var(--text-primary); }
+            .card-score-sub { font-size: 11px; color: var(--text-secondary); }
+            .card-sentiment { width: 100%; font-size: 12px; color: var(--text-secondary); }
+            .card-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+            .chip {
+                background: var(--bg-tertiary); border: 1px solid var(--border-color);
+                border-radius: 999px; padding: 4px 10px; font-size: 12px;
+                color: var(--text-secondary);
+            }
+            .chip strong { color: var(--text-primary); }
+            .chip-upside { border-color: #2ecc71; color: #2ecc71; }
+            .chip-upside em { font-style: normal; font-size: 10px; opacity: 0.8; }
+
             /* The tables scroll sideways inside this wrapper on narrow
                screens; without it nine columns crush into one-word-per-line
                cells and every row grows to several hundred pixels tall. */
@@ -1240,6 +1287,51 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
 
         // Client-side column sort for the loser tables. Numeric cells carry
         // their sortable value in data-val so display strings stay free-form.
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(() => {});
+            });
+        }
+
+        // Re-sort the mobile cards by a data attribute. Ties keep DOM order.
+        function sortCards(containerId, key, chip) {
+            const box = document.getElementById(containerId);
+            if (!box) return;
+            chip.closest('.card-sorter').querySelectorAll('.sort-chip')
+                .forEach(c => c.classList.remove('active'));
+            chip.classList.add('active');
+            [...box.querySelectorAll('.stock-card')]
+                .sort((a, b) => (parseFloat(b.dataset[key]) || -Infinity) -
+                                (parseFloat(a.dataset[key]) || -Infinity))
+                .forEach(card => box.appendChild(card));
+        }
+
+        // Swipe left/right moves through the analysis tabs on touch screens.
+        // Mostly-horizontal swipes only, so vertical scrolling stays untouched.
+        const ULTIMATE_TABS = [
+            ['sentiment-tab', '🤖📱'], ['recovery-tab', '🔮'],
+            ['mediumterm-tab', '⏰'], ['longterm-tab', '📊']];
+        let _swipeX = null, _swipeY = null;
+        document.addEventListener('touchstart', (e) => {
+            if (!e.target.closest('.modal-overlay')) { _swipeX = null; return; }
+            _swipeX = e.touches[0].clientX; _swipeY = e.touches[0].clientY;
+        }, {passive: true});
+        document.addEventListener('touchend', (e) => {
+            if (_swipeX === null) return;
+            const dx = e.changedTouches[0].clientX - _swipeX;
+            const dy = e.changedTouches[0].clientY - _swipeY;
+            _swipeX = null;
+            if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
+            const current = ULTIMATE_TABS.findIndex(([id]) => {
+                const el = document.getElementById(id);
+                return el && el.style.display !== 'none';
+            });
+            if (current === -1) return;
+            const next = current + (dx < 0 ? 1 : -1);
+            if (next < 0 || next >= ULTIMATE_TABS.length) return;
+            try { switchUltimateTab(ULTIMATE_TABS[next][0], ULTIMATE_TABS[next][1]); } catch (err) {}
+        }, {passive: true});
+
         function sortLoserTable(th, col, kind) {
             const table = th.closest('table');
             const body = table.querySelector('tbody');
@@ -3439,9 +3531,51 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
                 
 
+            {% macro stock_cards(rows, section_id) %}
+            <div class="stock-cards" id="cards-{{ section_id }}">
+                {% for stock in rows %}
+                <div class="stock-card"
+                     data-score="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}"
+                     data-upside="{{ stock['Potential Return %'] if stock['Potential Return %'] != '\u2014' else -999 }}"
+                     data-p7="{{ stock['P Short']['sort'] }}"
+                     data-sym="{{ stock.Symbol }}" data-name="{{ stock.Name }}"
+                     onclick="showUltimateAnalysis(this.dataset.sym, this.dataset.name)">
+                    <div class="card-top">
+                        <span class="card-symbol">{{ stock.Symbol }}</span>
+                        <span class="card-price">{% if stock['Current Price'] not in ('N/A', '\u2014') %}${{ "%.2f"|format(stock['Current Price']) }}{% else %}&#8212;{% endif %}</span>
+                        <span class="card-change">{{ stock['Percent Change Today'] }}</span>
+                    </div>
+                    <div class="card-score-row">
+                        {% if stock.get('Rebound Score') is not none %}
+                            <span class="card-score">{{ stock.get('Rebound Score') }}</span>
+                            <span class="card-score-sub">/100 · {{ stock.get('Confidence','') }} conf · {{ stock.get('Factors Used','?') }}/{{ stock.get('Factors Total', 6) }} inputs</span>
+                        {% else %}
+                            <span class="card-score">&#8212;</span>
+                            <span class="card-score-sub">{{ stock.get('Score Reason', 'insufficient data') }}</span>
+                        {% endif %}
+                        <span class="card-sentiment">{{ stock.get('AI Sentiment','') }}</span>
+                    </div>
+                    <div class="card-chips">
+                        <span class="chip" title="{{ stock['P Short'].get('detail','') }}">7d <strong>{{ stock['P Short']['display'] }}</strong></span>
+                        <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
+                        <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
+                        <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endmacro %}
+
             <div class="section">
                 <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
                 {% if recommendations %}
+                    <div class="card-sorter" data-target="cards-recs">
+                        <span>Sort:</span>
+                        <button class="sort-chip active" onclick="sortCards('cards-recs', 'score', this)">Score</button>
+                        <button class="sort-chip" onclick="sortCards('cards-recs', 'upside', this)">Upside</button>
+                        <button class="sort-chip" onclick="sortCards('cards-recs', 'p7', this)">7d odds</button>
+                    </div>
+                    {{ stock_cards(recommendations, 'recs') }}
                     <div class="table-wrap"><table>
                         <thead>
                             <tr>
@@ -3534,6 +3668,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <h2 style="text-align: left;">📊 Complete Analysis (All Daily Losers)</h2>
                 <p><em>Comprehensive analysis of all daily losers with AI recovery predictions and market insights.</em></p>
                 {% if all_analysis %}
+                    <div class="card-sorter" data-target="cards-all">
+                        <span>Sort:</span>
+                        <button class="sort-chip active" onclick="sortCards('cards-all', 'score', this)">Score</button>
+                        <button class="sort-chip" onclick="sortCards('cards-all', 'upside', this)">Upside</button>
+                        <button class="sort-chip" onclick="sortCards('cards-all', 'p7', this)">7d odds</button>
+                    </div>
+                    {{ stock_cards(all_analysis, 'all') }}
                     <div class="table-wrap"><table>
                         <thead>
                             <tr>
@@ -3768,6 +3909,13 @@ def index():
     except Exception as e:
         logger.error(f"Error in main analysis: {str(e)}")
         return f"<h1>Error occurred during analysis: {str(e)}</h1><p>Please try refreshing the page.</p>"
+
+@app.route('/sw.js')
+def service_worker():
+    # Served from the root so its scope covers the whole app; a worker under
+    # /static/ could only control /static/.
+    return app.send_static_file('sw.js')
+
 
 @app.route('/health')
 def health_check():
