@@ -30,7 +30,7 @@ def _training_rows(directory=None):
     Only rows whose 7-day forward return is resolvable from later snapshots
     qualify; unresolved rows are simply not training data yet.
     """
-    snapshots = tracking._load_snapshots(directory)
+    snapshots = tracking.load_snapshots(directory)
     by_date = {}
     for snap in snapshots:
         try:
@@ -53,7 +53,7 @@ def _training_rows(directory=None):
                     continue
                 gap = abs(later.toordinal() - target)
                 if gap <= max(2, int(FIT_HORIZON * 0.4)):
-                    price = tracking._price_on(by_date[later], symbol)
+                    price = tracking.price_on(by_date[later], symbol)
                     if price and (best is None or gap < best[0]):
                         best = (gap, price)
             if best is None:
@@ -79,8 +79,8 @@ def walk_forward(directory=None):
     For each test day after the warm-up, weights are fitted on all strictly
     earlier days, and that day's symbols are ranked by fitted score. The
     reported number is the mean forward return of each day's top-3 fitted
-    picks versus the top-3 by live score -- the comparison a weight change
-    would have to win before anyone should believe in it.
+    picks versus an equal-weight top-3 baseline -- the comparison a weight
+    change would have to win before anyone should believe in it.
     """
     rows = _training_rows(directory)
     days = sorted({r[0] for r in rows})
@@ -100,7 +100,7 @@ def walk_forward(directory=None):
     def vectorize(scores):
         return [scores.get(key, 50.0) / 100.0 for key in factor_keys]
 
-    fitted_daily, live_daily = [], []
+    fitted_daily, equal_daily = [], []
     weights = None
     for test_day in days[MIN_FIT_DAYS // 2:]:
         train = [r for r in rows if r[0] < test_day]
@@ -112,10 +112,13 @@ def walk_forward(directory=None):
         weights = _fit_ridge(matrix, returns)
         by_fitted = sorted(test, key=lambda r: float(np.dot(vectorize(r[1]), weights)),
                            reverse=True)[:3]
-        by_live = sorted(test, key=lambda r: sum(r[1].values()) / len(r[1]),
-                         reverse=True)[:3]
+        # Equal-weight mean, and labelled as such: reproducing the live
+        # scorer's renormalized weights over historical factor rows would
+        # claim a fidelity the snapshot data cannot verify.
+        by_equal = sorted(test, key=lambda r: sum(r[1].values()) / len(r[1]),
+                          reverse=True)[:3]
         fitted_daily.append(sum(r[2] for r in by_fitted) / len(by_fitted))
-        live_daily.append(sum(r[2] for r in by_live) / len(by_live))
+        equal_daily.append(sum(r[2] for r in by_equal) / len(by_equal))
 
     if not fitted_daily:
         result["ready"] = False
@@ -125,7 +128,7 @@ def walk_forward(directory=None):
     result.update({
         "test_days": len(fitted_daily),
         "fitted_top3_mean_return": round(float(np.mean(fitted_daily)), 2),
-        "live_top3_mean_return": round(float(np.mean(live_daily)), 2),
+        "equal_weight_top3_mean_return": round(float(np.mean(equal_daily)), 2),
         "latest_weights": {key: round(float(w), 4)
                            for key, w in zip(factor_keys, weights)},
         "status": "report-only: live scoring still uses the hand-chosen weights",

@@ -3741,13 +3741,14 @@ def _calibration_section():
 
 def _walkforward_section():
     """Out-of-sample weight fit status; report-only next to the live weights."""
+    header = "<h2>Walk-forward weight fit</h2>"
     try:
         import walkforward
         wf = walkforward.walk_forward()
     except Exception as e:
         logger.warning(f"walk-forward unavailable: {type(e).__name__}")
-        return ""
-    header = "<h2>Walk-forward weight fit</h2>"
+        return (f"{header}<p>Unavailable this render ({type(e).__name__}); "
+                f"the underlying snapshots are unaffected.</p>")
     if not wf.get("ready"):
         return (f"{header}<p>{wf.get('status', 'collecting')}. When enough days exist, factor "
                 f"weights get fitted on past days only and judged on strictly later ones; "
@@ -3755,14 +3756,23 @@ def _walkforward_section():
                 f"score does not change until the fitted ones prove out.</p>")
     weights = ", ".join(f"{k}: {v:+.3f}" for k, v in wf["latest_weights"].items())
     return (f"{header}<p>Across <strong>{wf['test_days']}</strong> out-of-sample days: fitted "
-            f"top-3 mean {wf['fitted_top3_mean_return']:+.2f}% vs live-score top-3 "
-            f"{wf['live_top3_mean_return']:+.2f}% over {wf['horizon_days']} days. "
+            f"top-3 mean {wf['fitted_top3_mean_return']:+.2f}% vs equal-weight top-3 baseline "
+            f"{wf['equal_weight_top3_mean_return']:+.2f}% over {wf['horizon_days']} days. "
             f"Latest fitted weights: {weights}. {wf['status']}.</p>")
+
+
+# The snapshot store changes once a day, but every render reparses it and the
+# walk-forward refit grows with history. Ten minutes of cache keeps the page
+# honest and O(1) for everyone after the first visitor.
+TRACK_RECORD_CACHE_SECONDS = 600
 
 
 @app.route('/track-record')
 def track_record_page():
     """Realized forward returns of every logged pick, computed from git history."""
+    cached_page = market_data._cache.get("page:track-record")
+    if cached_page and cached_page.get("html"):
+        return cached_page["html"]
     record = tracking.compute_track_record()
     calibration_section = _calibration_section()
     walkforward_section = _walkforward_section()
@@ -3817,7 +3827,9 @@ def track_record_page():
     <p class="sub">Horizons match to the nearest snapshot (&plusmn;40%), so "7d" is calendar-approximate.
     Returns ignore dividends and costs. A young record proves little either way; that is why it is dated.</p>
     """
-    return _simple_page("Track Record", body)
+    html = _simple_page("Track Record", body)
+    market_data._cache.set("page:track-record", {"html": html}, TRACK_RECORD_CACHE_SECONDS)
+    return html
 
 
 @app.route('/methodology')

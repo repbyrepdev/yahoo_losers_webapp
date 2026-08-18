@@ -947,7 +947,8 @@ def _parse_form4_xml(xml_text: str):
         root = ET.fromstring(xml_text)
     except ET.ParseError:
         return None
-    totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0}
+    totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0,
+              "unpriced": 0}
     found = False
     for txn in root.iter("nonDerivativeTransaction"):
         code = txn.findtext(".//transactionCoding/transactionCode")
@@ -955,8 +956,14 @@ def _parse_form4_xml(xml_text: str):
         price = txn.findtext(".//transactionPricePerShare/value")
         if code not in ("P", "S") or not shares:
             continue
+        # A priceless transaction cannot contribute a dollar figure; folding
+        # it in at zero would understate a total the payload claims is real.
+        if not price:
+            totals["unpriced"] += 1
+            found = True
+            continue
         try:
-            value = float(shares) * (float(price) if price else 0.0)
+            value = float(shares) * float(price)
         except ValueError:
             continue
         found = True
@@ -1014,7 +1021,8 @@ def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
         # Direction: fetch each filing's XML, newest first, capped. The
         # primaryDocument is sometimes the styled view (xslF345X.../doc.xml);
         # stripping the stylesheet path yields the raw XML EDGAR also serves.
-        totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0}
+        totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0,
+                  "unpriced": 0}
         parsed = unparsed = 0
         for _fdate, accession, doc in in_window[:MAX_FORM4_DOCS]:
             if not accession or not doc:
@@ -1104,29 +1112,38 @@ def sec_fundamentals(symbol: str) -> Sourced:
             return {"ok": False, "reason": f"edgar companyfacts unavailable ({type(e).__name__})"}
 
         def latest(concepts):
-            """Most recent USD value across the acceptable concepts, with its date."""
+            """Most recent USD value across the acceptable concepts.
+
+            Returns (end, value, start). Balance-sheet facts are instants and
+            carry start=None; flow facts keep their period start so two flows
+            are only ever combined when their periods actually match.
+            """
             best = None
             for concept in concepts:
                 for item in ((gaap.get(concept) or {}).get("units") or {}).get("USD") or []:
                     end, value = item.get("end"), item.get("val")
                     if end and isinstance(value, (int, float)):
                         if best is None or end > best[0]:
-                            best = (end, float(value))
+                            best = (end, float(value), item.get("start"))
                 if best:
                     break  # preference order: don't mix concepts
             return best
 
-        fields, dates = {}, {}
+        fields, dates, periods = {}, {}, {}
         for name, concepts in XBRL_CONCEPTS.items():
             hit = latest(concepts)
             if hit:
-                dates[name], fields[name] = hit
+                dates[name], fields[name], periods[name] = hit[0], hit[1], hit[2]
         if not fields:
             return {"ok": False, "reason": "no USD facts tagged for this issuer"}
         out = {"ok": True, "as_of": max(dates.values())}
         out.update(fields)
+        # FCF only from flows covering the same reporting period -- a quarterly
+        # OCF minus an annual capex is an accounting fiction, not a figure.
         ocf, capex = fields.get("operating_cash_flow"), fields.get("capex")
-        if ocf is not None and capex is not None:
+        if (ocf is not None and capex is not None
+                and dates.get("operating_cash_flow") == dates.get("capex")
+                and periods.get("operating_cash_flow") == periods.get("capex")):
             out["free_cash_flow"] = ocf - abs(capex)
         ac, lc = fields.get("assets_current"), fields.get("liabilities_current")
         if ac is not None and lc:

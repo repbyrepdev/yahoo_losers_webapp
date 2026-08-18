@@ -71,6 +71,16 @@ def _price_on(snapshot, symbol):
     return float(value) if value else None
 
 
+# Public aliases: walkforward.py consumes the same snapshot store, and the
+# underscore names would make that coupling look accidental.
+def load_snapshots(directory=None):
+    return _load_snapshots(directory)
+
+
+def price_on(snapshot, symbol):
+    return _price_on(snapshot, symbol)
+
+
 def build_snapshot(universe_rows, tracked_prices):
     """Assemble one day's record. Caller supplies scored rows and price map."""
     return {
@@ -252,21 +262,26 @@ def compute_calibration(directory=None):
                     continue
                 threshold = entry * (1 + target / 100.0)
                 end_ordinal = snap_date.toordinal() + horizon
-                hit = window_seen = False
+                hit = window_elapsed = price_observed = False
                 for later in ordered_dates:
                     if later <= snap_date:
                         continue
                     if later.toordinal() > end_ordinal:
-                        window_seen = True   # a snapshot exists past the window
+                        window_elapsed = True   # a snapshot exists past the window
                         break
                     price = _price_on(by_date[later], symbol)
-                    if price is not None and price >= threshold:
-                        hit = True
-                        break
+                    if price is not None:
+                        price_observed = True
+                        if price >= threshold:
+                            hit = True
+                            break
                     # 80% of the window observed counts as resolved-enough.
                     if later.toordinal() >= snap_date.toordinal() + horizon * 0.8:
-                        window_seen = True
-                if hit or window_seen:
+                        window_elapsed = True
+                # A miss must be supported by at least one recorded in-window
+                # price. A symbol that vanished from every later snapshot has
+                # no observed outcome, and grading it would fabricate one.
+                if hit or (window_elapsed and price_observed):
                     pairs.append((float(prob), 1 if hit else 0))
                 else:
                     unresolved += 1

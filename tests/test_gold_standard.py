@@ -36,7 +36,49 @@ GRANT_XML = BUY_XML.replace(">P<", ">A<")  # award, not an open-market trade
 class TestForm4Parsing:
     def test_buy_parsed(self):
         totals = market_data._parse_form4_xml(BUY_XML)
-        assert totals == {"buy_value": 25500.0, "sell_value": 0.0, "buys": 1, "sells": 0}
+        assert totals == {"buy_value": 25500.0, "sell_value": 0.0,
+                          "buys": 1, "sells": 0, "unpriced": 0}
+
+    def test_unpriced_transaction_excluded_from_totals(self):
+        xml = BUY_XML.replace(
+            "<transactionPricePerShare><value>25.50</value></transactionPricePerShare>", "")
+        totals = market_data._parse_form4_xml(xml)
+        assert totals["unpriced"] == 1
+        assert totals["buy_value"] == 0.0 and totals["buys"] == 0
+
+    def test_mismatched_flow_periods_omit_fcf(self, monkeypatch):
+        facts = {"facts": {"us-gaap": {
+            "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+                {"start": "2026-04-01", "end": "2026-06-30", "val": 80.0}]}},
+            "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+                {"start": "2025-07-01", "end": "2026-06-30", "val": 30.0}]}},
+        }}}
+        monkeypatch.setattr(market_data, "_edgar_cik_table",
+                            lambda: {"ok": True, "table": {"ZZPD1": "0000123456"}})
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return facts
+
+        import requests
+        monkeypatch.setattr(requests, "get", lambda url, **kw: FakeResponse())
+        monkeypatch.setattr(market_data, "_throttle", lambda: None)
+        result = market_data.sec_fundamentals("ZZPD1")
+        assert result.ok
+        assert "free_cash_flow" not in result.value  # quarterly OCF vs annual capex
+
+    def test_calibration_no_observed_price_stays_unresolved(self, tmp_path):
+        _snap(tmp_path, "2026-01-05",
+              [{"symbol": "GONE", "price": 100.0,
+                "predictions": {"short_term:t1": {"probability": 0.5, "target_pct": 5.0,
+                                                  "horizon_days": 7}}}])
+        # Later snapshots exist past the window but never price GONE again.
+        _snap(tmp_path, "2026-01-09", [{"symbol": "OTHER", "price": 50.0}])
+        _snap(tmp_path, "2026-01-20", [{"symbol": "OTHER", "price": 51.0}])
+        calib = tracking.compute_calibration(str(tmp_path))
+        assert calib["n_resolved"] == 0 and calib["n_unresolved"] == 1
 
     def test_sell_parsed(self):
         totals = market_data._parse_form4_xml(SELL_XML)
