@@ -796,7 +796,14 @@ def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
 # Concurrency for cache warming. The work is network-bound, so threads help
 # even on a fractional CPU, but the provider will throttle an aggressive fan-out.
 WARM_WORKERS = int(os.environ.get("MARKET_DATA_WARM_WORKERS", 3))
-MAX_PROFILES_PER_WARM = int(os.environ.get("MARKET_DATA_MAX_PROFILES", 12))
+
+# Per-cycle ceiling on uncached profile fetches. This was 12 when fetching
+# still happened inside page renders, where 25 rapid calls from one datacenter
+# IP read as a burst and got the IP banned. Fetching now lives on the
+# background thread with a 0.8s gap between calls, and 30 paced calls is a
+# steady trickle, not a burst -- so a single cycle covers the whole losers
+# list and the cache is complete in one pass instead of dribbling in.
+MAX_PROFILES_PER_WARM = int(os.environ.get("MARKET_DATA_MAX_PROFILES", 30))
 
 
 
