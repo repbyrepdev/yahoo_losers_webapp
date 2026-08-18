@@ -1443,7 +1443,9 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
     """
     symbols = [s.upper() for s in symbols]
     pending = [s for s in symbols
-               if _cache.get(f"tech:{s}") is None or _cache.get(f"hist:{s}:{period}") is None]
+               if (_cache.get(f"tech:{s}") is None
+                   or _cache.get(f"hist:{s}:{period}") is None
+                   or _cache.get(f"ohlcv:{s}:1y") is None)]
     if not pending:
         return 0
 
@@ -1490,7 +1492,7 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
                 "index": [d.isoformat() for d in recent.index],
                 "open": [None if o != o else float(o) for o in recent["Open"]],
                 "high": [None if h != h else float(h) for h in recent["High"]],
-                "low": [None if l != l else float(l) for l in recent["Low"]],
+                "low": [None if low != low else float(low) for low in recent["Low"]],
                 "close": [None if c != c else float(c) for c in recent["Close"]],
                 "volume": [0 if v != v else float(v) for v in recent["Volume"]],
             }, _effective_ttl(TTL_TECHNICALS))
