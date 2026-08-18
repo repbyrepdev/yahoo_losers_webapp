@@ -5625,8 +5625,8 @@ def track_institutional_flow(symbol):
         signals.append(f"📊 Volume {volume_ratio:.2f}x 20-day average ({descriptor})")
     if short_vol.ok:
         signals.append(f"🩳 {short_vol.value['short_ratio']:.0%} of volume sold short (FINRA, {short_vol.value['as_of']})")
-    if insiders.ok and insiders.value.get('count_90d'):
-        signals.append(f"📝 {insiders.value['count_90d']} insider Form 4 filing(s) in 90d, latest {insiders.value['latest']} (direction not parsed)")
+    if insiders.ok and insiders.value.get('count'):
+        signals.append(f"📝 {insiders.value['count']} insider Form 4 filing(s) in {insiders.value['window_days']}d, latest {insiders.value['latest']} (direction not parsed)")
     if balance.ok:
         signals.append(f"💼 {balance.value['label']} (derived from reported cash/debt/FCF)")
 

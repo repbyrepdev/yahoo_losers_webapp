@@ -842,19 +842,20 @@ def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
         forms = recent.get("form") or []
         dates = recent.get("filingDate") or []
         cutoff = (datetime.now().date() - _td(days=window_days)).isoformat()
+        # CR 2: amendments are insider activity too.
         form4_dates = [dates[i] for i in range(min(len(forms), len(dates)))
-                       if forms[i] == "4"]
+                       if forms[i] in ("4", "4/A")]
         in_window = [d for d in form4_dates if d >= cutoff]
         return {
             "ok": True,
-            "count_90d": len(in_window),
+            "count": len(in_window),
             "latest": form4_dates[0] if form4_dates else None,
             "window_days": window_days,
             "filings_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4&dateb=&owner=include&count=20",
             "note": "filing count only; buy/sell direction is not parsed yet",
         }
 
-    payload = _cached(f"edgar:form4:{symbol.upper()}", 24 * 60 * 60, produce)
+    payload = _cached(f"edgar:form4:{symbol.upper()}:{window_days}", 24 * 60 * 60, produce)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
@@ -875,19 +876,34 @@ def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
 
     cash, debt = info.get("total_cash"), info.get("total_debt")
     fcf, margins = info.get("free_cashflow"), info.get("profit_margins")
-    if cash is None and debt is None and fcf is None:
-        return Sourced.unavailable(source, "no balance-sheet fields reported")
 
-    net_cash = (cash or 0) - (debt or 0)
-    if fcf is not None and fcf < 0 and net_cash < 0:
-        label, tone = "Burning cash, net debt", "risk"
+    # Missing values stay missing. (cash or 0) would report an absent figure
+    # as a zero balance, and a posture claimed from absent free cash flow is
+    # an assertion nobody measured -- the same fabrication class this project
+    # removes everywhere else.
+    net_cash = (cash - debt) if (cash is not None and debt is not None) else None
+
+    parts = []
+    if net_cash is not None:
+        parts.append("Net cash" if net_cash > 0 else "Net debt")
+    if fcf is not None:
+        parts.append("burning cash" if fcf < 0 else "cash-flow positive")
+
+    if not parts:
+        return Sourced.unavailable(source, "cash, debt and free cash flow all unreported")
+
+    label = ", ".join(parts)
+    if fcf is not None and fcf < 0 and net_cash is not None and net_cash < 0:
+        tone = "risk"
     elif fcf is not None and fcf < 0:
-        label, tone = "Burning cash", "caution"
-    elif net_cash > 0:
-        label, tone = "Net cash", "solid"
+        tone = "caution"
+    elif net_cash is not None and net_cash > 0:
+        tone = "solid"
     else:
-        label, tone = "Net debt, cash-flow positive", "neutral"
+        tone = "neutral"
 
+    known = [name for name, value in
+             (("cash", cash), ("debt", debt), ("free cash flow", fcf)) if value is not None]
     return Sourced.derived({
         "label": label,
         "tone": tone,
@@ -896,7 +912,9 @@ def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
         "net_cash": net_cash,
         "free_cashflow": fcf,
         "profit_margins": margins,
-        "basis": "derived from yfinance-reported cash, debt and free cash flow",
+        # CR 4: the documented field name for derived payloads.
+        "estimate_basis": f"derived from yfinance-reported {', '.join(known)} only; "
+                          "unreported fields are omitted, not zeroed",
     }, source)
 
 

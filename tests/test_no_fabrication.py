@@ -855,15 +855,15 @@ class TestEdgarInsiders:
             if "company_tickers" in url:
                 return FakeResp({"0": {"ticker": "TSTX", "cik_str": 1234, "title": "T"}})
             return FakeResp({"filings": {"recent": {
-                "form": ["4", "10-K", "4"],
-                "filingDate": [recent_day, recent_day, old_day]}}})
+                "form": ["4", "10-K", "4", "4/A"],
+                "filingDate": [recent_day, recent_day, old_day, recent_day]}}})
 
         monkeypatch.setattr(rq, "get", fake_get)
         market_data._cache._local.pop("edgar:ciks", None)
         market_data._cache._local.pop("edgar:form4:TSTX", None)
         out = market_data.insider_filings("TSTX")
         assert out.ok
-        assert out.value["count_90d"] == 1          # one Form 4 inside 90d
+        assert out.value["count"] == 2               # Form 4 + 4/A inside window
         assert out.value["latest"] == recent_day
         assert "not parsed" in out.value["note"]     # direction honestly absent
 
@@ -887,7 +887,23 @@ class TestSolvency:
 
     def test_net_cash_positive_fcf(self, monkeypatch):
         out = self._with_info(monkeypatch, total_cash=500, total_debt=100, free_cashflow=50)
-        assert out.value["label"] == "Net cash" and out.is_derived
+        assert out.value["label"] == "Net cash, cash-flow positive" and out.is_derived
+
+    def test_missing_debt_never_becomes_a_zero_balance(self, monkeypatch):
+        """CodeRabbit finding: (cash or 0) reported absent figures as zeros."""
+        out = self._with_info(monkeypatch, total_cash=500, free_cashflow=50)
+        assert out.value["net_cash"] is None
+        assert "Net" not in out.value["label"]
+        assert out.value["label"] == "cash-flow positive"
+
+    def test_no_fcf_never_claims_cash_flow_posture(self, monkeypatch):
+        out = self._with_info(monkeypatch, total_cash=100, total_debt=500)
+        assert "cash-flow" not in out.value["label"]
+        assert out.value["label"] == "Net debt"
+
+    def test_payload_uses_documented_estimate_basis_field(self, monkeypatch):
+        out = self._with_info(monkeypatch, total_cash=1, total_debt=1, free_cashflow=1)
+        assert "estimate_basis" in out.value and "basis" != list(out.value)[-1]
 
     def test_burning_cash_with_net_debt_is_flagged_risk(self, monkeypatch):
         out = self._with_info(monkeypatch, total_cash=10, total_debt=500, free_cashflow=-50)
