@@ -51,11 +51,12 @@ jobs:
             --search "\"$TITLE\" in:title" --json number --jq '.[0].number' || echo "")
           if [ -n "$PROBLEMS" ]; then
             if [ -z "$EXISTING" ]; then
+              printf 'Automated check failed: %s\n\nEndpoint: %s\n%s\n' \
+                "$PROBLEMS" \
+                "https://yahoo-losers-webapp.onrender.com/health/sources" \
+                "This issue closes itself when the next check passes." > /tmp/body.md
               gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
-                --body "Automated check failed: ${PROBLEMS}
-
-Endpoint: https://yahoo-losers-webapp.onrender.com/health/sources
-This issue closes itself when the next check passes."
+                --body-file /tmp/body.md
             else
               echo "alert already open (#$EXISTING)"
             fi
