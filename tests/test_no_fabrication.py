@@ -451,8 +451,9 @@ class TestRenderPathMakesNoProviderCalls:
         monkeypatch.setattr(market_data.threading, "Thread",
                             lambda *a, **k: type("T", (), {"start": lambda self: started.append(1)})())
         assert market_data.start_background_warmer() is True
+        assert len(started) == 2  # fast lane + info lane
         assert market_data.start_background_warmer() is False
-        assert len(started) == 1
+        assert len(started) == 2  # second call spawns nothing
 
     def test_warmer_can_source_symbols_without_a_request(self):
         """The queue must not depend on a page render having happened."""
