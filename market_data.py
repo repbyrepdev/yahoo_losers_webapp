@@ -71,8 +71,13 @@ _info_last_call_at = [0.0]
 _info_cooldown_until = [0.0]
 
 
+_info_throttle_lock = threading.Lock()
+
+
 def _info_throttle():
-    with _throttle_lock:
+    # Own lock: sleeping four seconds while holding the shared throttle lock
+    # would stall the chart lane behind every info call.
+    with _info_throttle_lock:
         elapsed = time.time() - _info_last_call_at[0]
         wait = INFO_CALL_INTERVAL_SECONDS - elapsed
         if wait > 0:
