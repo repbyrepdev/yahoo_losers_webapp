@@ -62,6 +62,23 @@ MIN_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_MIN_INTERVAL", 0.8
 _throttle_lock = threading.Lock()
 _last_call_at = [0.0]
 
+# The .info lane (Yahoo quoteSummary) is far stricter than the chart lane and
+# is the endpoint behind every morning limiter trip in the logs. It gets its
+# own slower pacing, and one shared cooldown when it is refused -- individual
+# symbols are not poisoned for fifteen minutes each.
+INFO_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_INFO_INTERVAL", 4.0))
+_info_last_call_at = [0.0]
+_info_cooldown_until = [0.0]
+
+
+def _info_throttle():
+    with _throttle_lock:
+        elapsed = time.time() - _info_last_call_at[0]
+        wait = INFO_CALL_INTERVAL_SECONDS - elapsed
+        if wait > 0:
+            time.sleep(wait)
+        _info_last_call_at[0] = time.time()
+
 
 def _throttle():
     """Space out provider calls process-wide."""
@@ -153,7 +170,7 @@ def market_is_open() -> bool:
 PHASE_TTL_STRETCH = {"open": 1, "pre_market": 2, "after_hours": 2, "closed": 8}
 
 
-def _effective_ttl(base_ttl: int) -> int:
+def _effective_ttl(base_ttl: int, spread: float = 0.1) -> int:
     """Stretch TTLs when the market is closed, with jitter to avoid stampedes.
 
     Prices do not move overnight or at weekends, so refetching then spends the
@@ -162,7 +179,7 @@ def _effective_ttl(base_ttl: int) -> int:
     """
     stretch = PHASE_TTL_STRETCH.get(market_phase()["phase"], 8)
     ttl = base_ttl if stretch == 1 else min(base_ttl * stretch, 12 * 60 * 60)
-    return max(30, int(ttl * random.uniform(0.9, 1.1)))
+    return max(30, int(ttl * random.uniform(1.0 - spread, 1.0 + spread)))
 
 # An analyst "consensus" drawn from one or two estimates is noise, not consensus.
 MIN_ANALYSTS_FOR_CONSENSUS = 3
@@ -337,6 +354,8 @@ def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
 
     if value.get("ok"):
         lifetime = _effective_ttl(ttl)
+    elif "cooling down" in (value.get("reason") or ""):
+        lifetime = 90  # retry shortly after the shared cooldown lifts
     elif _is_rate_limited(value.get("reason", "")):
         lifetime = TTL_RATE_LIMITED
     elif _is_structural(value.get("reason", "")):
@@ -362,7 +381,19 @@ def _info(symbol: str, allow_fetch: bool = True) -> dict:
     """
 
     def produce():
-        info = _ticker(symbol).info or {}
+        if time.time() < _info_cooldown_until[0]:
+            return {"ok": False,
+                    "reason": "info lane cooling down after rate limit"}
+        _info_throttle()
+        try:
+            info = _ticker(symbol).info or {}
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            if _is_rate_limited(detail):
+                _info_cooldown_until[0] = time.time() + 240
+                logger.warning("quoteSummary rate-limited; info lane cooling 240s")
+                return {"ok": False, "reason": "info lane cooling down after rate limit"}
+            raise
         if not info.get("symbol") and not info.get("regularMarketPrice"):
             return {"ok": False, "reason": "no profile returned"}
         return {
@@ -390,7 +421,11 @@ def _info(symbol: str, allow_fetch: bool = True) -> dict:
             "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
         }
 
-    return _cached(f"info:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
+    # Wide jitter: entries written in the same evening batch must not expire
+    # in the same morning minute -- twenty-five simultaneous quoteSummary
+    # calls is exactly the burst that endpoint refuses.
+    return _cached(f"info:{symbol.upper()}", int(TTL_TARGETS * random.uniform(0.7, 1.3)),
+                   produce, allow_fetch)
 
 
 def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:

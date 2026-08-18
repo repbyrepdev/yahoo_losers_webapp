@@ -3826,7 +3826,12 @@ def health_sources():
     # every raw endpoint above looks unchanged, so it is probed explicitly.
     try:
         probe = market_data.analyst_target('AAPL')
-        rate_limited = 'ratelimit' in (probe['mean'].reason or '').lower() if not probe['mean'].ok else False
+        # The cached AAPL entry can answer "ok" while fresh info calls burn, so
+        # the lane's own cooldown state is the authoritative limiter signal.
+        import time as _time
+        lane_cooling = _time.time() < market_data._info_cooldown_until[0]
+        rate_limited = lane_cooling or (
+            'ratelimit' in (probe['mean'].reason or '').lower() if not probe['mean'].ok else False)
         results['yfinance'] = {
             'reachable': probe['mean'].ok or not rate_limited,
             'rate_limited': rate_limited,
