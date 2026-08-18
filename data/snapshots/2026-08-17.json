@@ -1,6 +1,6 @@
 {
  "date": "2026-08-17",
- "generated_at": "2026-08-18T00:38:46.414889+00:00",
+ "generated_at": "2026-08-18T01:05:00.377456+00:00",
  "model_version": "3.1",
  "note": "Recorded so every factor -- including those with no public historical archive -- accumulates an auditable record. Committed to git; history is tamper-evident.",
  "tracked_prices": {},
@@ -20,7 +20,7 @@
      "score": 79.07389023215468
     },
     "options_positioning": {
-     "detail": "put/call 0.82, balanced positioning",
+     "detail": "put/call 0.83, balanced positioning",
      "score": 50.0
     },
     "short_interest": {
@@ -52,17 +52,17 @@
      "score": 54.15
     },
     "technical_reversion": {
-     "detail": "RSI 48, %B 0.49, -0.3% vs 20d MA",
-     "score": 48.830733333333335
+     "detail": "RSI 47, %B 0.47, -1.7% vs 20d MA",
+     "score": 51.35593333333333
     },
     "volume_capitulation": {
-     "detail": "0.36x 20-day average (light)",
-     "score": 20.8
+     "detail": "0.37x 20-day average (light)",
+     "score": 21.1
     }
    },
    "not_scored_reason": null,
    "price": 6.449999809265137,
-   "score": 44.8,
+   "score": 46.3,
    "symbol": "PLBL"
   },
   {
@@ -88,22 +88,22 @@
      "score": 48.925000250000004
     },
     "technical_reversion": {
-     "detail": "RSI 38, %B 0.02, -15.0% vs 20d MA",
-     "score": 87.56336666666665
+     "detail": "RSI 37, %B 0.02, -14.8% vs 20d MA",
+     "score": 87.85023333333334
     },
     "volume_capitulation": {
-     "detail": "1.56x 20-day average (elevated)",
-     "score": 56.8
+     "detail": "1.61x 20-day average (elevated)",
+     "score": 58.300000000000004
     }
    },
    "not_scored_reason": null,
    "price": 19.530000686645508,
-   "score": 83.0,
+   "score": 83.2,
    "symbol": "LFTO"
   },
   {
    "analyst_count": 16,
-   "analyst_target_mean": 19.737614,
+   "analyst_target_mean": 19.713013,
    "confidence": "High",
    "coverage": 1.0,
    "factors": {
@@ -112,8 +112,8 @@
      "score": 97.5
     },
     "analyst_upside": {
-     "detail": "+83.4% to $19.74 consensus across 16 analysts",
-     "score": 83.70484036040804
+     "detail": "+83.2% to $19.71 consensus across 16 analysts",
+     "score": 83.66301105953181
     },
     "options_positioning": {
      "detail": "put/call 0.04, call-heavy positioning",
@@ -193,7 +193,7 @@
     },
     "technical_reversion": {
      "detail": "RSI 38, %B 0.24, -8.1% vs 20d MA",
-     "score": 72.26213333333332
+     "score": 72.26213333333334
     },
     "volume_capitulation": {
      "detail": "1.16x 20-day average (normal)",
@@ -228,17 +228,17 @@
      "score": 72.15
     },
     "technical_reversion": {
-     "detail": "RSI 49, %B 0.55, +1.4% vs 20d MA",
-     "score": 44.0438
+     "detail": "RSI 50, %B 0.55, +1.4% vs 20d MA",
+     "score": 43.65936666666666
     },
     "volume_capitulation": {
-     "detail": "0.84x 20-day average (normal)",
-     "score": 35.2
+     "detail": "0.86x 20-day average (normal)",
+     "score": 35.8
     }
    },
    "not_scored_reason": null,
    "price": 35.290000915527344,
-   "score": 53.2,
+   "score": 53.1,
    "symbol": "TENB"
   },
   {
@@ -300,17 +300,17 @@
      "score": 69.60000099999999
     },
     "technical_reversion": {
-     "detail": "RSI 46, %B 0.41, -2.2% vs 20d MA",
-     "score": 54.562000000000005
+     "detail": "RSI 46, %B 0.43, -1.8% vs 20d MA",
+     "score": 53.3847
     },
     "volume_capitulation": {
-     "detail": "1.09x 20-day average (normal)",
-     "score": 42.7
+     "detail": "1.14x 20-day average (normal)",
+     "score": 44.199999999999996
     }
    },
    "not_scored_reason": null,
    "price": 116.91999816894531,
-   "score": 72.2,
+   "score": 72.0,
    "symbol": "IRTC"
   },
   {
@@ -444,17 +444,17 @@
      "score": 59.8749995
     },
     "technical_reversion": {
-     "detail": "RSI 48, %B 0.48, -0.5% vs 20d MA",
-     "score": 49.07723333333333
+     "detail": "RSI 48, %B 0.46, -1.0% vs 20d MA",
+     "score": 50.0456
     },
     "volume_capitulation": {
-     "detail": "0.75x 20-day average (normal)",
-     "score": 32.5
+     "detail": "0.77x 20-day average (normal)",
+     "score": 33.1
     }
    },
    "not_scored_reason": null,
    "price": 89.7300033569336,
-   "score": 60.9,
+   "score": 61.2,
    "symbol": "XMTR"
   },
   {
@@ -492,6 +492,38 @@
    "price": 144.10000610351562,
    "score": 56.4,
    "symbol": "CHTR"
+  },
+  {
+   "analyst_count": 2,
+   "analyst_target_mean": null,
+   "confidence": "High",
+   "coverage": 0.83,
+   "factors": {
+    "analyst_ratings": {
+     "detail": "0 strong buy, 1 buy, 1 hold, 0 sell, 0 strong sell",
+     "score": 75.0
+    },
+    "options_positioning": {
+     "detail": "put/call 0.27, call-heavy positioning",
+     "score": 87.19999999999999
+    },
+    "short_interest": {
+     "detail": "3.5% of float short",
+     "score": 53.75
+    },
+    "technical_reversion": {
+     "detail": "RSI 50, %B 0.53, +1.1% vs 20d MA",
+     "score": 44.1834
+    },
+    "volume_capitulation": {
+     "detail": "0.64x 20-day average (light)",
+     "score": 29.200000000000003
+    }
+   },
+   "not_scored_reason": null,
+   "price": 33.959999084472656,
+   "score": 59.1,
+   "symbol": "LBRDK"
   },
   {
    "analyst_count": 0,
@@ -819,42 +851,7 @@
    "price": 6.940000057220459,
    "score": null,
    "symbol": "CLM"
-  },
-  {
-   "analyst_count": 10,
-   "analyst_target_mean": 92.6,
-   "confidence": "High",
-   "coverage": 1.0,
-   "factors": {
-    "analyst_ratings": {
-     "detail": "3 strong buy, 3 buy, 5 hold, 0 sell, 0 strong sell",
-     "score": 82.14285714285714
-    },
-    "analyst_upside": {
-     "detail": "+10.1% to $92.60 consensus across 10 analysts",
-     "score": 50.36715768329226
-    },
-    "options_positioning": {
-     "detail": "put/call 2.59, put extreme, read as capitulation",
-     "score": 65.87
-    },
-    "short_interest": {
-     "detail": "18.9% of float short",
-     "score": 92.375
-    },
-    "technical_reversion": {
-     "detail": "RSI 44, %B 0.19, -6.2% vs 20d MA",
-     "score": 67.72423333333334
-    },
-    "volume_capitulation": {
-     "detail": "0.92x 20-day average (normal)",
-     "score": 37.6
-    }
-   },
-   "not_scored_reason": null,
-   "price": 84.0999984741211,
-   "score": 65.0,
-   "symbol": "VSXY"
   }
- ]
+ ],
+ "correction": "Originally recorded as 2026-08-18: the server clock is UTC and the snapshot ran after 8 PM Eastern, so date.today() named the next day. Both files described the 2026-08-17 session; this fuller post-close record replaces the earlier seed. Dates are keyed to the US-Eastern trading day from this correction onward."
 }

@@ -752,3 +752,37 @@ class TestFinraParsing:
         assert abs(sourced.value["short_ratio"] - 0.5647) < 0.001
         # zero-total row is skipped, not divided by
         assert not market_data.finra_short_volume("ZERO").ok
+
+
+class TestTradingDates:
+    """The record is keyed to the exchange clock, not the server clock."""
+
+    def test_snapshot_date_is_the_eastern_trading_day(self, monkeypatch):
+        """Regression: at 01:05 UTC (9:05 PM EDT) the snapshot of the 08-17
+        session was filed as 08-18, because date.today() follows the UTC
+        server clock."""
+        import tracking
+        from datetime import datetime, date, timezone
+
+        class LateEvening(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                # 2026-08-18 01:05 UTC == 2026-08-17 21:05 EDT
+                fixed = datetime(2026, 8, 18, 1, 5, tzinfo=timezone.utc)
+                return fixed.astimezone(tz) if tz else fixed.replace(tzinfo=None)
+
+        monkeypatch.setattr(tracking, "datetime", LateEvening)
+        assert tracking.trading_date_today() == date(2026, 8, 17)
+        snap = tracking.build_snapshot([], {})
+        assert snap["date"] == "2026-08-17"
+
+    def test_no_snapshot_uses_a_utc_rolled_date(self):
+        """Committed snapshots must carry Eastern trading dates and no duplicates."""
+        import glob, json, os
+        dates = []
+        for path in glob.glob(os.path.join(os.path.dirname(__file__), "..", "data", "snapshots", "*.json")):
+            payload = json.load(open(path))
+            name = os.path.basename(path).replace(".json", "")
+            assert payload["date"] == name, f"{name} content disagrees with filename"
+            dates.append(name)
+        assert len(dates) == len(set(dates))

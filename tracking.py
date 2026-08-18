@@ -18,6 +18,18 @@ import logging
 import os
 from datetime import date, datetime, timezone
 
+import pytz
+
+# The record is keyed to the trading day, and trading days are US-Eastern.
+# The server clock is UTC, so date.today() after 8 PM Eastern names tomorrow --
+# which is how the evening snapshot of the 08-17 session got filed as 08-18.
+EASTERN = pytz.timezone("America/New_York")
+
+
+def trading_date_today() -> date:
+    """Today's date on the exchange clock, not the server clock."""
+    return datetime.now(EASTERN).date()
+
 logger = logging.getLogger(__name__)
 
 MODEL_VERSION = "3.1"
@@ -62,8 +74,9 @@ def _price_on(snapshot, symbol):
 def build_snapshot(universe_rows, tracked_prices):
     """Assemble one day's record. Caller supplies scored rows and price map."""
     return {
-        "date": date.today().isoformat(),
+        "date": trading_date_today().isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at_eastern": datetime.now(EASTERN).strftime("%Y-%m-%d %I:%M %p %Z"),
         "model_version": MODEL_VERSION,
         "universe": universe_rows,
         "tracked_prices": tracked_prices,
@@ -83,7 +96,7 @@ def tracked_symbols(directory=None, lookback_days=70):
         except ValueError:
             continue
         if cutoff is None:
-            cutoff = date.today().toordinal() - lookback_days
+            cutoff = trading_date_today().toordinal() - lookback_days
         if snap_date.toordinal() < cutoff:
             continue
         for row in snap.get("universe", []):

@@ -19,8 +19,17 @@ from typing import List, Optional
 
 import requests
 
+import pytz
+
 from provenance import Sourced
 import secrets_store
+
+EASTERN = pytz.timezone("America/New_York")
+
+
+def _eastern_today():
+    """Days-away figures follow the exchange clock, not the UTC server clock."""
+    return datetime.now(EASTERN).date()
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +154,7 @@ def fred_releases(days_ahead: int = 45) -> Sourced:
         return Sourced.unavailable(source, "FRED_API_KEY not configured")
 
     def produce():
-        today = date.today()
+        today = _eastern_today()
         events = []
         for release_id, name in FRED_RELEASES.items():
             try:
@@ -182,7 +191,7 @@ def fred_releases(days_ahead: int = 45) -> Sourced:
 
 def upcoming_events(days_ahead: int = 30) -> dict:
     """Merge the real calendars into one forward-looking list."""
-    today = date.today()
+    today = _eastern_today()
     horizon = today + timedelta(days=days_ahead)
 
     events: List[dict] = []
