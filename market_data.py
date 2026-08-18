@@ -754,6 +754,7 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
 
         return {
             "ok": True,
+            "fetched_at": time.time(),
             "close": last_close,
             "rsi14": round(float(rsi), 2) if rsi == rsi else None,
             "percent_b": round(float(percent_b), 3) if percent_b is not None and percent_b == percent_b else None,
@@ -930,14 +931,51 @@ def _edgar_cik_table():
     return _cached("edgar:ciks", 7 * 24 * 60 * 60, produce)
 
 
-def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
-    """Recent insider (Form 4) filing activity from SEC EDGAR.
+MAX_FORM4_DOCS = 6  # per symbol per day; EDGAR courtesy plus request latency
 
-    Reports the count and latest date of Form 4 filings inside the window,
-    with a link to the filings themselves. Deliberately NOT reported: whether
-    the insiders bought or sold -- that requires parsing each filing's XML,
-    which is not built yet, and a guessed direction would be worse than none.
-    The label says exactly this.
+
+def _parse_form4_xml(xml_text: str):
+    """Open-market buys and sells from one Form 4's non-derivative table.
+
+    Returns {"buy_value":, "sell_value":, "buys":, "sells":} or None when the
+    document has no parseable transactions. Codes: P = open-market purchase,
+    S = open-market sale. Grants, exercises and gifts are deliberately not
+    counted -- a scheduled RSU vest says nothing about conviction.
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0}
+    found = False
+    for txn in root.iter("nonDerivativeTransaction"):
+        code = txn.findtext(".//transactionCoding/transactionCode")
+        shares = txn.findtext(".//transactionShares/value")
+        price = txn.findtext(".//transactionPricePerShare/value")
+        if code not in ("P", "S") or not shares:
+            continue
+        try:
+            value = float(shares) * (float(price) if price else 0.0)
+        except ValueError:
+            continue
+        found = True
+        if code == "P":
+            totals["buy_value"] += value
+            totals["buys"] += 1
+        else:
+            totals["sell_value"] += value
+            totals["sells"] += 1
+    return totals if found else None
+
+
+def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
+    """Recent insider (Form 4) filing activity from SEC EDGAR, with direction.
+
+    Reports the filing count in the window and, by fetching each filing's XML
+    (capped at MAX_FORM4_DOCS), the aggregate open-market buy and sell dollar
+    value. Filings that cannot be parsed are counted as unparsed rather than
+    guessed at.
     """
     source = "sec-edgar:form4"
 
@@ -963,41 +1001,171 @@ def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
         recent = (payload.get("filings") or {}).get("recent") or {}
         forms = recent.get("form") or []
         dates = recent.get("filingDate") or []
+        accessions = recent.get("accessionNumber") or []
+        docs = recent.get("primaryDocument") or []
         cutoff = (datetime.now().date() - _td(days=window_days)).isoformat()
         # CR 2: amendments are insider activity too.
-        form4_dates = [dates[i] for i in range(min(len(forms), len(dates)))
-                       if forms[i] in ("4", "4/A")]
-        in_window = [d for d in form4_dates if d >= cutoff]
-        return {
+        rows = [(dates[i], accessions[i] if i < len(accessions) else None,
+                 docs[i] if i < len(docs) else None)
+                for i in range(min(len(forms), len(dates)))
+                if forms[i] in ("4", "4/A")]
+        in_window = [r for r in rows if r[0] >= cutoff]
+
+        # Direction: fetch each filing's XML, newest first, capped. The
+        # primaryDocument is sometimes the styled view (xslF345X.../doc.xml);
+        # stripping the stylesheet path yields the raw XML EDGAR also serves.
+        totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0}
+        parsed = unparsed = 0
+        for _fdate, accession, doc in in_window[:MAX_FORM4_DOCS]:
+            if not accession or not doc:
+                unparsed += 1
+                continue
+            doc = doc.split("/")[-1]
+            url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+                   f"{accession.replace('-', '')}/{doc}")
+            try:
+                _throttle()
+                doc_response = _rq.get(url, headers={"User-Agent": EDGAR_UA}, timeout=20)
+                doc_response.raise_for_status()
+                txns = _parse_form4_xml(doc_response.text)
+            except Exception:
+                txns = None
+            if txns is None:
+                unparsed += 1
+                continue
+            parsed += 1
+            for key in totals:
+                totals[key] += txns[key]
+
+        result = {
             "ok": True,
             "count": len(in_window),
-            "latest": form4_dates[0] if form4_dates else None,
+            "latest": rows[0][0] if rows else None,
             "window_days": window_days,
             "filings_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4&dateb=&owner=include&count=20",
-            "note": "filing count only; buy/sell direction is not parsed yet",
+            "parsed": parsed,
+            "unparsed": unparsed,
+            "note": (f"direction from the {parsed} most recent parseable filings; "
+                     "open-market P/S transactions only, grants and exercises excluded"),
         }
+        if parsed:
+            result.update({k: round(v, 2) if "value" in k else v for k, v in totals.items()})
+            result["net_value"] = round(totals["buy_value"] - totals["sell_value"], 2)
+        return result
 
-    payload = _cached(f"edgar:form4:{symbol.upper()}:{window_days}", 24 * 60 * 60, produce)
+    # v2 key: count-only payloads cached under the old key must not serve for
+    # a schema that now includes direction fields.
+    payload = _cached(f"edgar:form4v2:{symbol.upper()}:{window_days}", 24 * 60 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+EDGAR_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+
+# us-gaap concepts, in preference order per field. Issuers tag the same idea
+# under different concepts; the first one reported wins.
+XBRL_CONCEPTS = {
+    "cash": ("CashAndCashEquivalentsAtCarryingValue",
+             "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"),
+    "debt": ("LongTermDebt", "LongTermDebtNoncurrent", "DebtLongtermAndShorttermCombinedAmount"),
+    "assets_current": ("AssetsCurrent",),
+    "liabilities_current": ("LiabilitiesCurrent",),
+    "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",
+                            "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
+    "capex": ("PaymentsToAcquirePropertyPlantAndEquipment",),
+}
+
+
+def sec_fundamentals(symbol: str) -> Sourced:
+    """Balance-sheet and cash-flow figures straight from SEC XBRL filings.
+
+    companyfacts serves every USD fact a company has ever tagged; this keeps
+    the latest-dated value per concept. Filed numbers beat yfinance's scraped
+    profile fields -- they are the audited source those fields derive from.
+    """
+    source = "sec-edgar:xbrl-companyfacts"
+    ciks = _edgar_cik_table()
+    if not ciks.get("ok"):
+        return Sourced.unavailable(source, ciks.get("reason", "cik map unavailable"))
+    cik = ciks["table"].get(symbol.upper())
+    if not cik:
+        return Sourced.unavailable(source, "ticker not in SEC registry")
+
+    def produce():
+        import requests as _rq
+        try:
+            _throttle()
+            response = _rq.get(EDGAR_FACTS_URL.format(cik=cik),
+                               headers={"User-Agent": EDGAR_UA}, timeout=30)
+            response.raise_for_status()
+            gaap = (response.json().get("facts") or {}).get("us-gaap") or {}
+        except Exception as e:
+            return {"ok": False, "reason": f"edgar companyfacts unavailable ({type(e).__name__})"}
+
+        def latest(concepts):
+            """Most recent USD value across the acceptable concepts, with its date."""
+            best = None
+            for concept in concepts:
+                for item in ((gaap.get(concept) or {}).get("units") or {}).get("USD") or []:
+                    end, value = item.get("end"), item.get("val")
+                    if end and isinstance(value, (int, float)):
+                        if best is None or end > best[0]:
+                            best = (end, float(value))
+                if best:
+                    break  # preference order: don't mix concepts
+            return best
+
+        fields, dates = {}, {}
+        for name, concepts in XBRL_CONCEPTS.items():
+            hit = latest(concepts)
+            if hit:
+                dates[name], fields[name] = hit
+        if not fields:
+            return {"ok": False, "reason": "no USD facts tagged for this issuer"}
+        out = {"ok": True, "as_of": max(dates.values())}
+        out.update(fields)
+        ocf, capex = fields.get("operating_cash_flow"), fields.get("capex")
+        if ocf is not None and capex is not None:
+            out["free_cash_flow"] = ocf - abs(capex)
+        ac, lc = fields.get("assets_current"), fields.get("liabilities_current")
+        if ac is not None and lc:
+            out["current_ratio"] = round(ac / lc, 2)
+        return out
+
+    payload = _cached(f"edgar:facts:{symbol.upper()}", 24 * 60 * 60, produce)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
 
 
 def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
-    """Balance-sheet posture from the cached profile: cash, debt, cash flow.
+    """Balance-sheet posture: cash, debt, cash flow, current ratio.
 
     A profitable company knocked down ten percent and a cash-burner knocked
-    down ten percent are different bets. The classification is derived and
-    says so; the underlying figures are yfinance-reported, and the honest
-    upgrade path (XBRL values straight from filings) is noted in the README.
+    down ten percent are different bets. Figures come from SEC XBRL filings
+    when the issuer has them tagged (the audited source), falling back to
+    yfinance's profile fields; the payload names which one supplied them.
     """
-    source = "yfinance:balance-sheet-fields"
+    facts = sec_fundamentals(symbol) if allow_fetch else Sourced.unavailable(
+        "sec-edgar:xbrl-companyfacts", "fetch not allowed on this path")
     info = _info(symbol, allow_fetch)
-    if not info.get("ok"):
-        return Sourced.unavailable(source, info.get("reason", "unavailable"))
 
-    cash, debt = info.get("total_cash"), info.get("total_debt")
-    fcf, margins = info.get("free_cashflow"), info.get("profit_margins")
+    current_ratio = facts_as_of = None
+    if facts.ok:
+        source = facts.source
+        value = facts.value
+        cash, debt = value.get("cash"), value.get("debt")
+        fcf = value.get("free_cash_flow")
+        margins = info.get("profit_margins") if info.get("ok") else None
+        current_ratio, facts_as_of = value.get("current_ratio"), value.get("as_of")
+    elif info.get("ok"):
+        source = "yfinance:balance-sheet-fields"
+        cash, debt = info.get("total_cash"), info.get("total_debt")
+        fcf, margins = info.get("free_cashflow"), info.get("profit_margins")
+    else:
+        return Sourced.unavailable("yfinance:balance-sheet-fields",
+                                   info.get("reason", "unavailable"))
 
     # Missing values stay missing. (cash or 0) would report an absent figure
     # as a zero balance, and a posture claimed from absent free cash flow is
@@ -1010,6 +1178,8 @@ def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
         parts.append("Net cash" if net_cash > 0 else "Net debt")
     if fcf is not None:
         parts.append("burning cash" if fcf < 0 else "cash-flow positive")
+    if current_ratio is not None:
+        parts.append(f"current ratio {current_ratio}")
 
     if not parts:
         return Sourced.unavailable(source, "cash, debt and free cash flow all unreported")
@@ -1025,7 +1195,10 @@ def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
         tone = "neutral"
 
     known = [name for name, value in
-             (("cash", cash), ("debt", debt), ("free cash flow", fcf)) if value is not None]
+             (("cash", cash), ("debt", debt), ("free cash flow", fcf),
+              ("current ratio", current_ratio)) if value is not None]
+    basis_origin = ("SEC-filed XBRL" if source == "sec-edgar:xbrl-companyfacts"
+                    else "yfinance-reported")
     return Sourced.derived({
         "label": label,
         "tone": tone,
@@ -1033,12 +1206,83 @@ def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
         "total_debt": debt,
         "net_cash": net_cash,
         "free_cashflow": fcf,
+        "current_ratio": current_ratio,
+        "facts_as_of": facts_as_of,
         "profit_margins": margins,
         # CR 4: the documented field name for derived payloads.
-        "estimate_basis": f"derived from yfinance-reported {', '.join(known)} only; "
+        "estimate_basis": f"derived from {basis_origin} {', '.join(known)} only; "
                           "unreported fields are omitted, not zeroed",
     }, source)
 
+
+
+# --- Sector context ----------------------------------------------------------
+# yfinance sector names -> SPDR sector ETF. The ETF's same-day move separates
+# "the whole sector sold off" from "this company specifically fell".
+SECTOR_ETFS = {
+    "Technology": "XLK",
+    "Financial Services": "XLF",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Healthcare": "XLV",
+    "Energy": "XLE",
+    "Industrials": "XLI",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Communication Services": "XLC",
+    "Basic Materials": "XLB",
+}
+
+# Day-move thresholds, in percent. Below -1% the sector itself is clearly
+# selling off; above -0.3% it clearly is not.
+SECTOR_SELLOFF_PCT = -1.0
+SECTOR_FLAT_PCT = -0.3
+
+
+def _day_move_pct(payload: dict):
+    """Percent change between the last two daily closes of a hist: payload."""
+    closes = payload.get("closes") or []
+    if len(closes) < 2 or not closes[-2]:
+        return None
+    return (closes[-1] - closes[-2]) / closes[-2] * 100.0
+
+
+def sector_context(symbol: str) -> Sourced:
+    """Was the stock's fall sector-wide or company-specific? Cache-only.
+
+    Reads the symbol's sector from the cached profile and the sector ETF's
+    day move from the cached history the fast lane keeps warm. Never fetches:
+    a render must not wait on providers, and an unavailable answer is honest.
+    """
+    source = "derived:sector-etf-day-move"
+    info = _info(symbol, allow_fetch=False)
+    if not info.get("ok"):
+        return Sourced.unavailable(source, "sector not cached yet")
+    sector = info.get("sector")
+    etf = SECTOR_ETFS.get(sector or "")
+    if not etf:
+        return Sourced.unavailable(source, f"no sector ETF mapping for {sector!r}")
+
+    etf_hist = _cache.get(f"hist:{etf}:5y")
+    etf_move = _day_move_pct(etf_hist) if etf_hist and etf_hist.get("ok") else None
+    if etf_move is None:
+        return Sourced.unavailable(source, f"{etf} history not warmed yet")
+
+    if etf_move <= SECTOR_SELLOFF_PCT:
+        classification, label = "sector_wide", f"sector-wide selloff ({sector} {etf_move:+.1f}%)"
+    elif etf_move >= SECTOR_FLAT_PCT:
+        classification, label = "company_specific", f"company-specific ({sector} {etf_move:+.1f}%)"
+    else:
+        classification, label = "mixed", f"mixed ({sector} {etf_move:+.1f}%)"
+    return Sourced.derived({
+        "sector": sector,
+        "etf": etf,
+        "etf_day_move_pct": round(etf_move, 2),
+        "classification": classification,
+        "label": label,
+        "estimate_basis": f"{etf} last two daily closes vs thresholds "
+                          f"{SECTOR_SELLOFF_PCT}%/{SECTOR_FLAT_PCT}%",
+    }, source)
 
 
 # --- FRED macro series -------------------------------------------------------
@@ -1160,6 +1404,7 @@ def _compute_technicals_from_closes(closes, volumes):
 
     return {
         "ok": True,
+        "fetched_at": time.time(),
         "close": last_close,
         "rsi14": round(float(rsi), 2),
         "percent_b": round(float(percent_b), 3) if percent_b is not None and percent_b == percent_b else None,
@@ -1347,7 +1592,9 @@ def _warm_loop():
         # universe leaves the queue empty and their TTL would otherwise lapse
         # with nothing to renew it.
         try:
-            batch_history(["^VIX", "SPY"])
+            # Sector ETFs ride in the same single batched request -- eleven
+            # more columns in one call, not eleven calls.
+            batch_history(["^VIX", "SPY"] + sorted(set(SECTOR_ETFS.values())))
             for series in FRED_MACRO_SERIES:
                 fred_latest(series)
         except Exception as e:

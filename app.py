@@ -3121,10 +3121,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <span class="status-badge" style="font-size: 13px; font-weight: 500;">
                         📊 {{ total_losers }} Stocks Analyzed
                     </span>
-                    <a href="/refresh" style="background-color: #007bff; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 8px;">
-                        🔄 Force Refresh
-                    </a>
-                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
+                    <a href="/export/csv" style="background-color: #28a745; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 8px;">
                         📊 Export CSV
                     </a>
                     <a href="/track-record" style="background-color: #6c5ce7; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
@@ -3133,7 +3130,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     <a href="/methodology" style="background-color: #444c56; color: white; padding: 6px 12px; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 11px; margin-left: 5px;">
                         📖 Methodology
                     </a>
-                    <span style="font-size: 12px; color: var(--text-secondary); margin-left: 15px;">{{ timestamp.split(' (')[0] }}</span>
+                    <span style="font-size: 12px; color: var(--text-secondary); margin-left: 15px;" title="When this view was assembled; each datum below carries its own age. The page rebuilds itself on the cadence shown, so a manual refresh button would either do nothing or re-invite the rate limits.">view built {{ timestamp.split(' (')[0] }}{% if prices_as_of %} · prices as of {{ prices_as_of }}{% endif %}</span>
                 </div>
             </div>
             
@@ -3225,6 +3222,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
                         <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
                         <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
+                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -3267,6 +3265,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3366,6 +3365,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3469,6 +3469,54 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
     
     return html_template
 
+def _oldest_price_fetch(symbols):
+    """When the oldest price data on the board was actually fetched, Eastern.
+
+    Read from the cached technicals' fetched_at stamps; entries written before
+    the stamp existed simply don't contribute, so the header omits the clause
+    rather than guessing.
+    """
+    stamps = []
+    for symbol in symbols:
+        payload = market_data._cache.get(f"tech:{symbol.upper()}")
+        if payload and payload.get("ok") and payload.get("fetched_at"):
+            stamps.append(payload["fetched_at"])
+    if not stamps:
+        return None
+    oldest = datetime.fromtimestamp(min(stamps), pytz.timezone('America/New_York'))
+    return oldest.strftime('%I:%M %p %Z')
+
+
+BAND_CALENDAR_DAYS = {"short_term": 10, "medium_term": 30, "long_term": 183}
+
+
+def _snapshot_predictions(sophisticated_result):
+    """The probabilities the app published today, keyed for later calibration.
+
+    Probabilities are stored 0-1; the UI's percent formatting is display-only.
+    Only positive-upside targets qualify -- calibration asks whether the price
+    later reached above entry, which a downside target never claims.
+    """
+    out = {}
+    predictions = (sophisticated_result or {}).get('timeframe_predictions') or {}
+    for band_key, targets in predictions.items():
+        horizon = BAND_CALENDAR_DAYS.get(band_key)
+        if not horizon or not isinstance(targets, dict):
+            continue
+        for name, target in targets.items():
+            if not (isinstance(target, dict) and target.get('probability_available')):
+                continue
+            prob, upside = target.get('probability'), target.get('upside_percent')
+            if prob is None or upside is None or upside <= 0:
+                continue
+            out[f"{band_key}:{name}"] = {
+                "probability": round(prob / 100.0, 4),
+                "target_pct": round(float(upside), 2),
+                "horizon_days": horizon,
+            }
+    return out
+
+
 @app.route('/')
 @rate_limit(MAX_REQUESTS_PER_MINUTE)
 def index():
@@ -3491,6 +3539,8 @@ def index():
             
             # Update timestamp to show cache time
             cached_results['timestamp'] = f"{cache_data['timestamp'].astimezone(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %I:%M:%S %p %Z')} (cached)"
+            cached_results['prices_as_of'] = _oldest_price_fetch(
+                [s.get('Symbol') for s in cached_results.get('losers_data', []) if s.get('Symbol')])
             
             # Add current market status (always fresh)
             cached_results['market_status'] = get_market_status()
@@ -3546,6 +3596,7 @@ def index():
         # Prepare template variables
         template_vars = {
             'timestamp': datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %I:%M:%S %p %Z'),
+            'prices_as_of': _oldest_price_fetch([s['Symbol'] for s in losers_data if s.get('Symbol')]),
             'refresh_policy': page_cache_policy()['description'],
             'total_losers': len(losers_data),
             'detailed_count': len(details_data),
@@ -3638,6 +3689,15 @@ def api_snapshot():
             "analyst_target_mean": targets["mean"].value if targets["mean"].ok else None,
             "analyst_count": targets["analysts"].value if targets["analysts"].ok else None,
         }
+        sector = market_data.sector_context(symbol)
+        row["sector"] = sector.value.get("sector") if sector.ok else None
+        # The probabilities published today, so tomorrow's snapshots can grade
+        # them. Prediction failure must never sink the snapshot itself.
+        try:
+            row["predictions"] = _snapshot_predictions(_sophisticated_cached(symbol))
+        except Exception as e:
+            logger.warning(f"snapshot predictions failed for {symbol}: {type(e).__name__}")
+            row["predictions"] = {}
         universe.append(row)
 
     prior = [s for s in tracking.tracked_symbols() if s not in set(symbols)]
@@ -3655,10 +3715,57 @@ def api_snapshot():
     return jsonify(tracking.build_snapshot(universe, tracked_prices))
 
 
+def _calibration_section():
+    """Predicted-vs-realized table, or the honest collecting state."""
+    calib = tracking.compute_calibration()
+    header = "<h2>Calibration: were the published odds right?</h2>"
+    if not calib["ready"]:
+        return (f"{header}<p>Collecting: <strong>{calib['n_resolved']}</strong> of "
+                f"{calib['min_required']} predictions resolved so far "
+                f"({calib['n_unresolved']} still inside their windows). Every probability "
+                f"the app publishes is recorded in that day's snapshot and graded here "
+                f"once its horizon elapses.</p>")
+    rows = ""
+    for bucket in calib["buckets"]:
+        if not bucket["n"]:
+            continue
+        rows += (f"<tr><td>{bucket['range']}</td><td>{bucket['predicted_mean']}%</td>"
+                 f"<td>{bucket['realized_rate']}%</td><td>{bucket['n']}</td></tr>")
+    return (f"{header}<p>Brier score <strong>{calib['brier']}</strong> "
+            f"(0 is clairvoyant, 0.25 is coin-flip guessing) over {calib['n_resolved']} "
+            f"resolved predictions.</p>"
+            f"<table><thead><tr><th>Predicted</th><th>Bucket mean</th>"
+            f"<th>Realized</th><th>n</th></tr></thead><tbody>{rows}</tbody></table>"
+            f"<p class=\"sub\">{calib['note']}.</p>")
+
+
+def _walkforward_section():
+    """Out-of-sample weight fit status; report-only next to the live weights."""
+    try:
+        import walkforward
+        wf = walkforward.walk_forward()
+    except Exception as e:
+        logger.warning(f"walk-forward unavailable: {type(e).__name__}")
+        return ""
+    header = "<h2>Walk-forward weight fit</h2>"
+    if not wf.get("ready"):
+        return (f"{header}<p>{wf.get('status', 'collecting')}. When enough days exist, factor "
+                f"weights get fitted on past days only and judged on strictly later ones; "
+                f"the result is published here next to the hand-chosen weights, and the live "
+                f"score does not change until the fitted ones prove out.</p>")
+    weights = ", ".join(f"{k}: {v:+.3f}" for k, v in wf["latest_weights"].items())
+    return (f"{header}<p>Across <strong>{wf['test_days']}</strong> out-of-sample days: fitted "
+            f"top-3 mean {wf['fitted_top3_mean_return']:+.2f}% vs live-score top-3 "
+            f"{wf['live_top3_mean_return']:+.2f}% over {wf['horizon_days']} days. "
+            f"Latest fitted weights: {weights}. {wf['status']}.</p>")
+
+
 @app.route('/track-record')
 def track_record_page():
     """Realized forward returns of every logged pick, computed from git history."""
     record = tracking.compute_track_record()
+    calibration_section = _calibration_section()
+    walkforward_section = _walkforward_section()
     rows = ""
     for pick in record["picks"][:60]:
         rets = pick.get("returns", {})
@@ -3681,7 +3788,7 @@ def track_record_page():
         parts = [f"<strong>{e['n_picks']}</strong> resolved picks, mean <strong>{e.get('picks_mean', 0):+.2f}%</strong>, "
                  f"win rate <strong>{e.get('picks_win_rate', 0):.0%}</strong>"]
         if e.get("baseline_mean") is not None:
-            parts.append(f" vs unpicked-losers baseline {e['baseline_mean']:+.2f}% "
+            parts.append(f" vs dead-cat baseline (every unpicked loser) {e['baseline_mean']:+.2f}% "
                          f"(excess <strong>{e.get('excess', 0):+.2f}%</strong>, n={e['n_baseline']})")
         if e.get("vs_spy_mean") is not None:
             parts.append(f"; vs SPY same window <strong>{e['vs_spy_mean']:+.2f}%</strong> (n={e['n_vs_spy']})")
@@ -3700,6 +3807,10 @@ def track_record_page():
     picks are scores &ge; {record['pick_threshold']:.0f} &middot; {record['pending']} pick(s) awaiting a forward price.</p>
     <h2>~7 calendar days</h2>{agg(7)}
     <h2>~30 calendar days</h2>{agg(30)}
+    <p class="sub">The dead-cat baseline is this app's real null hypothesis: buying every loser
+    indiscriminately. The score only earns its keep if picks beat it.</p>
+    {calibration_section}
+    {walkforward_section}
     <h2>Individual picks</h2>
     <table><thead><tr><th>Date</th><th>Symbol</th><th>Score</th><th>Entry</th>
     <th>~7d</th><th>~30d</th></tr></thead><tbody>{rows or '<tr><td colspan=6>No picks logged yet &mdash; the first snapshot lands tonight.</td></tr>'}</tbody></table>
@@ -5345,7 +5456,15 @@ def track_institutional_flow(symbol):
     if short_vol.ok:
         signals.append(f"🩳 {short_vol.value['short_ratio']:.0%} of volume sold short (FINRA, {short_vol.value['as_of']})")
     if insiders.ok and insiders.value.get('count'):
-        signals.append(f"📝 {insiders.value['count']} insider Form 4 filing(s) in {insiders.value['window_days']}d, latest {insiders.value['latest']} (direction not parsed)")
+        v = insiders.value
+        if v.get('parsed'):
+            net = v.get('net_value') or 0
+            direction = (f", net open-market {'BUY' if net >= 0 else 'SELL'} "
+                         f"${abs(net):,.0f} ({v.get('buys', 0)} buys / {v.get('sells', 0)} sells "
+                         f"across {v['parsed']} parsed filings)")
+        else:
+            direction = " (no parseable open-market transactions)"
+        signals.append(f"📝 {v['count']} insider Form 4 filing(s) in {v['window_days']}d, latest {v['latest']}{direction}")
     if balance.ok:
         signals.append(f"💼 {balance.value['label']} (derived from reported cash/debt/FCF)")
 
@@ -5658,6 +5777,11 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         enhanced['P Short'] = horizons['short']
         enhanced['P Medium'] = horizons['medium']
         enhanced['P Long'] = horizons['long']
+
+        # Sector-wide vs company-specific, from the cached sector ETF's day
+        # move. Cache-only: absent until the lanes have warmed it, never a stall.
+        sector = market_data.sector_context(symbol)
+        enhanced['Sector Context'] = sector.value if sector.ok else None
 
         enhanced_analysis.append(enhanced)
 
