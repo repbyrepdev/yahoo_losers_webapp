@@ -986,11 +986,21 @@ def _warm_loop():
         with _warm_queue_lock:
             batch = _warm_queue[:MAX_PROFILES_PER_WARM]
             del _warm_queue[:len(batch)]
+        # The market-overview card reads ^VIX and SPY from this cache. They
+        # refresh every cycle regardless of the queue, because a fully-warmed
+        # universe leaves the queue empty and their TTL would otherwise lapse
+        # with nothing to renew it.
+        try:
+            batch_history(["^VIX", "SPY"])
+        except Exception as e:
+            logger.warning(f"index warm failed: {type(e).__name__}")
+
         if batch:
             try:
                 batch_history(batch)
                 for symbol in batch:
-                    _info(symbol)
+                    if not symbol.startswith("^"):
+                        _info(symbol)
                 # One global file serves every symbol; warming it here keeps
                 # the first modal open of the day off a 3MB download.
                 finra_short_volume(batch[0])
