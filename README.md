@@ -298,7 +298,13 @@ affordable on a 0.5 CPU / 512 MB instance:
 - **Jitter on every TTL** so 25 symbols cannot expire in the same second
 - **Cache keys carry a schema version**, so a payload shape change cannot
   deserialise stale Redis entries into code that no longer matches
-- The rendered page tracks the session: 10 min while open, 12 h once closed
+- The rendered page tracks the **full session calendar**: every 10 min while
+  the market is open, every 30 min through pre-market (4:00–9:30 AM ET) and
+  after-hours (4:00–8:00 PM ET) — real trading happens there, and analyst
+  updates land pre-open — and overnight/weekend pages expire exactly when
+  pre-market begins. A page's lifetime never crosses a phase boundary, so a
+  pre-market render can never leak into the open session. The header pill
+  states the live policy instead of a hardcoded claim.
 
 Cold page render is ~5 s for 25 symbols (provider calls are warmed
 concurrently); warm render is ~0.03 s.

@@ -91,23 +91,66 @@ def _is_structural(reason: str) -> bool:
     return any(marker in lowered for marker in _STRUCTURAL_MARKERS)
 
 
-def market_is_open() -> bool:
-    """Rough NYSE session check, used only to decide cache lifetimes.
+# Session phases, in minutes from Eastern midnight. Pre-market and after-hours
+# are real trading sessions: prices move and, crucially for this app, analysts
+# publish rating and target changes between six and nine-thirty in the
+# morning. Treating everything outside 9:30-4 as a dead zone meant the
+# stretched overnight caches could hold exactly those updates back.
+PHASE_BOUNDS = {
+    "pre_market": (4 * 60, 9 * 60 + 30),
+    "open": (9 * 60 + 30, 16 * 60),
+    "after_hours": (16 * 60, 20 * 60),
+}
 
-    Holidays are deliberately not modelled. Being wrong on a holiday means
-    caching for longer than necessary, which is harmless; the inverse error
-    would mean serving stale prices during a live session.
-    """
+
+def _eastern_now():
     try:
         import pytz
 
-        now = datetime.now(pytz.timezone("America/New_York"))
+        return datetime.now(pytz.timezone("America/New_York"))
     except Exception:
-        now = datetime.now()
-    if now.weekday() >= 5:
-        return False
+        return datetime.now()
+
+
+def market_phase() -> dict:
+    """Current session phase and when it next changes, on the Eastern clock.
+
+    Returns one of open / pre_market / after_hours / closed (overnight and
+    weekends). Holidays are deliberately not modelled: on a holiday the page
+    refreshes on the weekday cadence and renders the holiday status, which
+    wastes a little cache lifetime and misleads nobody.
+    """
+    now = _eastern_now()
     minutes = now.hour * 60 + now.minute
-    return 9 * 60 + 30 <= minutes <= 16 * 60
+
+    def at(day, minute):
+        from datetime import timedelta as _td
+
+        base = (now + _td(days=day)).replace(
+            hour=minute // 60, minute=minute % 60, second=0, microsecond=0)
+        return base
+
+    if now.weekday() < 5:
+        for phase, (start, end) in PHASE_BOUNDS.items():
+            if start <= minutes < end:
+                return {"phase": phase, "changes_at": at(0, end)}
+        if minutes < PHASE_BOUNDS["pre_market"][0]:
+            return {"phase": "closed", "changes_at": at(0, PHASE_BOUNDS["pre_market"][0])}
+    # Evening after 8pm, or a weekend day: next pre-market open.
+    days_ahead = 1
+    while (now.weekday() + days_ahead) % 7 >= 5:
+        days_ahead += 1
+    return {"phase": "closed", "changes_at": at(days_ahead, PHASE_BOUNDS["pre_market"][0])}
+
+
+def market_is_open() -> bool:
+    """Regular NYSE session only; extended hours are their own phases."""
+    return market_phase()["phase"] == "open"
+
+
+# Cache-stretch multiplier per phase. Extended sessions move prices and carry
+# the morning analyst updates, so they stretch far less than the dead of night.
+PHASE_TTL_STRETCH = {"open": 1, "pre_market": 2, "after_hours": 2, "closed": 8}
 
 
 def _effective_ttl(base_ttl: int) -> int:
@@ -117,7 +160,8 @@ def _effective_ttl(base_ttl: int) -> int:
     instance's small request budget for nothing. Jitter keeps 25 symbols from
     all expiring in the same second and stampeding the provider.
     """
-    ttl = base_ttl if market_is_open() else min(base_ttl * 8, 12 * 60 * 60)
+    stretch = PHASE_TTL_STRETCH.get(market_phase()["phase"], 8)
+    ttl = base_ttl if stretch == 1 else min(base_ttl * stretch, 12 * 60 * 60)
     return max(30, int(ttl * random.uniform(0.9, 1.1)))
 
 # An analyst "consensus" drawn from one or two estimates is noise, not consensus.

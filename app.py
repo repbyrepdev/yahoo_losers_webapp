@@ -243,16 +243,42 @@ CACHE_FILE = '/tmp/yahoo_finance_cache.pkl'  # Use /tmp for Render compatibility
 CACHE_DURATION_HOURS = 24  # ceiling; page_cache_hours() is what callers use
 
 
-def page_cache_hours():
-    """How long a rendered loser list stays servable.
+# Page cadence per session phase, in minutes. Pre-market and after-hours are
+# real trading sessions -- prices move, and analyst updates land pre-open --
+# so they refresh nearly as often as the regular session instead of being
+# lumped into a twelve-hour overnight hold.
+PAGE_CADENCE_MINUTES = {
+    "open": float(os.environ.get('CACHE_MINUTES_MARKET_OPEN', 10)),
+    "pre_market": float(os.environ.get('CACHE_MINUTES_EXTENDED', 30)),
+    "after_hours": float(os.environ.get('CACHE_MINUTES_EXTENDED', 30)),
+}
 
-    A flat 24 hours meant a live session could be served yesterday's losers.
-    The list genuinely churns while the market is open and cannot change at all
-    once it closes, so the lifetime follows the session rather than the clock.
+
+def page_cache_policy():
+    """Lifetime for a rendered page, and the human sentence describing it.
+
+    The lifetime is the phase cadence, capped at the moment the phase changes:
+    a page rendered at 9:25 pre-market must expire at 9:30, not at 9:55, or
+    the first five minutes of the open session would serve pre-market output.
+    Overnight and weekend pages expire exactly when pre-market begins.
     """
-    if market_data.market_is_open():
-        return float(os.environ.get('CACHE_MINUTES_MARKET_OPEN', 10)) / 60
-    return float(os.environ.get('CACHE_HOURS_MARKET_CLOSED', 12))
+    phase = market_data.market_phase()
+    seconds_to_change = max(60, (phase["changes_at"] - market_data._eastern_now()).total_seconds())
+
+    cadence_min = PAGE_CADENCE_MINUTES.get(phase["phase"])
+    if cadence_min is not None:
+        lifetime = min(cadence_min * 60, seconds_to_change)
+        labels = {"open": "market open", "pre_market": "pre-market", "after_hours": "after-hours"}
+        description = f"every {int(cadence_min)} min ({labels[phase['phase']]})"
+    else:
+        lifetime = seconds_to_change
+        description = f"at {phase['changes_at'].strftime('%-I:%M %p %Z %a')} (market closed; loser data cannot change)"
+
+    return {"seconds": lifetime, "description": description, "phase": phase["phase"]}
+
+
+def page_cache_hours():
+    return page_cache_policy()["seconds"] / 3600.0
 
 # Rate limiting configuration
 MAX_REQUESTS_PER_MINUTE = 30
@@ -3489,8 +3515,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         {% elif status.data_source == 'error' %}❌ Error
                         {% endif %}
                     </span>
-                    <span class="status-badge" style="font-size: 13px; font-weight: 500;">
-                        ⚡ Auto-refresh: 3hrs
+                    <span class="status-badge" style="font-size: 13px; font-weight: 500;" title="Rendered pages are cached for this long; the lifetime never crosses a session-phase boundary, so a pre-market page cannot leak into the open session.">
+                        ⚡ Refresh: {{ refresh_policy }}
                     </span>
                     <span class="status-badge" style="font-size: 13px; font-weight: 500;">
                         📊 {{ total_losers }} Stocks Analyzed
@@ -3874,6 +3900,9 @@ def index():
                 response.headers['ETag'] = etag
                 return response
             
+            # Recomputed at serve time: the policy line must describe the
+            # phase the reader is in, and old cached payloads predate the key.
+            cached_results['refresh_policy'] = page_cache_policy()['description']
             response = make_response(render_template_string(html_template, **cached_results))
             response.headers['ETag'] = etag
             return add_cache_headers(response, max_age=60)
@@ -3905,6 +3934,7 @@ def index():
         # Prepare template variables
         template_vars = {
             'timestamp': datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %I:%M:%S %p %Z'),
+            'refresh_policy': page_cache_policy()['description'],
             'total_losers': len(losers_data),
             'detailed_count': len(details_data),
             'all_analysis_count': len(all_analysis),
