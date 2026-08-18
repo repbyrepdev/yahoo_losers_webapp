@@ -57,6 +57,7 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int) -> Option
     hits = 0
     windows = 0
     days_to_hit: List[int] = []
+    miss_end_returns: List[float] = []
 
     # Vectorised over the window, looped over start points: clear to read and
     # fast enough for the few hundred windows involved.
@@ -70,16 +71,36 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int) -> Option
         if reached.size:
             hits += 1
             days_to_hit.append(int(reached[0]) + 1)
+        else:
+            # What actually happened when the target was NOT reached: the
+            # realised return at the end of the window. This is the loss side
+            # of the expected-value arithmetic, measured rather than assumed.
+            miss_end_returns.append(float(forward[-1] / entry - 1.0) * 100.0)
 
     if windows < MIN_WINDOWS:
         return None
 
+    p = hits / windows
+    miss_median = float(np.median(miss_end_returns)) if miss_end_returns else None
+
+    # Expected value of "buy now, take profit at the target or exit at the
+    # horizon": P x gain + (1-P) x median outcome of the windows that missed.
+    # Every term is measured from this stock's own history. Median rather than
+    # mean on the miss side so one crash window cannot dominate the figure.
+    expected_value = None
+    if miss_median is not None:
+        expected_value = p * target_pct + (1 - p) * miss_median
+    elif hits == windows:
+        expected_value = target_pct  # every window reached the target
+
     return {
-        "probability": round(hits / windows, 4),
+        "probability": round(p, 4),
         "hits": hits,
         "windows": windows,
         "median_days_to_hit": int(np.median(days_to_hit)) if days_to_hit else None,
         "horizon_bars": horizon_bars,
+        "miss_median_return": round(miss_median, 2) if miss_median is not None else None,
+        "expected_value": round(expected_value, 2) if expected_value is not None else None,
     }
 
 
@@ -120,6 +141,30 @@ def wilson_interval(hits: int, windows: int, z: float = 1.96):
     centre = (p + z * z / (2 * windows)) / denom
     half = (z / denom) * ((p * (1 - p) / windows + z * z / (4 * windows ** 2)) ** 0.5)
     return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def horizon_distribution(closes: np.ndarray, horizon_bars: int) -> Optional[dict]:
+    """The raw forward-return distribution at a horizon: p10 / median / p90.
+
+    "What has H days later actually looked like for this stock" -- no target,
+    no model, just the measured spread. Rendered so a reader can see the
+    dispersion a point estimate hides.
+    """
+    if closes is None or len(closes) < horizon_bars + MIN_WINDOWS:
+        return None
+    entries = closes[:-horizon_bars]
+    exits = closes[horizon_bars:]
+    valid = entries > 0
+    if valid.sum() < MIN_WINDOWS:
+        return None
+    returns = (exits[valid] / entries[valid] - 1.0) * 100.0
+    return {
+        "p10": round(float(np.percentile(returns, 10)), 2),
+        "median": round(float(np.percentile(returns, 50)), 2),
+        "p90": round(float(np.percentile(returns, 90)), 2),
+        "windows": int(valid.sum()),
+        "horizon_bars": horizon_bars,
+    }
 
 
 def describe(measured: dict) -> str:
@@ -163,6 +208,8 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) ->
             ci_low, ci_high = wilson_interval(measured["hits"], measured["windows"])
             entry.update({
                 "probability_available": True,
+                "expected_value": measured.get("expected_value"),
+                "miss_median_return": measured.get("miss_median_return"),
                 "probability": round(measured["probability"] * 100, 1),
                 "ci_low": round(ci_low * 100, 1),
                 "ci_high": round(ci_high * 100, 1),

@@ -153,6 +153,17 @@ Example — MNSO at $10.76:
 Displayed timeframes are the **median number of trading days to first reach the
 target** in those same historical windows — also measured.
 
+### Expected value, measured
+
+Every target also carries an **EV** figure:
+`EV = P(hit) × gain + P(miss) × median outcome of the windows that missed` —
+all three terms measured from the stock's own history. It is the antidote to
+headline upside: MNSO's +83% analyst target measures **EV +2.1%** once the
+86% of windows that missed (median −10.9%) are priced in, and its 20-day-MA
+bounce is EV-negative despite a 29% hit rate. The API also carries each
+horizon's raw forward-return distribution (p10 / median / p90) under
+`forward_distributions`.
+
 ### What this replaced
 
 Every one of those targets previously displayed **the same 95%** (or 90% on the
