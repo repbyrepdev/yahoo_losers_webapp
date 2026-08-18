@@ -1376,9 +1376,11 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             const pct = Number(target.probability).toFixed(1);
             const tone = target.probability >= 50 ? '#7bed9f'
                        : target.probability >= 25 ? '#ffd97d' : '#ff9f9f';
+            const ev = (target.expected_value !== undefined && target.expected_value !== null)
+                ? ` <span style="color:${target.expected_value >= 0 ? '#7bed9f' : '#ff9f9f'}; font-size:11px;" title="Expected value of buy-now, take-profit-at-target-or-exit-at-horizon: P(hit) x gain + P(miss) x median miss outcome (${target.miss_median_return}%), all measured from this stock's history">EV ${target.expected_value >= 0 ? '+' : ''}${Number(target.expected_value).toFixed(1)}%</span>` : '';
             const ci = (target.ci_low !== undefined && target.ci_high !== undefined)
                 ? ` <span style="color:#dee2e6; font-size:11px;">(&plusmn; CI ${Number(target.ci_low).toFixed(0)}\u2013${Number(target.ci_high).toFixed(0)}%)</span>` : '';
-            return `<span style="color:${tone}; font-weight:700;">${pct}%</span>${ci}
+            return `<span style="color:${tone}; font-weight:700;">${pct}%</span>${ev}${ci}
                     <span style="color:#e9ecef; font-size:11px;"> ${target.evidence || ''}</span>`;
         }
 
@@ -2472,7 +2474,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     // Calculate overall score from short-term targets (consistent with medium/long-term)
                     const avgProbability = targets.length > 0 ? targets.reduce((sum, t) => sum + (t.probability || 0), 0) / targets.length : 0;
-                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. Past frequency is not a forecast.</div>`;
+                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. EV is P(hit) &times; gain + P(miss) &times; the median outcome of the windows that missed. Past frequency is not a forecast.</div>`;
                     
                     // Calculate final score with signal multipliers for header (matching medium/long-term pattern)
                     const enhancedSignals = recovery.sophisticated_analysis?.enhanced_signals || {};
@@ -2830,7 +2832,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(mediumTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. Past frequency is not a forecast.</div>`;
+                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. EV is P(hit) &times; gain + P(miss) &times; the median outcome of the windows that missed. Past frequency is not a forecast.</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -3161,7 +3163,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     // Calculate overall confidence and score for header
                     const predictions = Object.values(longTermPredictions);
                     const avgProbability = predictions.reduce((sum, p) => sum + (p.probability || 0), 0) / predictions.length;
-                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. Past frequency is not a forecast.</div>`;
+                    const heuristicNote = `<div style="background: rgba(255,255,255,0.14); border-left: 3px solid #ffffff; padding: 9px 12px; margin: 12px 0; font-size: 12px; color: #f8f9fa; line-height:1.5;">Each probability is the share of historical windows in which this stock actually reached that target within the horizon, measured from its own price history and shown with its sample size. EV is P(hit) &times; gain + P(miss) &times; the median outcome of the windows that missed. Past frequency is not a forecast.</div>`;
                     const avgConfidence = predictions.some(p => p.confidence === 'Very High' || p.confidence === 'High') ? 'High' : 
                                          predictions.some(p => p.confidence === 'Medium') ? 'Medium' : 'Low';
                     
@@ -5084,11 +5086,17 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
     band_for = {'short_term': 'short', 'medium_term': 'medium', 'long_term': 'long'}
 
     predictions = sophisticated_result.get('timeframe_predictions') or {}
+    distributions = {}
     for band_key, targets in predictions.items():
         if not isinstance(targets, dict):
             continue
-        predictions[band_key] = timeframes.annotate_targets(
-            closes, targets, band_for.get(band_key, 'medium'))
+        band = band_for.get(band_key, 'medium')
+        predictions[band_key] = timeframes.annotate_targets(closes, targets, band)
+        dist = timeframes.horizon_distribution(
+            closes, timeframes.HORIZON_BARS.get(band, 21))
+        if dist:
+            distributions[band_key] = dist
+    sophisticated_result['forward_distributions'] = distributions
 
     sophisticated_result['probability_basis'] = (
         'Measured frequency with which this stock reached each target within '

@@ -786,3 +786,51 @@ class TestTradingDates:
             assert payload["date"] == name, f"{name} content disagrees with filename"
             dates.append(name)
         assert len(dates) == len(set(dates))
+
+
+class TestExpectedValue:
+    """EV combines only measured terms: hit rate, gain, median miss outcome."""
+
+    def _series(self, pattern, repeats=40):
+        import numpy as np
+        return np.array(pattern * repeats, dtype=float)
+
+    def test_ev_arithmetic_matches_its_parts(self):
+        import timeframes
+        closes = self._series([100.0, 104.0, 96.0, 101.0, 99.0])
+        m = timeframes.hit_rate(closes, target_pct=3.0, horizon_bars=4)
+        assert m["expected_value"] is not None
+        p = m["probability"]
+        expected = p * 3.0 + (1 - p) * m["miss_median_return"]
+        assert abs(m["expected_value"] - expected) < 0.06
+
+    def test_all_hits_means_ev_equals_the_gain(self):
+        import timeframes
+        closes = self._series([100.0, 110.0, 121.0, 133.0])
+        m = timeframes.hit_rate(closes, target_pct=5.0, horizon_bars=3)
+        if m["hits"] == m["windows"]:
+            assert m["expected_value"] == 5.0
+
+    def test_unreachable_target_ev_is_negative_when_stock_declines(self):
+        import numpy as np, timeframes
+        closes = np.linspace(100.0, 60.0, 200)  # steady decline
+        m = timeframes.hit_rate(closes, target_pct=50.0, horizon_bars=10)
+        assert m["probability"] == 0.0
+        assert m["expected_value"] < 0
+
+    def test_annotated_targets_carry_ev(self):
+        import timeframes
+        closes = self._series([100.0, 103.0, 99.0, 101.0])
+        out = timeframes.annotate_targets(closes, {"t": {"upside_percent": 2.0}}, "short")
+        assert "expected_value" in out["t"]
+
+    def test_forward_distribution_orders_quantiles(self):
+        import timeframes
+        closes = self._series([100.0, 104.0, 96.0, 101.0, 99.0])
+        d = timeframes.horizon_distribution(closes, 5)
+        assert d["p10"] <= d["median"] <= d["p90"]
+        assert d["windows"] >= timeframes.MIN_WINDOWS
+
+    def test_short_history_has_no_distribution(self):
+        import numpy as np, timeframes
+        assert timeframes.horizon_distribution(np.array([100.0, 101.0]), 5) is None
