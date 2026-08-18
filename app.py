@@ -4905,20 +4905,28 @@ def _cohort_prior(band, upside_pct):
 
 
 def _earnings_in_window(symbol, horizon_days):
-    """The earnings date inside the horizon, or None. A window that contains
-    an earnings print is a different bet, and the display says so."""
+    """The earnings date (or estimated range) inside the horizon, or None.
+
+    A window that contains an earnings print is a different bet, and the
+    display says so. earnings_date's contract is `date` plus an optional
+    `through` when Yahoo reports an estimated range; the range overlaps the
+    horizon if it starts before the horizon ends and ends on or after today.
+    """
     from datetime import date as _date, timedelta as _td
     sourced = market_data.earnings_date(symbol)
-    if not sourced.ok:
+    if not sourced.ok or not sourced.value.get("upcoming"):
+        return None
+    value = sourced.value
+    try:
+        start = _date.fromisoformat(str(value.get("date"))[:10])
+        end = (_date.fromisoformat(str(value.get("through"))[:10])
+               if value.get("through") else start)
+    except (TypeError, ValueError):
         return None
     today = tracking.trading_date_today()
-    for raw in (sourced.value.get("dates") or []):
-        try:
-            when = _date.fromisoformat(str(raw)[:10])
-        except ValueError:
-            continue
-        if today <= when <= today + _td(days=horizon_days):
-            return when.isoformat()
+    if start <= today + _td(days=horizon_days) and end >= today:
+        return (start.isoformat() if end == start
+                else f"{start.isoformat()} to {end.isoformat()} (est.)")
     return None
 
 

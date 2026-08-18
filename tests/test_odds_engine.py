@@ -174,25 +174,45 @@ class TestCohortPrior:
 
 
 class TestEarningsWindow:
-    def test_upcoming_earnings_inside_window_flagged(self, monkeypatch):
+    """Mocks follow earnings_date's real contract: date, through, upcoming."""
+
+    @staticmethod
+    def _mock(monkeypatch, value):
+        monkeypatch.setattr(market_data, "earnings_date",
+                            lambda s: market_data.Sourced.live(value, "yfinance:calendar"))
+
+    def test_confirmed_date_inside_window_flagged(self, monkeypatch):
         import app
         import tracking
         from datetime import timedelta
         soon = (tracking.trading_date_today() + timedelta(days=4)).isoformat()
-        monkeypatch.setattr(market_data, "earnings_date",
-                            lambda s: market_data.Sourced.live(
-                                {"dates": [soon], "confirmed": True}, "yfinance:calendar"))
+        self._mock(monkeypatch, {"date": soon, "through": None,
+                                 "upcoming": True, "confirmed": True})
         assert app._earnings_in_window("ZZE1", 10) == soon
         assert app._earnings_in_window("ZZE1", 2) is None
+
+    def test_estimated_range_overlapping_window_flagged(self, monkeypatch):
+        import app
+        import tracking
+        from datetime import timedelta
+        today = tracking.trading_date_today()
+        start = (today + timedelta(days=8)).isoformat()
+        through = (today + timedelta(days=14)).isoformat()
+        self._mock(monkeypatch, {"date": start, "through": through,
+                                 "upcoming": True, "confirmed": False})
+        # A 10-day horizon overlaps the front of the range.
+        flagged = app._earnings_in_window("ZZE4", 10)
+        assert flagged == f"{start} to {through} (est.)"
+        # A 5-day horizon ends before the range begins.
+        assert app._earnings_in_window("ZZE4", 5) is None
 
     def test_past_earnings_not_flagged(self, monkeypatch):
         import app
         import tracking
         from datetime import timedelta
         past = (tracking.trading_date_today() - timedelta(days=3)).isoformat()
-        monkeypatch.setattr(market_data, "earnings_date",
-                            lambda s: market_data.Sourced.live(
-                                {"dates": [past], "confirmed": True}, "yfinance:calendar"))
+        self._mock(monkeypatch, {"date": past, "through": None,
+                                 "upcoming": False, "confirmed": True})
         assert app._earnings_in_window("ZZE2", 30) is None
 
     def test_unavailable_earnings_is_none(self, monkeypatch):
@@ -201,6 +221,14 @@ class TestEarningsWindow:
                             lambda s: market_data.Sourced.unavailable(
                                 "yfinance:calendar", "no earnings date published"))
         assert app._earnings_in_window("ZZE3", 30) is None
+
+    def test_live_contract_has_the_fields_this_reads(self, monkeypatch):
+        """Drift guard: _earnings_in_window consumes date/through/upcoming,
+        which must be exactly what earnings_date's payload constructor emits."""
+        import inspect
+        source = inspect.getsource(market_data.earnings_date)
+        for field in ('"date"', '"through"', '"upcoming"'):
+            assert field in source
 
 
 class TestModestRung:

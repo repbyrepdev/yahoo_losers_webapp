@@ -373,8 +373,11 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
             if prior_p is not None:
                 shrunk = shrink_toward(measured["hits"], measured["windows"],
                                        prior_p)
-                if abs(shrunk - probability) >= 0.005:
-                    entry["probability_raw"] = round(probability * 100, 1)
+                # Compare what the display will actually show: rates that
+                # round to different one-decimal percentages must both appear.
+                raw_pct = round(probability * 100, 1)
+                if raw_pct != round(shrunk * 100, 1):
+                    entry["probability_raw"] = raw_pct
                     evidence += (f" · shrunk toward cohort {prior_p * 100:.0f}% "
                                  f"for similar targets (raw {probability * 100:.0f}%)")
                 probability = shrunk
