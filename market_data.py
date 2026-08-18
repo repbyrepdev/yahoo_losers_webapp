@@ -36,7 +36,9 @@ TTL_TECHNICALS = 30 * 60      # derived from daily bars; only the last bar moves
 TTL_OPTIONS = 15 * 60
 TTL_NEWS = 60 * 60
 TTL_EARNINGS = 24 * 60 * 60
-TTL_TARGETS = 6 * 60 * 60     # analyst revisions are episodic, not continuous
+TTL_TARGETS = 24 * 60 * 60    # analyst data is slow-moving, and quoteSummary
+                              # is Yahoo's scarcest endpoint: one spread-out
+                              # call per symbol per day fits its budget
 TTL_PROFILE = 7 * 24 * 60 * 60
 
 # A fetch that failed because of an outage should be retried soon. A fetch that
@@ -67,8 +69,23 @@ _last_call_at = [0.0]
 # own slower pacing, and one shared cooldown when it is refused -- individual
 # symbols are not poisoned for fifteen minutes each.
 INFO_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_INFO_INTERVAL", 4.0))
+INFO_INTERVAL_MAX_SECONDS = float(os.environ.get("MARKET_DATA_INFO_INTERVAL_MAX", 300.0))
 _info_last_call_at = [0.0]
 _info_cooldown_until = [0.0]
+# Adaptive: refusals double this, successes decay it toward the base. The
+# lane converges on whatever rate the endpoint is actually granting.
+_info_interval = [INFO_CALL_INTERVAL_SECONDS]
+
+
+def _info_lane_refused():
+    _info_interval[0] = min(INFO_INTERVAL_MAX_SECONDS, _info_interval[0] * 2)
+    _info_cooldown_until[0] = time.time() + _info_interval[0]
+    logger.warning(f"quoteSummary refused; info interval now {_info_interval[0]:.0f}s")
+
+
+def _info_lane_succeeded():
+    _info_interval[0] = max(INFO_CALL_INTERVAL_SECONDS,
+                            _info_interval[0] * 0.7)
 
 
 _info_throttle_lock = threading.Lock()
@@ -79,9 +96,9 @@ def _info_throttle():
     # would stall the chart lane behind every info call.
     with _info_throttle_lock:
         elapsed = time.time() - _info_last_call_at[0]
-        wait = INFO_CALL_INTERVAL_SECONDS - elapsed
+        wait = _info_interval[0] - elapsed
         if wait > 0:
-            time.sleep(wait)
+            time.sleep(min(wait, 30))  # long adaptive waits yield in slices
         _info_last_call_at[0] = time.time()
 
 
@@ -395,12 +412,12 @@ def _info(symbol: str, allow_fetch: bool = True) -> dict:
         except Exception as e:
             detail = f"{type(e).__name__}: {e}"
             if _is_rate_limited(detail):
-                _info_cooldown_until[0] = time.time() + 240
-                logger.warning("quoteSummary rate-limited; info lane cooling 240s")
+                _info_lane_refused()
                 return {"ok": False, "reason": "info lane cooling down after rate limit"}
             raise
         if not info.get("symbol") and not info.get("regularMarketPrice"):
             return {"ok": False, "reason": "no profile returned"}
+        _info_lane_succeeded()
         return {
             "ok": True,
             "target_mean": info.get("targetMeanPrice"),
