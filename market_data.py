@@ -340,14 +340,20 @@ def save_cache_to_disk():
     """
     try:
         import json
+        import tempfile
         with _cache._lock:
             snapshot = {k: [exp, val] for k, (exp, val) in _cache._local.items()
                         if isinstance(val, dict) and val.get("ok")}
         with _persist_lock:
-            tmp_path = CACHE_FILE + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as handle:
-                json.dump(snapshot, handle, default=str)
-            os.replace(tmp_path, CACHE_FILE)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(CACHE_FILE) or ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(snapshot, handle, default=str)
+                os.replace(tmp_path, CACHE_FILE)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
     except (OSError, TypeError, ValueError) as e:
         logger.debug(f"cache persist skipped: {type(e).__name__}")
 
