@@ -4256,71 +4256,58 @@ def metrics():
 
 @app.route('/refresh')
 def refresh_cache():
-    """Manual cache refresh endpoint"""
+    """Clear the rendered page so the next load rebuilds it from warm data.
+
+    Earlier behaviour cleared the Redis page cache and then reported "No Cache
+    Found -- data is already fresh!" because it only checked the legacy cache
+    file, which does not exist in deployment. The message said nothing was
+    refreshed while the refresh was in fact happening. One code path now, one
+    truthful message, and ?deep=1 still clears the provider cache for the rare
+    case the upstream data itself is suspect.
+    """
     try:
-        # Clear the rendered page. The provider cache is deliberately kept:
-        # rebuilding it costs dozens of throttled upstream requests and takes
-        # minutes, so wiping it here meant the very next render found nothing
-        # and cached an empty page for another full period. Pass ?deep=1 to
-        # clear it as well, which is only wanted when the cached data itself is
-        # suspect.
+        cleared = []
+
         deep = request.args.get('deep') in ('1', 'true', 'yes')
-        cleared = market_data.clear_cache() if deep else 0
+        if deep:
+            entries = market_data.clear_cache()
+            cleared.append(f"provider cache ({entries} entries)")
+
         if USE_REDIS and redis_client is not None:
             try:
-                redis_client.delete('yahoo_losers_cache')
+                if redis_client.delete('yahoo_losers_cache'):
+                    cleared.append("rendered page (redis)")
             except Exception as e:
                 logger.warning(f"Redis page cache clear failed: {type(e).__name__}")
-        logger.info(f"Manual refresh cleared {cleared} provider entries")
 
         if os.path.exists(CACHE_FILE):
             os.remove(CACHE_FILE)
-            logger.info("Cache manually cleared")
-            return """
-            <html>
-                <head><title>Cache Cleared</title></head>
-                <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
-                    <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
-                        <h1 style="color: #28a745;">✅ Cache Cleared Successfully!</h1>
-                        <p>Fresh data will be fetched from Yahoo Finance on your next visit.</p>
-                        <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
-                            🔄 Get Fresh Data Now
-                        </a>
-                    </div>
-                </body>
-            </html>
-            """
-        else:
-            return """
-            <html>
-                <head><title>No Cache Found</title></head>
-                <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
-                    <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
-                        <h1 style="color: #17a2b8;">ℹ️ No Cache Found</h1>
-                        <p>There was no cached data to clear. Data is already fresh!</p>
-                        <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
-                            📊 View Current Data
-                        </a>
-                    </div>
-                </body>
-            </html>
-            """
-    except Exception as e:
-        logger.error(f"Error clearing cache: {str(e)}")
+            cleared.append("rendered page (file)")
+
+        message = ", ".join(cleared) if cleared else "nothing was cached"
+        logger.info(f"Manual refresh cleared: {message}")
+        detail = ("The next page load rebuilds from the warm provider cache "
+                  "(a few seconds). Provider data refreshes on its own schedule; "
+                  "add <code>?deep=1</code> to force that too.")
         return f"""
         <html>
-            <head><title>Error</title></head>
-            <body style="font-family: Arial, sans-serif; text-align: center; margin: 50px; background-color: #f5f5f5;">
-                <div style="background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto;">
-                    <h1 style="color: #dc3545;">❌ Error</h1>
-                    <p>Error clearing cache: {str(e)}</p>
-                    <a href='/' style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; margin-top: 20px;">
-                        🏠 Go Back Home
+            <head><title>Refreshed</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="font-family: -apple-system, system-ui, sans-serif; text-align: center; margin: 50px auto; max-width: 520px; background: #0d1117; color: #e6edf3;">
+                <div style="background: #161b22; border: 1px solid #30363d; padding: 36px; border-radius: 10px;">
+                    <h1 style="color: #2ecc71; font-size: 1.4rem;">&#10227; Refresh done</h1>
+                    <p style="color: #8b949e;">Cleared: {message}.</p>
+                    <p style="color: #8b949e; font-size: 14px;">{detail}</p>
+                    <a href='/' style="background-color: #6c5ce7; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin-top: 14px;">
+                        Reload dashboard
                     </a>
                 </div>
             </body>
         </html>
         """
+    except Exception as e:
+        logger.error(f"Refresh failed: {type(e).__name__}: {e}")
+        return f"Refresh failed: {type(e).__name__}", 500
+
 
 def is_market_holiday(check_date):
     """Check if a given date is a US stock market holiday"""
@@ -4483,11 +4470,18 @@ def get_comprehensive_market_analysis():
         }
         
         # 1. VIX ANALYSIS
+        #
+        # Read from the warmer-maintained cache; this was the last direct
+        # yfinance call left on the render path, and under the per-IP limiter
+        # it failed into "N/A / Unable to fetch VIX data" while every other
+        # number on the page worked.
         try:
-            vix = yf.Ticker("^VIX")
-            vix_hist = vix.history(period="5d")
-            current_vix = vix_hist['Close'].iloc[-1] if not vix_hist.empty else 20.0
-            prev_vix = vix_hist['Close'].iloc[-2] if len(vix_hist) > 1 else current_vix
+            vix_hist_sourced = market_data.price_history("^VIX", allow_fetch=False)
+            if not vix_hist_sourced.ok or len(vix_hist_sourced.value) < 2:
+                raise LookupError(vix_hist_sourced.reason or "VIX closes not cached yet")
+            vix_closes = vix_hist_sourced.value
+            current_vix = float(vix_closes[-1])
+            prev_vix = float(vix_closes[-2])
             vix_change = current_vix - prev_vix
             
             # VIX interpretation
@@ -4532,21 +4526,22 @@ def get_comprehensive_market_analysis():
             analysis['vix_analysis'] = {
                 'current_vix': 'N/A',
                 'regime': 'Unknown',
-                'description': 'Unable to fetch VIX data',
+                'description': 'VIX cache still warming — refresh in about a minute',
                 'color': '#6c757d',
                 'recovery_impact': 'Unable to determine',
                 'interpretation': 'VIX data unavailable'
             }
         
-        # 2. MARKET TREND ANALYSIS
+        # 2. MARKET TREND ANALYSIS (cache-only, same reasoning as the VIX block)
         try:
-            spy = yf.Ticker("SPY")
-            spy_hist = spy.history(period="1mo")
-            
-            if not spy_hist.empty and len(spy_hist) > 5:
-                current_spy = spy_hist['Close'].iloc[-1]
-                week_ago_spy = spy_hist['Close'].iloc[-5] if len(spy_hist) > 5 else current_spy
-                month_change = ((current_spy - spy_hist['Close'].iloc[0]) / spy_hist['Close'].iloc[0]) * 100
+            spy_sourced = market_data.price_history("SPY", allow_fetch=False)
+            spy_closes = spy_sourced.value if spy_sourced.ok else []
+
+            if len(spy_closes) > 5:
+                current_spy = float(spy_closes[-1])
+                week_ago_spy = float(spy_closes[-5])
+                month_start = float(spy_closes[-21]) if len(spy_closes) >= 21 else float(spy_closes[0])
+                month_change = ((current_spy - month_start) / month_start) * 100
                 week_change = ((current_spy - week_ago_spy) / week_ago_spy) * 100
                 
                 if week_change > 2:
