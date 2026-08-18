@@ -453,9 +453,10 @@ def earnings_date(symbol: str) -> Sourced:
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
 
-    from datetime import date as _date
+    from datetime import datetime as _dt
+    import pytz as _pytz
 
-    today = _date.today()
+    today = _dt.now(_pytz.timezone("America/New_York")).date()
     dates = payload["dates"]
     last_day = _date.fromisoformat(dates[-1])
     upcoming = last_day >= today
@@ -728,10 +729,13 @@ def finra_short_volume(symbol: str) -> Sourced:
 
     def produce():
         import requests as _rq
-        from datetime import date as _date, timedelta as _td
+        from datetime import datetime as _dt, timedelta as _td
+        import pytz as _pytz
 
         last_error = "no recent file found"
-        probe = _date.today()
+        # FINRA files are keyed to US trading dates; probing from the UTC date
+        # after 8 PM Eastern asks for tomorrow's file first.
+        probe = _dt.now(_pytz.timezone("America/New_York")).date()
         for _ in range(6):  # walk back over weekends/holidays
             url = FINRA_SHORT_URL.format(yyyymmdd=probe.strftime("%Y%m%d"))
             try:
