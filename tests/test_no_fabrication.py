@@ -834,3 +834,65 @@ class TestExpectedValue:
     def test_short_history_has_no_distribution(self):
         import numpy as np, timeframes
         assert timeframes.horizon_distribution(np.array([100.0, 101.0]), 5) is None
+
+
+class TestEdgarInsiders:
+    """Insider filing counts are real, and direction is honestly absent."""
+
+    def test_form4_counting_with_mocked_edgar(self, monkeypatch):
+        import market_data, requests as rq
+        from datetime import date, timedelta
+        recent_day = (date.today() - timedelta(days=5)).isoformat()
+        old_day = (date.today() - timedelta(days=400)).isoformat()
+
+        class FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def __init__(self, payload): self._p = payload
+            def json(self): return self._p
+
+        def fake_get(url, **kw):
+            if "company_tickers" in url:
+                return FakeResp({"0": {"ticker": "TSTX", "cik_str": 1234, "title": "T"}})
+            return FakeResp({"filings": {"recent": {
+                "form": ["4", "10-K", "4"],
+                "filingDate": [recent_day, recent_day, old_day]}}})
+
+        monkeypatch.setattr(rq, "get", fake_get)
+        market_data._cache._local.pop("edgar:ciks", None)
+        market_data._cache._local.pop("edgar:form4:TSTX", None)
+        out = market_data.insider_filings("TSTX")
+        assert out.ok
+        assert out.value["count_90d"] == 1          # one Form 4 inside 90d
+        assert out.value["latest"] == recent_day
+        assert "not parsed" in out.value["note"]     # direction honestly absent
+
+    def test_unknown_ticker_reports_reason(self, monkeypatch):
+        import market_data
+        market_data._cache.set("edgar:ciks", {"ok": True, "table": {"AAA": "1"}}, 600)
+        out = market_data.insider_filings("NOPE")
+        assert not out.ok and "not in SEC registry" in out.reason
+
+
+class TestSolvency:
+    """The balance-sheet label is derived, labelled derived, and sane."""
+
+    def _with_info(self, monkeypatch, **fields):
+        import market_data
+        payload = {"ok": True, "total_cash": None, "total_debt": None,
+                   "free_cashflow": None, "profit_margins": None}
+        payload.update(fields)
+        monkeypatch.setattr(market_data, "_info", lambda s, allow_fetch=True: payload)
+        return market_data.solvency("X")
+
+    def test_net_cash_positive_fcf(self, monkeypatch):
+        out = self._with_info(monkeypatch, total_cash=500, total_debt=100, free_cashflow=50)
+        assert out.value["label"] == "Net cash" and out.is_derived
+
+    def test_burning_cash_with_net_debt_is_flagged_risk(self, monkeypatch):
+        out = self._with_info(monkeypatch, total_cash=10, total_debt=500, free_cashflow=-50)
+        assert out.value["tone"] == "risk"
+
+    def test_no_fields_is_unavailable_not_guessed(self, monkeypatch):
+        out = self._with_info(monkeypatch)
+        assert not out.ok

@@ -5612,6 +5612,8 @@ def track_institutional_flow(symbol):
         ownership["reason"] = held.reason
 
     short_vol = market_data.finra_short_volume(symbol)
+    insiders = market_data.insider_filings(symbol)
+    balance = market_data.solvency(symbol)
 
     signals = []
     if ownership.get("pct_held") is not None:
@@ -5623,11 +5625,25 @@ def track_institutional_flow(symbol):
         signals.append(f"📊 Volume {volume_ratio:.2f}x 20-day average ({descriptor})")
     if short_vol.ok:
         signals.append(f"🩳 {short_vol.value['short_ratio']:.0%} of volume sold short (FINRA, {short_vol.value['as_of']})")
+    if insiders.ok and insiders.value.get('count_90d'):
+        signals.append(f"📝 {insiders.value['count_90d']} insider Form 4 filing(s) in 90d, latest {insiders.value['latest']} (direction not parsed)")
+    if balance.ok:
+        signals.append(f"💼 {balance.value['label']} (derived from reported cash/debt/FCF)")
 
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
         "available": held.ok or holders.ok,
+        "insider_filings": (
+            {"available": True, "source": insiders.source, **insiders.value}
+            if insiders.ok else
+            {"available": False, "source": insiders.source, "reason": insiders.reason}
+        ),
+        "solvency": (
+            {"available": True, "source": balance.source, "estimated": True, **balance.value}
+            if balance.ok else
+            {"available": False, "source": balance.source, "reason": balance.reason}
+        ),
         "short_volume": (
             {"available": True, "source": short_vol.source, **short_vol.value}
             if short_vol.ok else
