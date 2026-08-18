@@ -1261,3 +1261,27 @@ class TestStableUniverse:
                             lambda: ([], {'success': False}))
         app.stable_universe()
         assert fake.store.get('universe:v1') is None
+
+
+class TestLaneIndependence:
+    """The fast lane may never wait on the slow one."""
+
+    def test_missing_info_selector_only_returns_uncached(self, monkeypatch):
+        import market_data
+        fake = {}
+        monkeypatch.setattr(market_data._cache, "get",
+                            lambda k: fake.get(k))
+        fake["info:AAA"] = {"ok": True}
+        out = market_data._symbols_missing_info(["AAA", "BBB", "^VIX"])
+        assert out == ["BBB"]          # cached and index symbols excluded
+
+    def test_both_lanes_start(self, monkeypatch):
+        import market_data
+        monkeypatch.setattr(market_data, "_warmer_started", False)
+        names = []
+        class T:
+            def __init__(self, target=None, daemon=None, name=None): names.append(name)
+            def start(self): pass
+        monkeypatch.setattr(market_data.threading, "Thread", T)
+        market_data.start_background_warmer()
+        assert "market-data-warmer" in names and "market-data-info-lane" in names
