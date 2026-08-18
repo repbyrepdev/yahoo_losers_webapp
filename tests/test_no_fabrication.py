@@ -1158,3 +1158,53 @@ class TestDegradedRenders:
         app.save_cache({"degraded_note": None, "all_analysis": []})
         entry = pickle.loads((tmp_path / "p.pkl").read_bytes())
         assert entry["expires_at"] - time.time() > 1700
+
+
+class TestInfoLane:
+    """quoteSummary gets its own pacing and one shared cooldown."""
+
+    def test_rate_limit_sets_shared_cooldown_not_per_symbol_poison(self, monkeypatch):
+        import market_data, time
+
+        class Limited:
+            @property
+            def info(self):
+                raise RuntimeError("Too Many Requests. Rate limited. Try after a while.")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: Limited())
+        monkeypatch.setattr(market_data, "_info_throttle", lambda: None)
+        market_data._info_cooldown_until[0] = 0.0
+        market_data._cache._local.pop("info:LANE1", None)
+        out = market_data._info("LANE1")
+        assert not out["ok"] and "cooling down" in out["reason"]
+        assert market_data._info_cooldown_until[0] > time.time()
+        # A second symbol during the cooldown never touches the provider.
+        calls = []
+        monkeypatch.setattr(market_data, "_ticker",
+                            lambda s: calls.append(s) or Limited())
+        market_data._cache._local.pop("info:LANE2", None)
+        out2 = market_data._info("LANE2")
+        assert not out2["ok"] and calls == []
+        market_data._info_cooldown_until[0] = 0.0
+
+    def test_cooldown_failures_retry_fast_not_fifteen_minutes(self, monkeypatch):
+        import market_data, time
+        market_data._cache._local.pop("info:LANE3", None)
+        market_data._info_cooldown_until[0] = time.time() + 60
+        market_data._info("LANE3")
+        expires, _ = market_data._cache._local["info:LANE3"]
+        assert expires - time.time() < 120        # 90s retry, not 15 min
+        market_data._info_cooldown_until[0] = 0.0
+
+    def test_info_ttl_jitter_spreads_the_herd(self, monkeypatch):
+        """Entries written together must not expire together next morning."""
+        import market_data
+        seen = set()
+        real_cached = market_data._cached
+        def spy(key, ttl, producer, allow_fetch=True):
+            if key.startswith("info:"):
+                seen.add(ttl)
+            return {"ok": False, "reason": "x"}
+        monkeypatch.setattr(market_data, "_cached", spy)
+        for i in range(12):
+            market_data.analyst_target(f"JIT{i}")
+        assert len(seen) > 6  # wide per-symbol spread, not one shared value
