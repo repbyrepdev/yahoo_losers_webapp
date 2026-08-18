@@ -223,12 +223,29 @@ class TestEarningsWindow:
         assert app._earnings_in_window("ZZE3", 30) is None
 
     def test_live_contract_has_the_fields_this_reads(self, monkeypatch):
-        """Drift guard: _earnings_in_window consumes date/through/upcoming,
-        which must be exactly what earnings_date's payload constructor emits."""
-        import inspect
-        source = inspect.getsource(market_data.earnings_date)
-        for field in ('"date"', '"through"', '"upcoming"'):
-            assert field in source
+        """Drift guard: run the real producer against a fake Yahoo calendar
+        and assert its payload carries exactly the fields the window check
+        consumes. A source-text grep would pass on a renamed field; this
+        cannot."""
+        import app
+        from datetime import date, timedelta
+        start = date.today() + timedelta(days=5)
+        through = date.today() + timedelta(days=9)
+
+        class FakeTicker:
+            calendar = {"Earnings Date": [start, through]}
+
+        monkeypatch.setattr(market_data, "_ticker", lambda s: FakeTicker())
+        market_data._cache._local.pop("earnings:ZZECT1", None)
+        result = market_data.earnings_date("ZZECT1")
+        assert result.ok
+        assert result.value["date"] == start.isoformat()
+        assert result.value["through"] == through.isoformat()
+        assert result.value["upcoming"] is True
+        # And the consumer accepts that exact payload end to end.
+        monkeypatch.setattr(market_data, "earnings_date", lambda s: result)
+        assert app._earnings_in_window("ZZECT1", 30) == (
+            f"{start.isoformat()} to {through.isoformat()} (est.)")
 
 
 class TestModestRung:
