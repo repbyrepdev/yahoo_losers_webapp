@@ -27,6 +27,19 @@ provider status is at `/health/sources`.
 | CPI / jobs / GDP / retail dates | FRED `release/dates` | ✅ Live |
 | Reddit mentions | Reddit OAuth API | ⚙️ Needs `REDDIT_CLIENT_ID`/`SECRET` |
 
+### Insider filings and balance-sheet posture
+
+The institutional view now shows **SEC EDGAR Form 4 activity** — how many
+insider filings landed in the last 90 days and the latest date, linked to the
+filings themselves. The buy/sell direction is **deliberately not shown**: it
+requires parsing each filing's XML, which is not built yet, and a guessed
+direction would be worse than none. The label says so.
+
+A **solvency posture** line (Net cash / Net debt / Burning cash) is derived
+from yfinance-reported cash, debt and free cash flow, and is labelled derived.
+The honest upgrade path is reading the XBRL values straight from EDGAR
+filings; until then the source is stated as yfinance.
+
 ### Deliberately not reported
 
 No free source publishes these, so they are absent rather than approximated:

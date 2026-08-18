@@ -337,6 +337,10 @@ def _info(symbol: str, allow_fetch: bool = True) -> dict:
             "avg_volume": info.get("averageVolume"),
             "market_cap": info.get("marketCap"),
             "trailing_pe": info.get("trailingPE"),
+            "total_cash": info.get("totalCash"),
+            "total_debt": info.get("totalDebt"),
+            "free_cashflow": info.get("freeCashflow"),
+            "profit_margins": info.get("profitMargins"),
             "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
             "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
             "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
@@ -775,6 +779,143 @@ def finra_short_volume(symbol: str) -> Sourced:
     if not row:
         return Sourced.unavailable(source, "symbol not in FINRA consolidated file")
     return Sourced.live({**row, "as_of": payload["as_of"]}, source)
+
+
+
+# --- SEC EDGAR: insider filings ---------------------------------------------
+EDGAR_UA = os.environ.get("EDGAR_USER_AGENT",
+                          "yahoo-losers-webapp/1.0 damien.adams@fcpeuro.com")
+EDGAR_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+EDGAR_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+
+
+def _edgar_cik_table():
+    """Ticker-to-CIK map from the SEC, one fetch for every symbol, cached."""
+    def produce():
+        import requests as _rq
+        try:
+            _throttle()
+            response = _rq.get(EDGAR_TICKERS_URL, headers={"User-Agent": EDGAR_UA}, timeout=30)
+            response.raise_for_status()
+            table = {row["ticker"].upper(): str(row["cik_str"]).zfill(10)
+                     for row in response.json().values()}
+        except Exception as e:
+            return {"ok": False, "reason": f"cik map unavailable ({type(e).__name__})"}
+        if not table:
+            return {"ok": False, "reason": "cik map empty"}
+        return {"ok": True, "table": table}
+
+    return _cached("edgar:ciks", 7 * 24 * 60 * 60, produce)
+
+
+def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
+    """Recent insider (Form 4) filing activity from SEC EDGAR.
+
+    Reports the count and latest date of Form 4 filings inside the window,
+    with a link to the filings themselves. Deliberately NOT reported: whether
+    the insiders bought or sold -- that requires parsing each filing's XML,
+    which is not built yet, and a guessed direction would be worse than none.
+    The label says exactly this.
+    """
+    source = "sec-edgar:form4"
+
+    ciks = _edgar_cik_table()
+    if not ciks.get("ok"):
+        return Sourced.unavailable(source, ciks.get("reason", "cik map unavailable"))
+    cik = ciks["table"].get(symbol.upper())
+    if not cik:
+        return Sourced.unavailable(source, "ticker not in SEC registry")
+
+    def produce():
+        import requests as _rq
+        from datetime import timedelta as _td
+        try:
+            _throttle()
+            response = _rq.get(EDGAR_SUBMISSIONS_URL.format(cik=cik),
+                               headers={"User-Agent": EDGAR_UA}, timeout=30)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as e:
+            return {"ok": False, "reason": f"edgar submissions unavailable ({type(e).__name__})"}
+
+        recent = (payload.get("filings") or {}).get("recent") or {}
+        forms = recent.get("form") or []
+        dates = recent.get("filingDate") or []
+        cutoff = (datetime.now().date() - _td(days=window_days)).isoformat()
+        # CR 2: amendments are insider activity too.
+        form4_dates = [dates[i] for i in range(min(len(forms), len(dates)))
+                       if forms[i] in ("4", "4/A")]
+        in_window = [d for d in form4_dates if d >= cutoff]
+        return {
+            "ok": True,
+            "count": len(in_window),
+            "latest": form4_dates[0] if form4_dates else None,
+            "window_days": window_days,
+            "filings_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4&dateb=&owner=include&count=20",
+            "note": "filing count only; buy/sell direction is not parsed yet",
+        }
+
+    payload = _cached(f"edgar:form4:{symbol.upper()}:{window_days}", 24 * 60 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Balance-sheet posture from the cached profile: cash, debt, cash flow.
+
+    A profitable company knocked down ten percent and a cash-burner knocked
+    down ten percent are different bets. The classification is derived and
+    says so; the underlying figures are yfinance-reported, and the honest
+    upgrade path (XBRL values straight from filings) is noted in the README.
+    """
+    source = "yfinance:balance-sheet-fields"
+    info = _info(symbol, allow_fetch)
+    if not info.get("ok"):
+        return Sourced.unavailable(source, info.get("reason", "unavailable"))
+
+    cash, debt = info.get("total_cash"), info.get("total_debt")
+    fcf, margins = info.get("free_cashflow"), info.get("profit_margins")
+
+    # Missing values stay missing. (cash or 0) would report an absent figure
+    # as a zero balance, and a posture claimed from absent free cash flow is
+    # an assertion nobody measured -- the same fabrication class this project
+    # removes everywhere else.
+    net_cash = (cash - debt) if (cash is not None and debt is not None) else None
+
+    parts = []
+    if net_cash is not None:
+        parts.append("Net cash" if net_cash > 0 else "Net debt")
+    if fcf is not None:
+        parts.append("burning cash" if fcf < 0 else "cash-flow positive")
+
+    if not parts:
+        return Sourced.unavailable(source, "cash, debt and free cash flow all unreported")
+
+    label = ", ".join(parts)
+    if fcf is not None and fcf < 0 and net_cash is not None and net_cash < 0:
+        tone = "risk"
+    elif fcf is not None and fcf < 0:
+        tone = "caution"
+    elif net_cash is not None and net_cash > 0:
+        tone = "solid"
+    else:
+        tone = "neutral"
+
+    known = [name for name, value in
+             (("cash", cash), ("debt", debt), ("free cash flow", fcf)) if value is not None]
+    return Sourced.derived({
+        "label": label,
+        "tone": tone,
+        "total_cash": cash,
+        "total_debt": debt,
+        "net_cash": net_cash,
+        "free_cashflow": fcf,
+        "profit_margins": margins,
+        # CR 4: the documented field name for derived payloads.
+        "estimate_basis": f"derived from yfinance-reported {', '.join(known)} only; "
+                          "unreported fields are omitted, not zeroed",
+    }, source)
 
 
 def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
