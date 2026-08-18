@@ -1113,7 +1113,11 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
                             group_by="ticker", auto_adjust=True,
                             progress=False, threads=False)
     except Exception as e:
-        logger.warning(f"batch history failed for {len(pending)} symbols: {type(e).__name__}: {e}")
+        detail = f"{type(e).__name__}: {e}"
+        logger.warning(f"batch history failed for {len(pending)} symbols: {detail}")
+        if _is_rate_limited(detail):
+            _warm_backoff_until[0] = time.time() + 180
+            logger.warning("rate limiter engaged; warmer backing off 180s")
         return 0
 
     if frame is None or frame.empty:
@@ -1173,6 +1177,9 @@ def set_symbol_source(fn):
 
 
 _warm_queue: List[str] = []
+# When the provider rate-limits a batch, the warmer sleeps past this moment
+# instead of re-tripping the limiter every cycle.
+_warm_backoff_until = [0.0]
 _warm_queue_lock = threading.Lock()
 _warmer_started = False
 _inflight: Dict[str, bool] = {}

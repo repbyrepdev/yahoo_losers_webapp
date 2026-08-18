@@ -1122,3 +1122,39 @@ class TestSessionPhases:
         monkeypatch.setattr(app, "USE_REDIS", False)
         cache_file.write_bytes(pickle.dumps({"timestamp": datetime.now(), "data": {}}))
         assert app.load_cache() is None
+
+
+class TestDegradedRenders:
+    """A mid-warm page is honest but transient, and must not be pinned."""
+
+    def test_low_scored_ratio_is_degraded_with_honest_note(self):
+        import app
+        rows = [{'Rebound Score': None}] * 20 + [{'Rebound Score': 80.0}] * 5
+        degraded, note = app.degraded_state(rows)
+        assert degraded and "5 of 25" in note
+
+    def test_healthy_ratio_is_not_degraded(self):
+        import app
+        rows = [{'Rebound Score': 70.0}] * 20 + [{'Rebound Score': None}] * 5
+        degraded, note = app.degraded_state(rows)
+        assert not degraded and note is None
+
+    def test_degraded_cache_entry_is_short_lived(self, monkeypatch, tmp_path):
+        import app, pickle, time
+        monkeypatch.setattr(app, "CACHE_FILE", str(tmp_path / "p.pkl"))
+        monkeypatch.setattr(app, "USE_REDIS", False)
+        monkeypatch.setattr(app, "page_cache_policy",
+                            lambda: {"seconds": 1800, "description": "x", "phase": "pre_market"})
+        app.save_cache({"degraded_note": "warming", "all_analysis": []})
+        entry = pickle.loads((tmp_path / "p.pkl").read_bytes())
+        assert entry["expires_at"] - time.time() <= app.DEGRADED_CACHE_SECONDS + 2
+
+    def test_healthy_cache_entry_keeps_full_lifetime(self, monkeypatch, tmp_path):
+        import app, pickle, time
+        monkeypatch.setattr(app, "CACHE_FILE", str(tmp_path / "p.pkl"))
+        monkeypatch.setattr(app, "USE_REDIS", False)
+        monkeypatch.setattr(app, "page_cache_policy",
+                            lambda: {"seconds": 1800, "description": "x", "phase": "pre_market"})
+        app.save_cache({"degraded_note": None, "all_analysis": []})
+        entry = pickle.loads((tmp_path / "p.pkl").read_bytes())
+        assert entry["expires_at"] - time.time() > 1700
