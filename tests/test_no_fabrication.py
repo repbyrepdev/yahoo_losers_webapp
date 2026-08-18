@@ -1005,8 +1005,12 @@ class TestFredMacro:
         out = market_data.fred_latest("T10Y2Y")
         assert not out.ok and "not configured" in out.reason
 
-    def test_render_path_fred_never_fetches(self):
-        import market_data
+    def test_render_path_fred_never_fetches(self, monkeypatch):
+        import market_data, secrets_store
+        # Pin a key so the test exercises the cache-only path on every
+        # machine; without one the accessor short-circuits earlier ("not
+        # configured"), which made this pass locally and fail in CI.
+        monkeypatch.setattr(secrets_store, "get", lambda n: "test-key")
         market_data._cache._local.pop("fred:T10Y2Y", None)
         out = market_data.fred_latest("T10Y2Y", allow_fetch=False)
         assert not out.ok and "not fetched" in out.reason
