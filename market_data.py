@@ -927,7 +927,7 @@ FRED_MACRO_SERIES = {
 }
 
 
-def fred_latest(series_id: str) -> Sourced:
+def fred_latest(series_id: str, allow_fetch: bool = True) -> Sourced:
     """Latest observation of a FRED series, cached for six hours.
 
     Kept off the render path: the warmer refreshes these alongside the
@@ -951,11 +951,16 @@ def fred_latest(series_id: str) -> Sourced:
         except Exception as e:
             return {"ok": False, "reason": f"fred unavailable ({type(e).__name__})"}
         for obs in observations:
-            if obs.get("value") not in (None, "", "."):
-                return {"ok": True, "value": float(obs["value"]), "as_of": obs["date"]}
+            raw = obs.get("value")
+            if raw in (None, "", "."):
+                continue
+            try:
+                return {"ok": True, "value": float(raw), "as_of": obs["date"]}
+            except (TypeError, ValueError):
+                continue  # malformed row; keep walking to older observations
         return {"ok": False, "reason": "no numeric observations"}
 
-    payload = _cached(f"fred:{series_id}", 6 * 60 * 60, produce)
+    payload = _cached(f"fred:{series_id}", 6 * 60 * 60, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({"value": payload["value"], "as_of": payload["as_of"],
@@ -1188,6 +1193,11 @@ def _warm_loop():
                 fred_latest(series)
         except Exception as e:
             logger.warning(f"index warm failed: {type(e).__name__}")
+
+        # Persist whatever the index/macro refresh just wrote, even when the
+        # symbol queue is empty -- otherwise a restart on a quiet cycle
+        # restores stale FRED values from the last busy one.
+        save_cache_to_disk()
 
         if batch:
             try:

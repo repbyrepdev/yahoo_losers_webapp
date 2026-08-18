@@ -4479,7 +4479,9 @@ def macro_context():
     """Yield-curve and credit-spread readings for the overview, cache-only."""
     out = []
     for series in ("T10Y2Y", "BAMLH0A0HYM2"):
-        sourced = market_data.fred_latest(series)
+        # Cache-only: a cold FRED cache must cost the render nothing. The
+        # warmer owns the fetching.
+        sourced = market_data.fred_latest(series, allow_fetch=False)
         if sourced.ok:
             v = sourced.value
             out.append({"label": v["label"], "value": v["value"], "as_of": v["as_of"]})

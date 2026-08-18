@@ -1004,3 +1004,23 @@ class TestFredMacro:
         monkeypatch.setattr(secrets_store, "get", lambda n: None)
         out = market_data.fred_latest("T10Y2Y")
         assert not out.ok and "not configured" in out.reason
+
+    def test_render_path_fred_never_fetches(self):
+        import market_data
+        market_data._cache._local.pop("fred:T10Y2Y", None)
+        out = market_data.fred_latest("T10Y2Y", allow_fetch=False)
+        assert not out.ok and "not fetched" in out.reason
+
+    def test_malformed_observation_is_skipped_not_fatal(self, monkeypatch):
+        import market_data, requests as rq, secrets_store
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"observations": [{"date": "d1", "value": "garbage"},
+                                          {"date": "d2", "value": "1.25"}]}
+        monkeypatch.setattr(rq, "get", lambda *a, **k: FakeResp())
+        monkeypatch.setattr(secrets_store, "get", lambda n: "k")
+        market_data._cache._local.pop("fred:T10Y2Y", None)
+        out = market_data.fred_latest("T10Y2Y")
+        assert out.ok and out.value["value"] == 1.25
