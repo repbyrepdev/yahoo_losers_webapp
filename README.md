@@ -94,6 +94,27 @@ Both are free. Nothing is required — an unconfigured source reports itself
 unavailable rather than being filled in with a guess, and `/health/sources`
 shows which are live.
 
+## 📜 Live track record (self-proving)
+
+Once per trading day a GitHub Action calls `/api/snapshot` and commits the
+model's full output — every factor, score, and price — to
+[`data/snapshots/`](data/snapshots/). Git history makes the record
+tamper-evident: a past recommendation cannot be rewritten without a diff.
+
+[`/track-record`](https://yahoo-losers-webapp.onrender.com/track-record) joins
+every logged pick (score ≥ 70) with prices from later snapshots and reports
+realized ~7-day and ~30-day returns against the unpicked-losers baseline,
+including picks still pending. This also accumulates the history needed to
+validate the analyst-side factors that have no public archive — the model's
+single largest known gap.
+
+Every hit rate now carries a **95% Wilson interval** ("34% (20/59, CI 22–48%)"),
+headlines are classified into a display-only **why-it-fell** label, and the
+institutional view shows **FINRA's daily reported short-sale share of volume**
+(T+1, labelled). A `health-watch` Action probes the live source health every
+30 minutes and opens/closes a GitHub issue on failures; a daily digest issue
+posts the top of the board. `/methodology` serves this document in-app.
+
 ## 📋 Reading the table in one glance
 
 Every row now answers the value question without opening the modal, sorted so

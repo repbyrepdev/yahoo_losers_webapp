@@ -1,0 +1,68 @@
+name: health-watch
+
+# Pings the live app's source-health endpoint and raises a GitHub issue when a
+# provider goes dark — the failure mode this app kept meeting silently. Issues
+# are deduplicated by title; recovery closes them on the next green check.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe /health/sources
+        id: probe
+        run: |
+          set -uo pipefail
+          BODY=$(curl -sS --max-time 60 "https://yahoo-losers-webapp.onrender.com/health/sources" || echo '{}')
+          echo "$BODY" > /tmp/health.json
+          python3 - <<'EOF'
+          import json, os
+          try:
+              d = json.load(open('/tmp/health.json'))
+          except ValueError:
+              d = {}
+          yf = (d.get('sources') or {}).get('yfinance') or {}
+          problems = []
+          if not d:
+              problems.append('app unreachable or returned non-JSON')
+          if yf.get('rate_limited'):
+              problems.append('yfinance is rate-limited (scores will degrade)')
+          if not yf and d:
+              problems.append('yfinance probe missing from health payload')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write('problems=' + ('; '.join(problems)) + '\n')
+          EOF
+
+      - name: Open or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBLEMS: ${{ steps.probe.outputs.problems }}
+        run: |
+          set -euo pipefail
+          TITLE="Health alert: data source degraded"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --search "\"$TITLE\" in:title" --json number --jq '.[0].number' || echo "")
+          if [ -n "$PROBLEMS" ]; then
+            if [ -z "$EXISTING" ]; then
+              gh issue create --repo "${{ github.repository }}" --title "$TITLE" \
+                --body "Automated check failed: ${PROBLEMS}
+
+Endpoint: https://yahoo-losers-webapp.onrender.com/health/sources
+This issue closes itself when the next check passes."
+            else
+              echo "alert already open (#$EXISTING)"
+            fi
+          else
+            if [ -n "$EXISTING" ]; then
+              gh issue close "$EXISTING" --repo "${{ github.repository }}" \
+                --comment "Sources healthy again; closing automatically."
+            fi
+            echo "healthy"
+          fi

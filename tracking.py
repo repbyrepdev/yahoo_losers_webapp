@@ -1,0 +1,182 @@
+"""Daily snapshots and the live track record computed from them.
+
+The model's largest honesty gap is that most of its factors have no historical
+record to validate against. This module closes it going forward: once a day a
+GitHub Action calls /api/snapshot and commits the result to data/snapshots/ in
+the repository. Git history makes the record tamper-evident -- a past
+recommendation cannot be quietly rewritten without leaving a diff -- and the
+deployed app ships with its own history, which /track-record turns into
+realized forward returns.
+
+Day one the page honestly says "no forward returns yet". That is the point:
+the numbers only ever come from recommendations the app actually logged.
+"""
+
+import glob
+import json
+import logging
+import os
+from datetime import date, datetime, timezone
+
+logger = logging.getLogger(__name__)
+
+MODEL_VERSION = "3.1"
+SNAPSHOT_DIR = os.environ.get("SNAPSHOT_DIR", os.path.join(os.path.dirname(__file__), "data", "snapshots"))
+
+# Forward-return horizons, in calendar days between snapshots (trading-day
+# precision would need an exchange calendar; nearest-snapshot matching keeps
+# the arithmetic simple and the approximation is stated on the page).
+HORIZONS = (7, 30)
+
+# A pick is anything at or above the model's "strong" boundary.
+PICK_SCORE = 70.0
+
+
+def _load_snapshots(directory=None):
+    """All committed snapshots, oldest first. Malformed files are skipped loudly."""
+    directory = directory or SNAPSHOT_DIR
+    snapshots = []
+    for path in sorted(glob.glob(os.path.join(directory, "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                snap = json.load(handle)
+            if snap.get("date") and isinstance(snap.get("universe"), list):
+                snapshots.append(snap)
+            else:
+                logger.warning(f"snapshot {os.path.basename(path)} missing required keys; skipped")
+        except (OSError, ValueError) as e:
+            logger.warning(f"snapshot {os.path.basename(path)} unreadable: {type(e).__name__}")
+    return snapshots
+
+
+def _price_on(snapshot, symbol):
+    """A symbol's price in a snapshot: from its universe row or tracked prices."""
+    for row in snapshot.get("universe", []):
+        if row.get("symbol") == symbol and row.get("price"):
+            return float(row["price"])
+    tracked = snapshot.get("tracked_prices") or {}
+    value = tracked.get(symbol)
+    return float(value) if value else None
+
+
+def build_snapshot(universe_rows, tracked_prices):
+    """Assemble one day's record. Caller supplies scored rows and price map."""
+    return {
+        "date": date.today().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "model_version": MODEL_VERSION,
+        "universe": universe_rows,
+        "tracked_prices": tracked_prices,
+        "note": ("Recorded so every factor -- including those with no public "
+                 "historical archive -- accumulates an auditable record. "
+                 "Committed to git; history is tamper-evident."),
+    }
+
+
+def tracked_symbols(directory=None, lookback_days=70):
+    """Symbols whose forward prices the next snapshot should carry."""
+    cutoff = None
+    symbols = set()
+    for snap in _load_snapshots(directory):
+        try:
+            snap_date = date.fromisoformat(snap["date"])
+        except ValueError:
+            continue
+        if cutoff is None:
+            cutoff = date.today().toordinal() - lookback_days
+        if snap_date.toordinal() < cutoff:
+            continue
+        for row in snap.get("universe", []):
+            if row.get("symbol"):
+                symbols.add(row["symbol"])
+    return sorted(symbols)
+
+
+def compute_track_record(directory=None):
+    """Join every logged pick with the prices later snapshots recorded.
+
+    Returns per-horizon aggregates for picks (score >= PICK_SCORE) and for the
+    rest of the universe as the baseline, plus the individual pick rows so the
+    page can show its work. Picks without a later price yet are counted as
+    pending, never dropped silently.
+    """
+    snapshots = _load_snapshots(directory)
+    result = {
+        "model_version": MODEL_VERSION,
+        "pick_threshold": PICK_SCORE,
+        "snapshot_days": len(snapshots),
+        "first_date": snapshots[0]["date"] if snapshots else None,
+        "last_date": snapshots[-1]["date"] if snapshots else None,
+        "horizons": {},
+        "picks": [],
+        "pending": 0,
+    }
+    if not snapshots:
+        return result
+
+    by_date = {}
+    for snap in snapshots:
+        try:
+            by_date[date.fromisoformat(snap["date"])] = snap
+        except ValueError:
+            continue
+    ordered_dates = sorted(by_date)
+
+    def later_price(entry_date, symbol, horizon):
+        """Price at the snapshot nearest to entry_date + horizon (within +/-40%)."""
+        target = entry_date.toordinal() + horizon
+        best, best_gap = None, None
+        for d in ordered_dates:
+            if d <= entry_date:
+                continue
+            gap = abs(d.toordinal() - target)
+            if gap <= max(2, int(horizon * 0.4)):
+                price = _price_on(by_date[d], symbol)
+                if price and (best_gap is None or gap < best_gap):
+                    best, best_gap = (price, d), gap
+        return best
+
+    horizon_rows = {h: {"picks": [], "baseline": []} for h in HORIZONS}
+
+    for snap_date in ordered_dates:
+        snap = by_date[snap_date]
+        for row in snap.get("universe", []):
+            symbol, entry = row.get("symbol"), row.get("price")
+            score = row.get("score")
+            if not symbol or not entry:
+                continue
+            is_pick = isinstance(score, (int, float)) and score >= PICK_SCORE
+            resolved_any = False
+            pick_row = {"date": snap.get("date"), "symbol": symbol, "score": score,
+                        "entry": entry, "returns": {}}
+            for horizon in HORIZONS:
+                hit = later_price(snap_date, symbol, horizon)
+                if not hit:
+                    continue
+                resolved_any = True
+                price, at = hit
+                ret = (price - entry) / entry * 100.0
+                pick_row["returns"][str(horizon)] = {"pct": round(ret, 2), "as_of": at.isoformat()}
+                bucket = "picks" if is_pick else "baseline"
+                horizon_rows[horizon][bucket].append(ret)
+            if is_pick:
+                if not resolved_any:
+                    result["pending"] += 1
+                result["picks"].append(pick_row)
+
+    for horizon in HORIZONS:
+        picks = horizon_rows[horizon]["picks"]
+        base = horizon_rows[horizon]["baseline"]
+        entry = {"n_picks": len(picks), "n_baseline": len(base)}
+        if picks:
+            entry["picks_mean"] = round(sum(picks) / len(picks), 2)
+            entry["picks_win_rate"] = round(sum(1 for r in picks if r > 0) / len(picks), 3)
+        if base:
+            entry["baseline_mean"] = round(sum(base) / len(base), 2)
+        if picks and base:
+            entry["excess"] = round(entry["picks_mean"] - entry["baseline_mean"], 2)
+        result["horizons"][str(horizon)] = entry
+
+    # Newest first for display; cap so the page stays light.
+    result["picks"] = sorted(result["picks"], key=lambda p: p["date"], reverse=True)[:200]
+    return result
