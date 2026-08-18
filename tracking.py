@@ -71,6 +71,16 @@ def _price_on(snapshot, symbol):
     return float(value) if value else None
 
 
+# Public aliases: walkforward.py consumes the same snapshot store, and the
+# underscore names would make that coupling look accidental.
+def load_snapshots(directory=None):
+    return _load_snapshots(directory)
+
+
+def price_on(snapshot, symbol):
+    return _price_on(snapshot, symbol)
+
+
 def build_snapshot(universe_rows, tracked_prices):
     """Assemble one day's record. Caller supplies scored rows and price map."""
     return {
@@ -207,4 +217,94 @@ def compute_track_record(directory=None):
 
     # Newest first for display; cap so the page stays light.
     result["picks"] = sorted(result["picks"], key=lambda p: p["date"], reverse=True)[:200]
+    return result
+
+
+# Calibration needs enough resolved predictions to say anything; below this
+# the page reports "collecting" with the honest counts instead of a curve.
+MIN_CALIBRATION_RESOLVED = 20
+CALIBRATION_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 101))
+
+
+def compute_calibration(directory=None):
+    """Were the published probabilities right? Predicted vs realized, plus Brier.
+
+    Each snapshot row may carry `predictions`: the empirical hit-rate odds the
+    app displayed that day ({name: {probability, target_pct, horizon_days}}).
+    A prediction resolves against later snapshots: hit if any snapshot inside
+    the horizon closed at or above entry * (1 + target); unresolved until the
+    window has essentially elapsed. Snapshots record one close per day, so
+    intraday touches between snapshots are invisible -- realized rates are
+    conservative, and the page says so.
+    """
+    snapshots = _load_snapshots(directory)
+    by_date = {}
+    for snap in snapshots:
+        try:
+            by_date[date.fromisoformat(snap["date"])] = snap
+        except ValueError:
+            continue
+    ordered_dates = sorted(by_date)
+
+    pairs = []          # (predicted probability 0-1, hit 0/1)
+    unresolved = 0
+    for snap_date in ordered_dates:
+        for row in by_date[snap_date].get("universe", []):
+            symbol, entry = row.get("symbol"), row.get("price")
+            predictions = row.get("predictions") or {}
+            if not symbol or not entry or not predictions:
+                continue
+            for pred in predictions.values():
+                prob = pred.get("probability")
+                target = pred.get("target_pct")
+                horizon = pred.get("horizon_days")
+                if prob is None or target is None or not horizon:
+                    continue
+                threshold = entry * (1 + target / 100.0)
+                end_ordinal = snap_date.toordinal() + horizon
+                hit = window_elapsed = price_observed = False
+                for later in ordered_dates:
+                    if later <= snap_date:
+                        continue
+                    if later.toordinal() > end_ordinal:
+                        window_elapsed = True   # a snapshot exists past the window
+                        break
+                    price = _price_on(by_date[later], symbol)
+                    if price is not None:
+                        price_observed = True
+                        if price >= threshold:
+                            hit = True
+                            break
+                    # 80% of the window observed counts as resolved-enough.
+                    if later.toordinal() >= snap_date.toordinal() + horizon * 0.8:
+                        window_elapsed = True
+                # A miss must be supported by at least one recorded in-window
+                # price. A symbol that vanished from every later snapshot has
+                # no observed outcome, and grading it would fabricate one.
+                if hit or (window_elapsed and price_observed):
+                    pairs.append((float(prob), 1 if hit else 0))
+                else:
+                    unresolved += 1
+
+    result = {
+        "n_resolved": len(pairs),
+        "n_unresolved": unresolved,
+        "min_required": MIN_CALIBRATION_RESOLVED,
+        "ready": len(pairs) >= MIN_CALIBRATION_RESOLVED,
+        "buckets": [],
+        "brier": None,
+        "note": ("evaluated on daily snapshot closes; intraday touches between "
+                 "snapshots are not visible, so realized rates are conservative"),
+    }
+    if not pairs:
+        return result
+
+    result["brier"] = round(sum((p - h) ** 2 for p, h in pairs) / len(pairs), 4)
+    for low, high in CALIBRATION_BUCKETS:
+        rows = [(p, h) for p, h in pairs if low <= p * 100 < high]
+        bucket = {"range": f"{low}-{min(high, 100)}%", "n": len(rows)}
+        if rows:
+            bucket["predicted_mean"] = round(sum(p for p, _ in rows) / len(rows) * 100, 1)
+            bucket["realized_rate"] = round(sum(h for _, h in rows) / len(rows) * 100, 1)
+        result["buckets"].append(bucket)
     return result

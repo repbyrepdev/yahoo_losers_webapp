@@ -446,6 +446,7 @@ class TestRenderPathMakesNoProviderCalls:
         empty indefinitely.
         """
         import market_data
+        monkeypatch.delenv("MARKET_DATA_DISABLE_WARMER", raising=False)
         monkeypatch.setattr(market_data, "_warmer_started", False)
         started = []
         monkeypatch.setattr(market_data.threading, "Thread",
@@ -872,12 +873,16 @@ class TestEdgarInsiders:
 
         monkeypatch.setattr(rq, "get", fake_get)
         market_data._cache._local.pop("edgar:ciks", None)
-        market_data._cache._local.pop("edgar:form4:TSTX", None)
+        market_data._cache._local.pop("edgar:form4v2:TSTX:90", None)
         out = market_data.insider_filings("TSTX")
         assert out.ok
         assert out.value["count"] == 2               # Form 4 + 4/A inside window
         assert out.value["latest"] == recent_day
-        assert "not parsed" in out.value["note"]     # direction honestly absent
+        # This mock serves no filing documents, so direction is honestly
+        # absent: zero parsed, both counted unparsed, no buy/sell fields.
+        assert out.value["parsed"] == 0
+        assert out.value["unparsed"] == 2
+        assert "net_value" not in out.value
 
     def test_unknown_ticker_reports_reason(self, monkeypatch):
         import market_data
@@ -1278,6 +1283,7 @@ class TestLaneIndependence:
 
     def test_both_lanes_start(self, monkeypatch):
         import market_data
+        monkeypatch.delenv("MARKET_DATA_DISABLE_WARMER", raising=False)
         monkeypatch.setattr(market_data, "_warmer_started", False)
         started = []
         class T:
