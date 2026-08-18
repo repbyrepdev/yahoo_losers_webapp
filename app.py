@@ -48,16 +48,40 @@ sophisticated_predictor = SophisticatedTimeframePredictor()
 UNIVERSE_TTL_SECONDS = int(os.environ.get('UNIVERSE_TTL_SECONDS', 600))
 
 
+_universe_lock = threading.Lock()
+
+
 def stable_universe():
-    """The losers list, cached for one cadence. Same list for page, warmer, all."""
+    """The losers list, cached for one cadence. Same list for page, warmer, all.
+
+    Single-flight: concurrent callers on a cache miss would each scrape a
+    reshuffling screener and race to write different lists, breaking the
+    one-universe-per-cadence contract. One caller scrapes under the lock;
+    the rest re-read what it wrote. Reused lists are labelled as reused so
+    the page cannot claim a scrape that did not happen.
+    """
+    def labelled(cached):
+        status = dict(cached['status'])
+        status['data_source'] = 'cached'
+        status['message'] = (f"Universe reused from a scrape "
+                             f"{int(time.time() - cached['at'])}s ago")
+        return cached['losers'], status
+
     cached = market_data._cache.get('universe:v1')
     if cached is not None:
-        return cached['losers'], cached['status']
-    losers, status = scrape_yahoo_losers()
-    if status.get('success'):
-        market_data._cache.set('universe:v1', {'losers': losers, 'status': status},
-                               UNIVERSE_TTL_SECONDS)
-    return losers, status
+        return labelled(cached)
+
+    with _universe_lock:
+        cached = market_data._cache.get('universe:v1')  # settled while waiting
+        if cached is not None:
+            return labelled(cached)
+        losers, status = scrape_yahoo_losers()
+        if status.get('success'):
+            market_data._cache.set('universe:v1',
+                                   {'losers': losers, 'status': status,
+                                    'at': time.time()},
+                                   UNIVERSE_TTL_SECONDS)
+        return losers, status
 
 
 def _current_universe():
@@ -3538,6 +3562,13 @@ def index():
         }
         is_degraded, degraded_note = degraded_state(all_analysis)
         template_vars['degraded_note'] = degraded_note
+
+        if not losers_status.get('success'):
+            # A failure page must never be served to the next visitor from
+            # cache; it retries the provider instead.
+            response = make_response(render_template_string(html_template, **template_vars))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
         
         # Save results to cache
         logger.info("Saving results to cache...")

@@ -69,7 +69,9 @@ _last_call_at = [0.0]
 # own slower pacing, and one shared cooldown when it is refused -- individual
 # symbols are not poisoned for fifteen minutes each.
 INFO_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_INFO_INTERVAL", 4.0))
-INFO_INTERVAL_MAX_SECONDS = float(os.environ.get("MARKET_DATA_INFO_INTERVAL_MAX", 90.0))
+INFO_INTERVAL_MAX_SECONDS = max(
+    float(os.environ.get("MARKET_DATA_INFO_INTERVAL", 4.0)),
+    float(os.environ.get("MARKET_DATA_INFO_INTERVAL_MAX", 90.0)))
 _info_last_call_at = [0.0]
 _info_cooldown_until = [0.0]
 # Adaptive: refusals double this, successes decay it toward the base. The
