@@ -579,7 +579,7 @@ def earnings_date(symbol: str) -> Sourced:
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
 
-    from datetime import datetime as _dt
+    from datetime import date as _date, datetime as _dt
     import pytz as _pytz
 
     today = _dt.now(_pytz.timezone("America/New_York")).date()
