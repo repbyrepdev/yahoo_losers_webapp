@@ -225,10 +225,13 @@ def clear_cache():
     with _cache._lock:
         cleared = len(_cache._local)
         _cache._local.clear()
+    # Count the shared backend too. Each gunicorn worker's local dict can be
+    # near-empty while the real entries live in Redis, so reporting only the
+    # local count could truthfully clear everything and still say "0 entries".
     if _cache._redis is not None:
         try:
             for key in _cache._redis.scan_iter(f"md:{CACHE_SCHEMA_VERSION}:*"):
-                _cache._redis.delete(key)
+                cleared += int(_cache._redis.delete(key) or 0)
         except Exception as e:
             logger.warning(f"Redis cache clear failed: {type(e).__name__}")
     try:
