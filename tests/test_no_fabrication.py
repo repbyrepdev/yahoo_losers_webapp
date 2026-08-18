@@ -1228,3 +1228,36 @@ class TestInfoLane:
         assert market_data._info_interval[0] <= market_data.INFO_INTERVAL_MAX_SECONDS
         market_data._info_interval[0] = market_data.INFO_CALL_INTERVAL_SECONDS
         market_data._info_cooldown_until[0] = 0.0
+
+
+class TestStableUniverse:
+    """One list per cadence: page, warmer and refreshes share the same target."""
+
+    class _FakeCache:
+        def __init__(self): self.store = {}
+        def get(self, key): return self.store.get(key)
+        def set(self, key, value, ttl): self.store[key] = value
+
+    def test_second_call_reuses_the_cached_list(self, monkeypatch):
+        import app, market_data
+        fake = self._FakeCache()
+        monkeypatch.setattr(market_data, "_cache", fake)
+        calls = []
+        monkeypatch.setattr(app, "scrape_yahoo_losers",
+                            lambda: (calls.append(1) or ([{'Symbol': 'AAA'}], {'success': True, 'data_source': 'live', 'message': 'scraped'})))
+        first_losers, first_status = app.stable_universe()
+        second_losers, second_status = app.stable_universe()
+        assert len(calls) == 1
+        assert first_losers == second_losers
+        # The reused call says so instead of claiming a fresh scrape.
+        assert second_status['data_source'] == 'cached'
+        assert 'reused' in second_status['message']
+
+    def test_failed_scrape_is_not_cached(self, monkeypatch):
+        import app, market_data
+        fake = self._FakeCache()
+        monkeypatch.setattr(market_data, "_cache", fake)
+        monkeypatch.setattr(app, "scrape_yahoo_losers",
+                            lambda: ([], {'success': False}))
+        app.stable_universe()
+        assert fake.store.get('universe:v1') is None

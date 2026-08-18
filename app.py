@@ -39,9 +39,54 @@ sophisticated_predictor = SophisticatedTimeframePredictor()
 
 # Start background warming at import so it runs under gunicorn, which never
 # executes the __main__ block below.
+
+# The losers universe holds still for a full page cadence, independent of page
+# refreshes. Without this, every Force Refresh re-pulled the live screener --
+# which reshuffles minute-to-minute during volatile sessions -- so the warm
+# target moved before the warmer could finish it, and the board could never
+# reach full coverage while anyone was watching it.
+UNIVERSE_TTL_SECONDS = int(os.environ.get('UNIVERSE_TTL_SECONDS', 600))
+
+
+_universe_lock = threading.Lock()
+
+
+def stable_universe():
+    """The losers list, cached for one cadence. Same list for page, warmer, all.
+
+    Single-flight: concurrent callers on a cache miss would each scrape a
+    reshuffling screener and race to write different lists, breaking the
+    one-universe-per-cadence contract. One caller scrapes under the lock;
+    the rest re-read what it wrote. Reused lists are labelled as reused so
+    the page cannot claim a scrape that did not happen.
+    """
+    def labelled(cached):
+        status = dict(cached['status'])
+        status['data_source'] = 'cached'
+        status['message'] = (f"Universe reused from a scrape "
+                             f"{int(time.time() - cached['at'])}s ago")
+        return cached['losers'], status
+
+    cached = market_data._cache.get('universe:v1')
+    if cached is not None:
+        return labelled(cached)
+
+    with _universe_lock:
+        cached = market_data._cache.get('universe:v1')  # settled while waiting
+        if cached is not None:
+            return labelled(cached)
+        losers, status = scrape_yahoo_losers()
+        if status.get('success'):
+            market_data._cache.set('universe:v1',
+                                   {'losers': losers, 'status': status,
+                                    'at': time.time()},
+                                   UNIVERSE_TTL_SECONDS)
+        return losers, status
+
+
 def _current_universe():
     """Symbols the warmer should keep fresh: today's losers."""
-    losers, status = scrape_yahoo_losers()
+    losers, status = stable_universe()
     if not status.get("success"):
         return []
     return [s["Symbol"] for s in losers if s.get("Symbol") and s["Symbol"] != "ERROR"]
@@ -3479,7 +3524,7 @@ def index():
         
         # Step 1: Scrape today's losers
         logger.info("Step 1: Scraping Yahoo Finance losers...")
-        losers_data, losers_status = scrape_yahoo_losers()
+        losers_data, losers_status = stable_universe()
         
         # Step 2: Get detailed information for top stocks
         logger.info("Step 2: Getting detailed stock information...")
@@ -3517,6 +3562,13 @@ def index():
         }
         is_degraded, degraded_note = degraded_state(all_analysis)
         template_vars['degraded_note'] = degraded_note
+
+        if not losers_status.get('success'):
+            # A failure page must never be served to the next visitor from
+            # cache; it retries the provider instead.
+            response = make_response(render_template_string(html_template, **template_vars))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
         
         # Save results to cache
         logger.info("Saving results to cache...")
