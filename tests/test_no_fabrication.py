@@ -1208,3 +1208,23 @@ class TestInfoLane:
         for i in range(12):
             market_data.analyst_target(f"JIT{i}")
         assert len(seen) > 6  # wide per-symbol spread, not one shared value
+
+    def test_refusals_double_the_interval_and_successes_decay_it(self):
+        import market_data
+        market_data._info_interval[0] = market_data.INFO_CALL_INTERVAL_SECONDS
+        market_data._info_lane_refused()
+        market_data._info_lane_refused()
+        assert market_data._info_interval[0] == market_data.INFO_CALL_INTERVAL_SECONDS * 4
+        for _ in range(20):
+            market_data._info_lane_succeeded()
+        assert market_data._info_interval[0] == market_data.INFO_CALL_INTERVAL_SECONDS
+        market_data._info_cooldown_until[0] = 0.0
+
+    def test_interval_is_capped(self):
+        import market_data
+        market_data._info_interval[0] = market_data.INFO_CALL_INTERVAL_SECONDS
+        for _ in range(20):
+            market_data._info_lane_refused()
+        assert market_data._info_interval[0] <= market_data.INFO_INTERVAL_MAX_SECONDS
+        market_data._info_interval[0] = market_data.INFO_CALL_INTERVAL_SECONDS
+        market_data._info_cooldown_until[0] = 0.0
