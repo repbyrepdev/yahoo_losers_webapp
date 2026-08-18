@@ -706,6 +706,158 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
     return Sourced.live(payload, source)
 
 
+def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """The move the options market is pricing in, from the ATM straddle.
+
+    An at-the-money straddle's cost is what the market charges for exposure to
+    any move by expiry, so straddle / spot is the market's own forward-looking
+    magnitude estimate -- the live counterpart to this app's backward-looking
+    hit rates. Priced off mid-quotes; thin small-cap chains get a quality flag
+    instead of silent trust, and a chain with no usable quotes is unavailable
+    rather than guessed.
+    """
+    source = "yfinance:option-chain-atm-straddle"
+
+    def produce():
+        ticker = _ticker(symbol)
+        expiries = ticker.options
+        if not expiries:
+            return {"ok": False, "reason": "no listed options"}
+        from datetime import date as _date
+        today = _eastern_now().date()
+        expiry = None
+        for candidate in expiries:
+            try:
+                days_out = (_date.fromisoformat(candidate) - today).days
+            except ValueError:
+                continue
+            if days_out >= 5:
+                expiry, days_to_expiry = candidate, days_out
+                break
+        if not expiry:
+            return {"ok": False, "reason": "no expiry at least 5 days out"}
+
+        chain = ticker.option_chain(expiry)
+        calls, puts = chain.calls, chain.puts
+        if calls.empty or puts.empty:
+            return {"ok": False, "reason": "one-sided chain"}
+
+        spot = None
+        tech = _cache.get(f"tech:{symbol.upper()}")
+        if tech and tech.get("ok"):
+            spot = tech.get("close")
+        if not spot:
+            strikes = calls["strike"].dropna()
+            spot = float(strikes.iloc[(strikes - strikes.median()).abs().argmin()]) \
+                if not strikes.empty else None
+        if not spot:
+            return {"ok": False, "reason": "no spot price to anchor the strike"}
+
+        def atm_mid(frame):
+            frame = frame.dropna(subset=["strike"])
+            if frame.empty:
+                return None, None
+            row = frame.iloc[(frame["strike"] - spot).abs().argmin()]
+            bid = float(row.get("bid") or 0)
+            ask = float(row.get("ask") or 0)
+            if bid > 0 and ask > 0:
+                mid = (bid + ask) / 2
+                spread_ratio = (ask - bid) / mid if mid else None
+                return mid, spread_ratio
+            last = float(row.get("lastPrice") or 0)
+            # Last trade instead of a live quote: usable, but flagged.
+            return (last, 1.0) if last > 0 else (None, None)
+
+        call_mid, call_spread = atm_mid(calls)
+        put_mid, put_spread = atm_mid(puts)
+        if not call_mid or not put_mid:
+            return {"ok": False, "reason": "no usable ATM quotes"}
+
+        worst_spread = max(s for s in (call_spread, put_spread) if s is not None)
+        return {
+            "ok": True,
+            "expiry": expiry,
+            "days_to_expiry": days_to_expiry,
+            "implied_move_pct": round((call_mid + put_mid) / spot * 100, 1),
+            "spot": round(float(spot), 2),
+            "quality": "ok" if worst_spread < 0.35 else "wide-spread (thin chain)",
+            "estimate_basis": "ATM straddle mid-quotes / spot; not a probability, "
+                              "the magnitude of move the market is pricing",
+        }
+
+    payload = _cached(f"implied:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.derived({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+EDGAR_FTS_URL = "https://efts.sec.gov/LATEST/search-index"
+GOING_CONCERN_LOOKBACK_DAYS = 400  # covers the latest 10-K plus quarters
+
+
+def going_concern(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Whether recent 10-K/10-Q filings contain going-concern language.
+
+    Full-text search for the phrase auditors are required to use --
+    "substantial doubt" -- in the issuer's filings from the past ~13 months.
+    A stock down 15% with that language in its latest quarterly is a
+    categorically different bet than one without it. Three honest states:
+    flagged (found, with the filing), clear (searched, none found), and
+    unavailable (could not check) -- a failed lookup must never render as a
+    clean bill of health.
+    """
+    source = "sec-edgar:full-text-search"
+    ciks = _edgar_cik_table()
+    if not ciks.get("ok"):
+        return Sourced.unavailable(source, ciks.get("reason", "cik map unavailable"))
+    cik = ciks["table"].get(symbol.upper())
+    if not cik:
+        return Sourced.unavailable(source, "ticker not in SEC registry")
+
+    def produce():
+        import requests as _rq
+        from datetime import timedelta as _td
+        cutoff = (_eastern_now().date() - _td(days=GOING_CONCERN_LOOKBACK_DAYS)).isoformat()
+        try:
+            _throttle()
+            response = _rq.get(
+                EDGAR_FTS_URL,
+                params={"q": '"substantial doubt"', "forms": "10-K,10-Q",
+                        "ciks": str(cik).zfill(10)},
+                headers={"User-Agent": EDGAR_UA}, timeout=30)
+            response.raise_for_status()
+            hits = ((response.json().get("hits") or {}).get("hits")) or []
+        except Exception as e:
+            return {"ok": False, "reason": f"edgar full-text search unavailable ({type(e).__name__})"}
+
+        recent = []
+        for hit in hits:
+            src = hit.get("_source") or {}
+            file_date = src.get("file_date")
+            if file_date and file_date >= cutoff:
+                recent.append((file_date, src.get("file_type") or
+                               ",".join(src.get("root_forms") or []), src.get("adsh")))
+        if not recent:
+            return {"ok": True, "flagged": False, "searched_since": cutoff}
+        recent.sort(reverse=True)
+        file_date, form, adsh = recent[0]
+        return {
+            "ok": True,
+            "flagged": True,
+            "latest": file_date,
+            "form": form,
+            "filings_url": (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                            f"&CIK={cik}&type=10&dateb=&owner=include&count=10"),
+            "note": ("filing contains the phrase 'substantial doubt'; read the filing "
+                     "-- management plans sometimes state the doubt is alleviated"),
+        }
+
+    payload = _cached(f"gc:{symbol.upper()}", 24 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
 def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
     """Mean-reversion indicators computed from real daily OHLCV.
 
@@ -1594,12 +1746,22 @@ def _info_loop():
     while True:
         try:
             source = _symbol_source[0]
-            missing = _symbols_missing_info(source() if source else [])
-            if not missing:
+            universe = [s for s in (source() if source else []) if s and not s.startswith("^")]
+            missing = _symbols_missing_info(universe)
+            # EDGAR going-concern context rides this lane too: separate
+            # provider, own throttle, 24h cache. The board chip must read
+            # warm rather than fetch on a render.
+            gc_missing = [s for s in universe if _cache.get(f"gc:{s.upper()}") is None]
+            if not missing and not gc_missing:
                 time.sleep(20)
                 continue
             for symbol in missing[:5]:
                 _info(symbol)   # adaptive lane pacing happens inside
+            for symbol in gc_missing[:5]:
+                try:
+                    going_concern(symbol)
+                except Exception as e:
+                    logger.debug(f"gc warm skipped for {symbol}: {type(e).__name__}")
             save_cache_to_disk()
         except Exception as e:
             logger.warning(f"info lane cycle failed: {type(e).__name__}: {e}")

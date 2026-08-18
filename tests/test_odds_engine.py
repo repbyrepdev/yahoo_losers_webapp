@@ -322,7 +322,9 @@ class TestBoardColumnsUseTheLadder:
         market_data._cache.set("hist:ZZBD3:5y", {"ok": True, "closes": closes}, 60)
         market_data._cache.set("tech:ZZBD3", {"ok": True, "ma20": None}, 60)
         market_data._cache.set("ohlcv:ZZBD3:1y", {
-            "ok": True, "close": [100.0] * 260, "high": highs}, 60)
+            "ok": True,
+            "index": [f"2026-{1 + i // 28:02d}-{(i % 28) + 1:02d}" for i in range(260)],
+            "close": [100.0] * 260, "high": highs}, 60)
         out = app._horizon_summaries("ZZBD3")
         assert "intraday-touch" in out["short"]["detail"]
 

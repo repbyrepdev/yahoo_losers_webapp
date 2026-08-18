@@ -55,13 +55,16 @@ RSI_OVERSOLD = 30.0
 HORIZON_BARS = {"short": 7, "medium": 21, "long": 126}
 
 
-def day_drop_mask(closes, min_drop_pct: float = SETUP_DROP_PCT) -> np.ndarray:
-    """True on days whose close-to-close move was a drop of at least the bound.
+def day_drop_mask(closes, min_drop_pct: float = SETUP_DROP_PCT,
+                  max_drop_pct: Optional[float] = None) -> np.ndarray:
+    """True on days whose close-to-close move was a drop inside the band.
 
     This is the conditioning the whole app implies: every symbol on the board
     is here because it just fell hard, so the informative history is windows
     that started from the same situation, not windows starting on any random
-    Tuesday.
+    Tuesday. With `max_drop_pct` the band is two-sided, for matching windows
+    to drops of roughly today's magnitude -- a 4% dip and a 15% collapse are
+    different situations.
     """
     closes = np.asarray(closes, dtype=float)
     mask = np.zeros(len(closes), dtype=bool)
@@ -70,7 +73,39 @@ def day_drop_mask(closes, min_drop_pct: float = SETUP_DROP_PCT) -> np.ndarray:
     prior = closes[:-1]
     with np.errstate(divide="ignore", invalid="ignore"):
         rets = np.where(prior > 0, closes[1:] / prior - 1.0, 0.0)
-    mask[1:] = rets <= -(min_drop_pct / 100.0)
+    hit = rets <= -(min_drop_pct / 100.0)
+    if max_drop_pct is not None:
+        hit &= rets >= -(max_drop_pct / 100.0)
+    mask[1:] = hit
+    return mask
+
+
+def same_day_return_mask(dates, ref_dates, ref_closes,
+                         max_ret_pct: Optional[float] = None,
+                         min_ret_pct: Optional[float] = None) -> np.ndarray:
+    """Per-date mask from another series' same-day return, aligned by date.
+
+    Used for sector conditioning: True where the reference series (a sector
+    ETF) moved inside the requested band that day. Dates absent from the
+    reference are False -- an unknown sector day cannot satisfy a condition.
+    """
+    ref_returns = {}
+    prior = None
+    for d, c in zip(ref_dates, ref_closes):
+        if c is not None and prior:
+            ref_returns[d] = (c / prior - 1.0) * 100.0
+        if c is not None:
+            prior = c
+    mask = np.zeros(len(dates), dtype=bool)
+    for i, d in enumerate(dates):
+        ret = ref_returns.get(d)
+        if ret is None:
+            continue
+        if max_ret_pct is not None and ret > max_ret_pct:
+            continue
+        if min_ret_pct is not None and ret < min_ret_pct:
+            continue
+        mask[i] = True
     return mask
 
 

@@ -2561,6 +2561,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                     
                     // Get short-term targets from the sophisticated data
                     const shortTermData = recovery.sophisticated_analysis?.timeframe_predictions?.short_term || {};
+                    const implied = recovery.sophisticated_analysis?.market_implied;
+                    const impliedLine = (implied && implied.available)
+                        ? `<div style="text-align: center; margin-top: 12px; font-size: 14px; background: rgba(0,0,0,0.25); border-radius: 8px; padding: 8px 12px;" title="${implied.estimate_basis || ''}">
+                               🧮 Options market prices a ±${implied.implied_move_pct}% move by ${implied.expiry}
+                               <span style="opacity: 0.8; font-size: 12px;">(${implied.quality} · the market's forward view beside the historical rates below)</span>
+                           </div>`
+                        : '';
                     const targets = Object.values(shortTermData);
                     const avgConfidence = targets.some(t => t.confidence === 'Very High' || t.confidence === 'High') ? 'High' : 
                                          targets.some(t => t.confidence === 'Medium') ? 'Medium' : 'Low';
@@ -2627,6 +2634,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             Short-term recovery analysis based on technical indicators and market momentum
                         </div>
                         ${heuristicNote}
+                        ${impliedLine}
                         <div style="display: grid; gap: 15px; margin-top: 20px;">
                     `;
                     
@@ -3222,7 +3230,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
                         <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
                         <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
-                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}
+                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -3265,7 +3273,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3365,7 +3373,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3691,6 +3699,12 @@ def api_snapshot():
         }
         sector = market_data.sector_context(symbol)
         row["sector"] = sector.value.get("sector") if sector.ok else None
+        # Market-implied move and filing-language context ride the record so
+        # both can be graded against realized outcomes later.
+        implied = market_data.implied_move(symbol)
+        row["implied_move_pct"] = implied.value.get("implied_move_pct") if implied.ok else None
+        concern = market_data.going_concern(symbol)
+        row["going_concern"] = concern.value.get("flagged") if concern.ok else None
         # The probabilities published today, so tomorrow's snapshots can grade
         # them. Prediction failure must never sink the snapshot itself.
         try:
@@ -4973,30 +4987,9 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
     except Exception as e:
         logger.warning(f"regime alignment unavailable for {symbol}: {type(e).__name__}")
 
-    # Evidence ladder. Conditioning outranks touch precision: the informative
-    # windows are the ones that started the way today did (a hard down day),
-    # so post-drop rungs come first, intraday-touch beating close-basis within
-    # each. The chosen rung's label rides into every evidence string.
-    drop_label = f"post-drop (≥{timeframes.SETUP_DROP_PCT:.0f}% down day)"
-    hi_closes = hi_highs = None
-    if sym_ohlcv is not None and sym_ohlcv.ok:
-        rows = [(c, h) for c, h in zip(sym_ohlcv.value["close"], sym_ohlcv.value["high"])
-                if c is not None and h is not None]
-        if len(rows) >= 60:
-            hi_closes = np.array([c for c, _ in rows], dtype=float)
-            hi_highs = np.array([h for _, h in rows], dtype=float)
-    bases = []
-    if hi_closes is not None:
-        bases.append({"closes": hi_closes, "highs": hi_highs,
-                      "mask": timeframes.day_drop_mask(hi_closes),
-                      "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
-                      "label": drop_label})
-    bases.append({"closes": closes, "mask": timeframes.day_drop_mask(closes),
-                  "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
-                  "label": drop_label})
-    if hi_closes is not None:
-        bases.append({"closes": hi_closes, "highs": hi_highs, "label": "all windows"})
-    bases.append({"closes": closes, "label": "all windows"})
+    # Evidence ladder, shared with the board columns. Conditioning outranks
+    # touch precision; the chosen rung's label rides into every evidence line.
+    bases = _evidence_bases(symbol, closes)
 
     oversold = timeframes.oversold_mask(closes)
 
@@ -5061,6 +5054,13 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
         'are preferred over random-day windows, and intraday touches count '
         'when high data is available; the evidence line under each number '
         'states exactly which sample answered. Not a forecast.')
+
+    # The market's own forward-looking estimate beside the backward-looking
+    # hit rates: what magnitude of move the options market is charging for.
+    implied = market_data.implied_move(symbol)
+    sophisticated_result['market_implied'] = (
+        {"available": True, "source": implied.source, **implied.value}
+        if implied.ok else {"available": False, "reason": implied.reason})
     return sophisticated_result
 
 
@@ -5795,6 +5795,98 @@ def sentiment_for_score(score):
 
 
 
+def _evidence_bases(symbol, closes):
+    """The evidence ladder both the board and the drill-in measure against.
+
+    Best question-match first. When today's drop is large, windows after
+    similar-magnitude drops outrank the generic post-drop rung; when the
+    sector context is known, windows where the sector behaved like today
+    outrank windows where it didn't. Everything reads from cache; a cold
+    rung is simply absent and the ladder degrades to the five-year
+    unconditional close-basis floor, which was the original behaviour.
+    """
+    drop_label = f"post-drop (≥{timeframes.SETUP_DROP_PCT:.0f}% down day)"
+    hi_closes = hi_highs = hi_dates = None
+    ohlcv = market_data._cache.get(f"ohlcv:{symbol.upper()}:1y")
+    if ohlcv and ohlcv.get("ok"):
+        rows = [(d, c, h) for d, c, h in zip(ohlcv.get("index") or [],
+                                             ohlcv.get("close") or [],
+                                             ohlcv.get("high") or [])
+                if c is not None and h is not None]
+        if len(rows) >= 60:
+            hi_dates = [d[:10] for d, _, _ in rows]
+            hi_closes = np.array([c for _, c, _ in rows], dtype=float)
+            hi_highs = np.array([h for _, _, h in rows], dtype=float)
+
+    bases = []
+
+    # Rung 1: drops of roughly today's magnitude. A 4% dip and a 15%
+    # collapse are different situations; when today's fall is well past the
+    # generic bound, measure against its own kind. Band: 60% to 220% of
+    # today's move, floored at the generic bound.
+    today_drop = None
+    if len(closes) >= 2 and closes[-2]:
+        move = (closes[-1] / closes[-2] - 1.0) * 100.0
+        if move < 0:
+            today_drop = -move
+    if today_drop and today_drop >= timeframes.SETUP_DROP_PCT * 1.5:
+        low = max(timeframes.SETUP_DROP_PCT, today_drop * 0.6)
+        high = today_drop * 2.2
+        magnitude_label = (f"post-drop ({low:.0f}-{high:.0f}% down day, "
+                           f"like today's -{today_drop:.1f}%)")
+        if hi_closes is not None:
+            bases.append({"closes": hi_closes, "highs": hi_highs,
+                          "mask": timeframes.day_drop_mask(hi_closes, low, high),
+                          "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                          "label": magnitude_label})
+        bases.append({"closes": closes,
+                      "mask": timeframes.day_drop_mask(closes, low, high),
+                      "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                      "label": magnitude_label})
+
+    # Rung 2: sector-matched. If today is a sector-wide selloff, the fair
+    # history is post-drop days where the sector also fell; if today is
+    # company-specific, days where the sector did not.
+    sector = market_data.sector_context(symbol)
+    if (sector.ok and hi_closes is not None
+            and sector.value.get("classification") in ("sector_wide", "company_specific")):
+        etf = sector.value["etf"]
+        etf_ohlcv = market_data._cache.get(f"ohlcv:{etf}:1y")
+        if etf_ohlcv and etf_ohlcv.get("ok"):
+            etf_dates = [d[:10] for d in (etf_ohlcv.get("index") or [])]
+            etf_closes = etf_ohlcv.get("close") or []
+            if sector.value["classification"] == "sector_wide":
+                sector_mask = timeframes.same_day_return_mask(
+                    hi_dates, etf_dates, etf_closes,
+                    max_ret_pct=market_data.SECTOR_SELLOFF_PCT)
+                sector_label = "post-drop with the sector also down"
+            else:
+                sector_mask = timeframes.same_day_return_mask(
+                    hi_dates, etf_dates, etf_closes,
+                    min_ret_pct=market_data.SECTOR_FLAT_PCT)
+                sector_label = "post-drop with the sector flat (company-specific)"
+            bases.append({"closes": hi_closes, "highs": hi_highs,
+                          "mask": timeframes.day_drop_mask(hi_closes) & sector_mask,
+                          "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                          "label": sector_label})
+
+    # Rungs 3-4: generic post-drop, intraday-touch then close-basis.
+    if hi_closes is not None:
+        bases.append({"closes": hi_closes, "highs": hi_highs,
+                      "mask": timeframes.day_drop_mask(hi_closes),
+                      "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                      "label": drop_label})
+    bases.append({"closes": closes, "mask": timeframes.day_drop_mask(closes),
+                  "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                  "label": drop_label})
+
+    # Rungs 5-6: unconditional, as the floor.
+    if hi_closes is not None:
+        bases.append({"closes": hi_closes, "highs": hi_highs, "label": "all windows"})
+    bases.append({"closes": closes, "label": "all windows"})
+    return bases
+
+
 def _horizon_summaries(symbol, target_price=None):
     """Per-row recovery odds for the table, from cached data only.
 
@@ -5819,31 +5911,8 @@ def _horizon_summaries(symbol, target_price=None):
     tech = market_data.technicals(symbol, allow_fetch=False)
     ma20 = (tech.value or {}).get("ma20") if tech.ok else None
 
-    # The same evidence ladder the drill-in uses, from cache only: post-drop
-    # windows first (that is the situation every row on this board is in),
-    # intraday-touch beating close-basis within each. The OHLCV highs are
-    # whatever the warmer has stored; a cold cache just skips those rungs.
-    drop_label = f"post-drop (≥{timeframes.SETUP_DROP_PCT:.0f}% down day)"
-    hi_closes = hi_highs = None
-    ohlcv = market_data._cache.get(f"ohlcv:{symbol.upper()}:1y")
-    if ohlcv and ohlcv.get("ok"):
-        rows = [(c, h) for c, h in zip(ohlcv.get("close") or [], ohlcv.get("high") or [])
-                if c is not None and h is not None]
-        if len(rows) >= 60:
-            hi_closes = np.array([c for c, _ in rows], dtype=float)
-            hi_highs = np.array([h for _, h in rows], dtype=float)
-    bases = []
-    if hi_closes is not None:
-        bases.append({"closes": hi_closes, "highs": hi_highs,
-                      "mask": timeframes.day_drop_mask(hi_closes),
-                      "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
-                      "label": drop_label})
-    bases.append({"closes": closes, "mask": timeframes.day_drop_mask(closes),
-                  "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
-                  "label": drop_label})
-    if hi_closes is not None:
-        bases.append({"closes": hi_closes, "highs": hi_highs, "label": "all windows"})
-    bases.append({"closes": closes, "label": "all windows"})
+    # The same evidence ladder the drill-in uses, from cache only.
+    bases = _evidence_bases(symbol, closes)
 
     def measure(key, level, horizon_key):
         if not level or level <= price:
@@ -5942,6 +6011,13 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         # move. Cache-only: absent until the lanes have warmed it, never a stall.
         sector = market_data.sector_context(symbol)
         enhanced['Sector Context'] = sector.value if sector.ok else None
+
+        # Going-concern language in recent filings, warmed by the info lane.
+        # Only a flagged finding renders; a clear or unchecked state shows
+        # nothing rather than a false badge of health.
+        concern = market_data.going_concern(symbol, allow_fetch=False)
+        enhanced['Going Concern'] = (concern.value if concern.ok and
+                                     concern.value.get('flagged') else None)
 
         enhanced_analysis.append(enhanced)
 
