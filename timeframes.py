@@ -42,7 +42,8 @@ MIN_WINDOWS = 40
 HORIZON_BARS = {"short": 7, "medium": 21, "long": 126}
 
 
-def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int) -> Optional[dict]:
+def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
+             mask: Optional[np.ndarray] = None) -> Optional[dict]:
     """How often this stock gained at least `target_pct` within `horizon_bars`.
 
     A window counts as a hit if the target was reached at any point inside it,
@@ -62,6 +63,8 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int) -> Option
     # Vectorised over the window, looped over start points: clear to read and
     # fast enough for the few hundred windows involved.
     for start in range(len(closes) - horizon_bars):
+        if mask is not None and (start >= len(mask) or not mask[start]):
+            continue  # window's start day falls outside the requested regime
         entry = closes[start]
         if not entry or entry <= 0:
             continue
@@ -102,6 +105,45 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int) -> Option
         "miss_median_return": round(miss_median, 2) if miss_median is not None else None,
         "expected_value": round(expected_value, 2) if expected_value is not None else None,
     }
+
+
+VIX_BUCKETS = ((0, 17, "calm (VIX<17)"), (17, 25, "normal (VIX 17-25)"),
+               (25, 999, "stressed (VIX>25)"))
+
+
+def vix_bucket(level: float) -> str:
+    for low, high, name in VIX_BUCKETS:
+        if low <= level < high:
+            return name
+    return "unknown"
+
+
+def regime_conditioned(closes: np.ndarray, close_dates, vix_by_date: dict,
+                       target_pct: float, band: str) -> Optional[dict]:
+    """The same hit rate, restricted to windows that began in today's VIX regime.
+
+    MNSO's all-history bounce rate includes 2022's bear market; if today is
+    calm, the calm-days-only rate is the fairer comparison. Needs the stock's
+    dated closes and a date-to-VIX map; returns None when today's VIX is
+    unknown or too few windows share the regime, rather than padding the
+    sample with days that do not match.
+    """
+    if not vix_by_date or close_dates is None or len(close_dates) != len(closes):
+        return None
+    todays_vix = None
+    for d in sorted(vix_by_date)[::-1]:
+        todays_vix = vix_by_date[d]
+        break
+    if todays_vix is None:
+        return None
+    bucket = vix_bucket(todays_vix)
+    mask = np.array([vix_by_date.get(d) is not None and
+                     vix_bucket(vix_by_date[d]) == bucket for d in close_dates])
+    horizon = HORIZON_BARS.get(band, 21)
+    measured = hit_rate(closes, target_pct, horizon, mask=mask)
+    if not measured:
+        return None
+    return {"bucket": bucket, "todays_vix": round(float(todays_vix), 1), **measured}
 
 
 def target_probability(closes: np.ndarray, target_pct: float, band: str) -> Sourced:

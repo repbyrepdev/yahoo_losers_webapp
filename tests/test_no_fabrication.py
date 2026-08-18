@@ -912,3 +912,95 @@ class TestSolvency:
     def test_no_fields_is_unavailable_not_guessed(self, monkeypatch):
         out = self._with_info(monkeypatch)
         assert not out.ok
+
+
+class TestRegimeConditioning:
+    """The regime rate uses only windows that began in today's VIX bucket."""
+
+    def test_mask_restricts_the_sample(self):
+        import numpy as np, timeframes
+        closes = np.array([100.0, 105.0, 95.0, 102.0] * 40)
+        full = timeframes.hit_rate(closes, 3.0, 3)
+        mask = np.zeros(len(closes), dtype=bool)
+        mask[: len(closes) // 2] = True
+        half = timeframes.hit_rate(closes, 3.0, 3, mask=mask)
+        assert half["windows"] < full["windows"]
+
+    def test_bucket_boundaries(self):
+        import timeframes
+        assert timeframes.vix_bucket(12.0).startswith("calm")
+        assert timeframes.vix_bucket(19.0).startswith("normal")
+        assert timeframes.vix_bucket(31.0).startswith("stressed")
+
+    def test_conditioned_rate_needs_alignment(self):
+        import numpy as np, timeframes
+        closes = np.array([100.0, 101.0] * 60)
+        out = timeframes.regime_conditioned(closes, None, {"2026-01-01": 15}, 2.0, "short")
+        assert out is None  # no dated closes -> no regime claim
+
+    def test_conditioned_rate_reports_its_bucket(self):
+        import numpy as np, timeframes
+        n = 160
+        closes = np.array([100.0, 104.0, 98.0, 101.0] * (n // 4))
+        dates = [f"2026-01-{(i % 28) + 1:02d}x{i}" for i in range(n)]  # unique keys
+        vix = {d: 12.0 for d in dates}
+        out = timeframes.regime_conditioned(closes, dates, vix, 2.0, "short")
+        assert out and out["bucket"].startswith("calm")
+        assert out["windows"] >= timeframes.MIN_WINDOWS
+
+
+class TestSpyRelativeRecord:
+    """Pick returns are priced against SPY over the same recorded span."""
+
+    def _write(self, tmp_path, day, universe, tracked=None):
+        import json
+        (tmp_path / f"{day}.json").write_text(json.dumps(
+            {"date": day, "model_version": "t", "universe": universe,
+             "tracked_prices": tracked or {}}))
+
+    def test_vs_spy_excess_math(self, tmp_path):
+        import tracking
+        self._write(tmp_path, "2026-08-01",
+                    [{"symbol": "AAA", "price": 10.0, "score": 90.0}],
+                    tracked={"SPY": 100.0})
+        self._write(tmp_path, "2026-08-08", [],
+                    tracked={"AAA": 11.0, "SPY": 102.0})
+        record = tracking.compute_track_record(str(tmp_path))
+        seven = record["horizons"]["7"]
+        assert seven["vs_spy_mean"] == 8.0     # +10% pick vs +2% SPY
+        pick = record["picks"][0]["returns"]["7"]
+        assert pick["vs_spy"] == 8.0
+
+    def test_missing_spy_leaves_comparison_absent_not_zero(self, tmp_path):
+        import tracking
+        self._write(tmp_path, "2026-08-01",
+                    [{"symbol": "AAA", "price": 10.0, "score": 90.0}])
+        self._write(tmp_path, "2026-08-08", [], tracked={"AAA": 11.0})
+        record = tracking.compute_track_record(str(tmp_path))
+        assert "vs_spy_mean" not in record["horizons"]["7"]
+        assert "vs_spy" not in record["picks"][0]["returns"]["7"]
+
+
+class TestFredMacro:
+    """Macro readings come from FRED or are absent, never guessed."""
+
+    def test_parses_latest_numeric_observation(self, monkeypatch):
+        import market_data, requests as rq
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self):
+                return {"observations": [{"date": "2026-08-17", "value": "."},
+                                          {"date": "2026-08-15", "value": "0.53"}]}
+        monkeypatch.setattr(rq, "get", lambda *a, **k: FakeResp())
+        monkeypatch.setattr(market_data.secrets_store if hasattr(market_data, 'secrets_store') else __import__('secrets_store'), "get", lambda n: "k")
+        market_data._cache._local.pop("fred:T10Y2Y", None)
+        out = market_data.fred_latest("T10Y2Y")
+        assert out.ok and out.value["value"] == 0.53
+        assert out.value["as_of"] == "2026-08-15"   # the dot row was skipped
+
+    def test_no_key_is_unavailable(self, monkeypatch):
+        import market_data, secrets_store
+        monkeypatch.setattr(secrets_store, "get", lambda n: None)
+        out = market_data.fred_latest("T10Y2Y")
+        assert not out.ok and "not configured" in out.reason

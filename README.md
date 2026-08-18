@@ -197,6 +197,27 @@ with a hard-coded 35% probability. Being arbitrary, it routinely landed *below*
 the real analyst consensus it was supposed to exceed. The long-term tab now
 shows the actual published analyst low, mean and high.
 
+### Regime-conditioned rates
+
+Each measured probability also shows the same rate restricted to windows that
+began in **today's VIX regime** (calm <17 / normal 17–25 / stressed >25),
+computed over the past year of date-aligned data. The difference is the point:
+MNSO's all-history 7-day bounce rate is 20.8%, but in calm regimes like today
+it has been **8% (9/112)** — the bear-market bounces were doing the lifting.
+
+### SPY-relative track record
+
+From 2026-08-18 every snapshot records SPY, so each resolved pick shows its
+excess over SPY across the same recorded span, and the aggregates report
+`vs SPY same window`. A pick that beat its own history but trailed the market
+is a worse trade than the raw number suggests.
+
+### Macro context
+
+The overview shows the **10y–2y Treasury spread** and **high-yield OAS**
+(FRED, dated), refreshed by the background warmer — regime features that will
+feed conditioning once the snapshot record is deep enough to validate them.
+
 ### Limitations
 
 - Assumes the past distribution of moves is informative about the next one. For

@@ -169,7 +169,18 @@ def compute_track_record(directory=None):
                 resolved_any = True
                 price, at = hit
                 ret = (price - entry) / entry * 100.0
-                pick_row["returns"][str(horizon)] = {"pct": round(ret, 2), "as_of": at.isoformat()}
+                entry_row = {"pct": round(ret, 2), "as_of": at.isoformat()}
+                # Same-span SPY return, when both endpoints recorded it. A pick
+                # that beat its own history but trailed the market is a worse
+                # trade than the raw number suggests.
+                spy_entry = _price_on(snap, "SPY")
+                spy_exit = _price_on(by_date[at], "SPY")
+                if spy_entry and spy_exit:
+                    spy_ret = (spy_exit - spy_entry) / spy_entry * 100.0
+                    entry_row["vs_spy"] = round(ret - spy_ret, 2)
+                    if is_pick:
+                        horizon_rows[horizon].setdefault("vs_spy", []).append(ret - spy_ret)
+                pick_row["returns"][str(horizon)] = entry_row
                 bucket = "picks" if is_pick else "baseline"
                 horizon_rows[horizon][bucket].append(ret)
             if is_pick:
@@ -188,6 +199,10 @@ def compute_track_record(directory=None):
             entry["baseline_mean"] = round(sum(base) / len(base), 2)
         if picks and base:
             entry["excess"] = round(entry["picks_mean"] - entry["baseline_mean"], 2)
+        spy_rows = horizon_rows[horizon].get("vs_spy") or []
+        if spy_rows:
+            entry["vs_spy_mean"] = round(sum(spy_rows) / len(spy_rows), 2)
+            entry["n_vs_spy"] = len(spy_rows)
         result["horizons"][str(horizon)] = entry
 
     # Newest first for display; cap so the page stays light.
