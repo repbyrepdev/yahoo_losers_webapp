@@ -229,11 +229,22 @@ class TestCacheLifetimes:
             assert self.md._effective_ttl(base) >= 30
 
     def test_closed_market_extends_lifetime(self, monkeypatch):
-        monkeypatch.setattr(self.md, "market_is_open", lambda: True)
+        """Patches market_phase, which _effective_ttl actually consults.
+
+        An earlier version patched market_is_open, which the implementation
+        no longer reads -- the test silently depended on the real wall clock
+        and jitter, passing or failing by time of day.
+        """
+        monkeypatch.setattr(self.md, "market_phase",
+                            lambda: {"phase": "open", "changes_at": None})
         open_ttl = self.md._effective_ttl(300)
-        monkeypatch.setattr(self.md, "market_is_open", lambda: False)
+        monkeypatch.setattr(self.md, "market_phase",
+                            lambda: {"phase": "closed", "changes_at": None})
         closed_ttl = self.md._effective_ttl(300)
-        assert closed_ttl > open_ttl
+        monkeypatch.setattr(self.md, "market_phase",
+                            lambda: {"phase": "pre_market", "changes_at": None})
+        extended_ttl = self.md._effective_ttl(300)
+        assert closed_ttl > extended_ttl > open_ttl
 
 
 class TestSecretHandling:
@@ -1028,3 +1039,86 @@ class TestFredMacro:
         market_data._cache._local.pop("fred:T10Y2Y", None)
         out = market_data.fred_latest("T10Y2Y")
         assert out.ok and out.value["value"] == 1.25
+
+
+class TestSessionPhases:
+    """Freshness follows the real session calendar, extended hours included."""
+
+    def _phase_at(self, monkeypatch, weekday, hour, minute):
+        import market_data
+        from datetime import datetime
+
+        class Fixed(datetime):
+            pass
+        base = datetime(2026, 8, 10 + weekday, hour, minute)  # Mon=10th
+        monkeypatch.setattr(market_data, "_eastern_now", lambda: base)
+        return market_data.market_phase()
+
+    def test_pre_market_is_its_own_phase(self, monkeypatch):
+        p = self._phase_at(monkeypatch, 1, 5, 0)      # Tue 5:00 AM
+        assert p["phase"] == "pre_market"
+        assert p["changes_at"].hour == 9 and p["changes_at"].minute == 30
+
+    def test_after_hours_ends_at_eight(self, monkeypatch):
+        p = self._phase_at(monkeypatch, 1, 17, 30)    # Tue 5:30 PM
+        assert p["phase"] == "after_hours"
+        assert p["changes_at"].hour == 20
+
+    def test_overnight_expires_at_next_pre_market(self, monkeypatch):
+        p = self._phase_at(monkeypatch, 1, 21, 30)    # Tue 9:30 PM
+        assert p["phase"] == "closed"
+        assert p["changes_at"].hour == 4 and p["changes_at"].day == 12  # Wed
+
+    def test_friday_night_expires_monday_pre_market(self, monkeypatch):
+        p = self._phase_at(monkeypatch, 4, 22, 0)     # Fri 10:00 PM
+        assert p["phase"] == "closed"
+        assert p["changes_at"].weekday() == 0 and p["changes_at"].hour == 4
+
+    def test_extended_hours_stretch_less_than_overnight(self):
+        import market_data
+        stretch = market_data.PHASE_TTL_STRETCH
+        assert stretch["pre_market"] < stretch["closed"]
+        assert stretch["after_hours"] < stretch["closed"]
+
+    def test_page_lifetime_capped_at_phase_boundary(self, monkeypatch):
+        """A 9:25 pre-market render must expire at 9:30, not 9:55."""
+        import app, market_data
+        from datetime import datetime
+        base = datetime(2026, 8, 11, 9, 25)
+        monkeypatch.setattr(market_data, "_eastern_now", lambda: base)
+        policy = app.page_cache_policy()
+        assert policy["phase"] == "pre_market"
+        assert policy["seconds"] <= 5 * 60 + 1
+
+    def test_closed_policy_names_the_reopen_time(self, monkeypatch):
+        import app, market_data
+        from datetime import datetime
+        base = datetime(2026, 8, 11, 22, 0)
+        monkeypatch.setattr(market_data, "_eastern_now", lambda: base)
+        policy = app.page_cache_policy()
+        assert "cannot change" in policy["description"]
+        assert policy["seconds"] > 5 * 3600     # ~6h to 4 AM
+
+    def test_cached_page_expiry_is_absolute_not_rederived(self, monkeypatch, tmp_path):
+        """CodeRabbit finding: a 9:25 pre-market entry must not be revalidated
+        under the 10-minute open-session policy after 9:30 and served stale."""
+        import app, pickle, time
+        from datetime import datetime
+        cache_file = tmp_path / "page.pkl"
+        monkeypatch.setattr(app, "CACHE_FILE", str(cache_file))
+        monkeypatch.setattr(app, "USE_REDIS", False)
+        # Written at 9:25 pre-market with a 5-minute lifetime...
+        payload = {"expires_at": time.time() - 30, "timestamp": datetime.now(),
+                   "data": {"x": 1}}
+        cache_file.write_bytes(pickle.dumps(payload))
+        # ...read after the boundary: expired regardless of the current phase.
+        assert app.load_cache() is None
+
+    def test_legacy_cache_without_expiry_is_rejected(self, monkeypatch, tmp_path):
+        import app, pickle
+        from datetime import datetime
+        cache_file = tmp_path / "page.pkl"
+        monkeypatch.setattr(app, "CACHE_FILE", str(cache_file))
+        monkeypatch.setattr(app, "USE_REDIS", False)
+        cache_file.write_bytes(pickle.dumps({"timestamp": datetime.now(), "data": {}}))
+        assert app.load_cache() is None
