@@ -254,6 +254,30 @@ PAGE_CADENCE_MINUTES = {
 }
 
 
+
+# A render is degraded when most of the universe could not be scored -- the
+# state a page enters mid-warm after the morning universe rollover, or while
+# the provider is throttling. Such a page is honest but transient, and caching
+# it for a full phase cadence pins the bad minutes onto the next half hour.
+DEGRADED_SCORE_RATIO = float(os.environ.get('DEGRADED_SCORE_RATIO', 0.6))
+DEGRADED_CACHE_SECONDS = int(os.environ.get('DEGRADED_CACHE_SECONDS', 90))
+
+
+def degraded_state(all_analysis):
+    """(is_degraded, banner_text) for a scored universe."""
+    total = len(all_analysis or [])
+    if not total:
+        return True, "No universe could be loaded; retrying shortly."
+    scored = sum(1 for row in all_analysis if row.get('Rebound Score') is not None)
+    if scored / total >= DEGRADED_SCORE_RATIO:
+        return False, None
+    return True, (f"\u26a0\ufe0f Data still warming ({scored} of {total} stocks scored). "
+                  "This happens for a few minutes after the losers list rolls over "
+                  "or while the data provider throttles. This page re-renders "
+                  "automatically within two minutes -- unscored rows show dashes "
+                  "rather than invented numbers.")
+
+
 def page_cache_policy():
     """Lifetime for a rendered page, and the human sentence describing it.
 
@@ -360,8 +384,11 @@ def log_performance(func_name, start_time, memory_before):
 def save_cache(data):
     """Save analysis results to cache with timestamp (Redis + file fallback)"""
     try:
+        lifetime = page_cache_policy()['seconds']
+        if data.get('degraded_note'):
+            lifetime = min(lifetime, DEGRADED_CACHE_SECONDS)
         cache_data = {
-            'expires_at': time.time() + page_cache_policy()['seconds'],
+            'expires_at': time.time() + lifetime,
             'timestamp': datetime.now(),
             'data': data
         }
@@ -3159,6 +3186,11 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
             {% endmacro %}
 
+            {% if degraded_note %}
+            <div style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 8px; padding: 12px 16px; margin: 0 0 14px; font-size: 13px; color: var(--text-primary);">
+                {{ degraded_note }}
+            </div>
+            {% endif %}
             <div class="section">
                 <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
                 <p style="font-size: 12px; color: var(--text-secondary); margin: 4px 0 10px;">Odds = how often that recovery actually happened in this stock's own history. Hover any number for its evidence. Click a column header to sort.</p>
@@ -3483,6 +3515,8 @@ def index():
             'market_status': market_status,
             'market_analysis': market_analysis
         }
+        is_degraded, degraded_note = degraded_state(all_analysis)
+        template_vars['degraded_note'] = degraded_note
         
         # Save results to cache
         logger.info("Saving results to cache...")
