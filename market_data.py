@@ -123,7 +123,7 @@ def _is_rate_limited(reason: str) -> bool:
 _STRUCTURAL_MARKERS = (
     "no analyst coverage", "no listed options", "no 13F holders",
     "no ratings published", "insufficient history", "no earnings date published",
-    "only ", "empty chain", "no recent headlines",
+    "only ", "empty chain", "no recent headlines", "not in SEC registry",
 )
 
 
@@ -742,45 +742,52 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
         if calls.empty or puts.empty:
             return {"ok": False, "reason": "one-sided chain"}
 
-        spot = None
+        # Spot must be a real underlying price. A strike is not one, and a
+        # straddle anchored to a guessed level is a fabricated figure.
         tech = _cache.get(f"tech:{symbol.upper()}")
-        if tech and tech.get("ok"):
-            spot = tech.get("close")
+        spot = tech.get("close") if (tech and tech.get("ok")) else None
         if not spot:
-            strikes = calls["strike"].dropna()
-            spot = float(strikes.iloc[(strikes - strikes.median()).abs().argmin()]) \
-                if not strikes.empty else None
-        if not spot:
-            return {"ok": False, "reason": "no spot price to anchor the strike"}
+            return {"ok": False, "reason": "no cached underlying price to anchor the strike"}
 
-        def atm_mid(frame):
-            frame = frame.dropna(subset=["strike"])
-            if frame.empty:
-                return None, None
-            row = frame.iloc[(frame["strike"] - spot).abs().argmin()]
+        # One shared ATM strike, present on both sides -- differing legs are
+        # not a straddle.
+        call_strikes = set(calls["strike"].dropna().tolist())
+        put_strikes = set(puts["strike"].dropna().tolist())
+        common = call_strikes & put_strikes
+        if not common:
+            return {"ok": False, "reason": "no strike listed on both sides"}
+        strike = min(common, key=lambda k: abs(k - spot))
+
+        def leg_mid(frame):
+            row = frame[frame["strike"] == strike].iloc[0]
             bid = float(row.get("bid") or 0)
             ask = float(row.get("ask") or 0)
             if bid > 0 and ask > 0:
                 mid = (bid + ask) / 2
-                spread_ratio = (ask - bid) / mid if mid else None
-                return mid, spread_ratio
+                return mid, (ask - bid) / mid if mid else None, "quote"
             last = float(row.get("lastPrice") or 0)
-            # Last trade instead of a live quote: usable, but flagged.
-            return (last, 1.0) if last > 0 else (None, None)
+            return (last, None, "last-trade") if last > 0 else (None, None, None)
 
-        call_mid, call_spread = atm_mid(calls)
-        put_mid, put_spread = atm_mid(puts)
+        call_mid, call_spread, call_basis = leg_mid(calls)
+        put_mid, put_spread, put_basis = leg_mid(puts)
         if not call_mid or not put_mid:
             return {"ok": False, "reason": "no usable ATM quotes"}
 
-        worst_spread = max(s for s in (call_spread, put_spread) if s is not None)
+        # Three distinct quality states: live quotes with a sane spread, live
+        # quotes but wide, or no live quotes at all (priced off last trades).
+        if "last-trade" in (call_basis, put_basis):
+            quality = "last-trade fallback (no live quotes)"
+        else:
+            worst_spread = max(call_spread, put_spread)
+            quality = "ok" if worst_spread < 0.35 else "wide-spread (thin chain)"
         return {
             "ok": True,
             "expiry": expiry,
             "days_to_expiry": days_to_expiry,
             "implied_move_pct": round((call_mid + put_mid) / spot * 100, 1),
             "spot": round(float(spot), 2),
-            "quality": "ok" if worst_spread < 0.35 else "wide-spread (thin chain)",
+            "strike": float(strike),
+            "quality": quality,
             "estimate_basis": "ATM straddle mid-quotes / spot; not a probability, "
                               "the magnitude of move the market is pricing",
         }
@@ -807,14 +814,19 @@ def going_concern(symbol: str, allow_fetch: bool = True) -> Sourced:
     clean bill of health.
     """
     source = "sec-edgar:full-text-search"
-    ciks = _edgar_cik_table()
-    if not ciks.get("ok"):
-        return Sourced.unavailable(source, ciks.get("reason", "cik map unavailable"))
-    cik = ciks["table"].get(symbol.upper())
-    if not cik:
-        return Sourced.unavailable(source, "ticker not in SEC registry")
 
     def produce():
+        # CIK resolution lives inside produce so a cache-only call returns
+        # from the gc: cache without ever touching the SEC -- resolving the
+        # CIK map first would itself fetch when that map is cold. Preflight
+        # failures become cached negatives, so the info lane cannot spin on
+        # symbols that will never resolve.
+        ciks = _edgar_cik_table()
+        if not ciks.get("ok"):
+            return {"ok": False, "reason": ciks.get("reason", "cik map unavailable")}
+        cik = ciks["table"].get(symbol.upper())
+        if not cik:
+            return {"ok": False, "reason": "ticker not in SEC registry"}
         import requests as _rq
         from datetime import timedelta as _td
         cutoff = (_eastern_now().date() - _td(days=GOING_CONCERN_LOOKBACK_DAYS)).isoformat()
@@ -1403,9 +1415,11 @@ SECTOR_ETFS = {
 }
 
 # Day-move thresholds, in percent. Below -1% the sector itself is clearly
-# selling off; above -0.3% it clearly is not.
+# selling off; above -0.3% it clearly is not. The flat band's ceiling keeps a
+# sector rally from matching a "sector flat" condition.
 SECTOR_SELLOFF_PCT = -1.0
 SECTOR_FLAT_PCT = -0.3
+SECTOR_FLAT_UPPER_PCT = 1.5
 
 
 def _day_move_pct(payload: dict):

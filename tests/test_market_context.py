@@ -46,6 +46,15 @@ class TestSameDayReturnMask:
         mask = timeframes.same_day_return_mask(["2026-02-01"], [], [], max_ret_pct=0)
         assert mask.tolist() == [False]
 
+    def test_bounded_flat_band_excludes_rallies(self):
+        """CR finding: a +2% sector rally day is not 'sector flat'."""
+        dates = ["2026-01-02", "2026-01-03"]
+        ref_dates = ["2026-01-01", "2026-01-02", "2026-01-03"]
+        ref_closes = [100.0, 100.1, 102.1]  # +0.1% then +2.0%
+        mask = timeframes.same_day_return_mask(
+            dates, ref_dates, ref_closes, min_ret_pct=-0.3, max_ret_pct=1.5)
+        assert mask.tolist() == [True, False]
+
 
 class TestImpliedMove:
     def _fake_ticker(self, monkeypatch, bid, ask, last=0.0, expiry_days=10):
@@ -87,12 +96,43 @@ class TestImpliedMove:
         assert result.ok
         assert "wide-spread" in result.value["quality"]
 
-    def test_no_quotes_falls_to_last_with_flag(self, monkeypatch):
+    def test_no_quotes_falls_to_last_with_distinct_quality(self, monkeypatch):
         self._fake_ticker(monkeypatch, bid=0.0, ask=0.0, last=2.0)
         result = market_data.implied_move("ZZIM1")
         assert result.ok
         assert result.value["implied_move_pct"] == 4.0
-        assert "wide-spread" in result.value["quality"]  # last-trade basis is low quality
+        assert result.value["quality"] == "last-trade fallback (no live quotes)"
+
+    def test_no_cached_spot_is_unavailable(self, monkeypatch):
+        """A strike is not an underlying price; without a real spot, refuse."""
+        self._fake_ticker(monkeypatch, bid=2.9, ask=3.1)
+        market_data._cache._local.pop("tech:ZZIM1", None)
+        result = market_data.implied_move("ZZIM1")
+        assert not result.ok
+        assert "underlying price" in result.reason
+
+    def test_shared_strike_required(self, monkeypatch):
+        """Different call and put strikes are not a straddle."""
+        import pandas as pd
+        from datetime import date, timedelta
+        expiry = (date.today() + timedelta(days=10)).isoformat()
+
+        class Chain:
+            calls = pd.DataFrame({"strike": [95.0], "bid": [2.9], "ask": [3.1],
+                                  "lastPrice": [3.0]})
+            puts = pd.DataFrame({"strike": [105.0], "bid": [2.9], "ask": [3.1],
+                                 "lastPrice": [3.0]})
+
+        class FakeTicker:
+            options = (expiry,)
+            def option_chain(self, e):
+                return Chain()
+
+        monkeypatch.setattr(market_data, "_ticker", lambda s: FakeTicker())
+        market_data._cache.set("tech:ZZIM3", {"ok": True, "close": 100.0}, 60)
+        market_data._cache._local.pop("implied:ZZIM3", None)
+        result = market_data.implied_move("ZZIM3")
+        assert not result.ok and "both sides" in result.reason
 
     def test_dead_chain_is_unavailable(self, monkeypatch):
         self._fake_ticker(monkeypatch, bid=0.0, ask=0.0, last=0.0)
@@ -160,6 +200,29 @@ class TestGoingConcern:
         market_data._cache._local.pop("gc:ZZGC2", None)
         result = market_data.going_concern("ZZGC2", allow_fetch=False)
         assert not result.ok
+
+    def test_render_path_never_fetches_even_with_cold_cik_map(self, monkeypatch):
+        """CR finding: CIK resolution must live inside produce, or a cache-only
+        render with a cold ticker map still hits the SEC."""
+        def explode(*a, **k):
+            raise AssertionError("render path fetched with cold CIK map")
+        import requests
+        monkeypatch.setattr(requests, "get", explode)
+        market_data._cache._local.pop("gc:ZZGC3", None)
+        market_data._cache._local.pop("edgar:ciks", None)
+        result = market_data.going_concern("ZZGC3", allow_fetch=False)
+        assert not result.ok
+
+    def test_unregistered_ticker_negative_caches(self, monkeypatch):
+        """Preflight failures must land in the cache so the info lane cannot
+        spin on symbols that will never resolve."""
+        monkeypatch.setattr(market_data, "_edgar_cik_table",
+                            lambda: {"ok": True, "table": {}})
+        monkeypatch.setattr(market_data, "_throttle", lambda: None)
+        market_data._cache._local.pop("gc:ZZGC4", None)
+        result = market_data.going_concern("ZZGC4")
+        assert not result.ok and "not in SEC registry" in result.reason
+        assert market_data._cache.get("gc:ZZGC4") is not None  # cached negative
 
 
 class TestEvidenceBasesLadder:

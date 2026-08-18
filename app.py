@@ -5861,9 +5861,12 @@ def _evidence_bases(symbol, closes):
                     max_ret_pct=market_data.SECTOR_SELLOFF_PCT)
                 sector_label = "post-drop with the sector also down"
             else:
+                # Bounded flat band: a sector rally day is not "flat", so it
+                # must not satisfy this condition (CR finding on PR 49).
                 sector_mask = timeframes.same_day_return_mask(
                     hi_dates, etf_dates, etf_closes,
-                    min_ret_pct=market_data.SECTOR_FLAT_PCT)
+                    min_ret_pct=market_data.SECTOR_FLAT_PCT,
+                    max_ret_pct=market_data.SECTOR_FLAT_UPPER_PCT)
                 sector_label = "post-drop with the sector flat (company-specific)"
             bases.append({"closes": hi_closes, "highs": hi_highs,
                           "mask": timeframes.day_drop_mask(hi_closes) & sector_mask,
