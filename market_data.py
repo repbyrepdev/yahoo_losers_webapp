@@ -328,14 +328,26 @@ def clear_cache():
     return cleared
 
 
+_persist_lock = threading.Lock()
+
+
 def save_cache_to_disk():
-    """Write the in-memory cache out so the next process can reuse it."""
+    """Write the in-memory cache out so the next process can reuse it.
+
+    Both lanes call this, so the snapshot is taken under the cache lock and
+    the file is replaced atomically under a persistence lock -- a reader (or
+    a restart) can never observe a half-written file.
+    """
     try:
         import json
-        with open(CACHE_FILE, "w", encoding="utf-8") as handle:
-            json.dump({k: [exp, val] for k, (exp, val) in list(_cache._local.items())
-                       if isinstance(val, dict) and val.get("ok")},
-                      handle, default=str)
+        with _cache._lock:
+            snapshot = {k: [exp, val] for k, (exp, val) in _cache._local.items()
+                        if isinstance(val, dict) and val.get("ok")}
+        with _persist_lock:
+            tmp_path = CACHE_FILE + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(snapshot, handle, default=str)
+            os.replace(tmp_path, CACHE_FILE)
     except (OSError, TypeError, ValueError) as e:
         logger.debug(f"cache persist skipped: {type(e).__name__}")
 

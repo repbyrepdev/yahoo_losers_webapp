@@ -1279,10 +1279,10 @@ class TestLaneIndependence:
     def test_both_lanes_start(self, monkeypatch):
         import market_data
         monkeypatch.setattr(market_data, "_warmer_started", False)
-        names = []
+        started = []
         class T:
-            def __init__(self, target=None, daemon=None, name=None): names.append(name)
-            def start(self): pass
+            def __init__(self, target=None, daemon=None, name=None): self.name = name
+            def start(self): started.append(self.name)
         monkeypatch.setattr(market_data.threading, "Thread", T)
         market_data.start_background_warmer()
-        assert "market-data-warmer" in names and "market-data-info-lane" in names
+        assert "market-data-warmer" in started and "market-data-info-lane" in started
