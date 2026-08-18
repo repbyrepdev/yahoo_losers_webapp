@@ -1228,3 +1228,27 @@ class TestInfoLane:
         assert market_data._info_interval[0] <= market_data.INFO_INTERVAL_MAX_SECONDS
         market_data._info_interval[0] = market_data.INFO_CALL_INTERVAL_SECONDS
         market_data._info_cooldown_until[0] = 0.0
+
+
+class TestStableUniverse:
+    """One list per cadence: page, warmer and refreshes share the same target."""
+
+    def test_second_call_reuses_the_cached_list(self, monkeypatch):
+        import app, market_data
+        market_data._cache._local.pop('universe:v1', None)
+        calls = []
+        monkeypatch.setattr(app, "scrape_yahoo_losers",
+                            lambda: (calls.append(1) or ([{'Symbol': 'AAA'}], {'success': True})))
+        first = app.stable_universe()
+        second = app.stable_universe()
+        assert len(calls) == 1
+        assert first == second
+        market_data._cache._local.pop('universe:v1', None)
+
+    def test_failed_scrape_is_not_cached(self, monkeypatch):
+        import app, market_data
+        market_data._cache._local.pop('universe:v1', None)
+        monkeypatch.setattr(app, "scrape_yahoo_losers",
+                            lambda: ([], {'success': False}))
+        app.stable_universe()
+        assert market_data._cache.get('universe:v1') is None

@@ -39,9 +39,30 @@ sophisticated_predictor = SophisticatedTimeframePredictor()
 
 # Start background warming at import so it runs under gunicorn, which never
 # executes the __main__ block below.
+
+# The losers universe holds still for a full page cadence, independent of page
+# refreshes. Without this, every Force Refresh re-pulled the live screener --
+# which reshuffles minute-to-minute during volatile sessions -- so the warm
+# target moved before the warmer could finish it, and the board could never
+# reach full coverage while anyone was watching it.
+UNIVERSE_TTL_SECONDS = int(os.environ.get('UNIVERSE_TTL_SECONDS', 600))
+
+
+def stable_universe():
+    """The losers list, cached for one cadence. Same list for page, warmer, all."""
+    cached = market_data._cache.get('universe:v1')
+    if cached is not None:
+        return cached['losers'], cached['status']
+    losers, status = scrape_yahoo_losers()
+    if status.get('success'):
+        market_data._cache.set('universe:v1', {'losers': losers, 'status': status},
+                               UNIVERSE_TTL_SECONDS)
+    return losers, status
+
+
 def _current_universe():
     """Symbols the warmer should keep fresh: today's losers."""
-    losers, status = scrape_yahoo_losers()
+    losers, status = stable_universe()
     if not status.get("success"):
         return []
     return [s["Symbol"] for s in losers if s.get("Symbol") and s["Symbol"] != "ERROR"]
@@ -3479,7 +3500,7 @@ def index():
         
         # Step 1: Scrape today's losers
         logger.info("Step 1: Scraping Yahoo Finance losers...")
-        losers_data, losers_status = scrape_yahoo_losers()
+        losers_data, losers_status = stable_universe()
         
         # Step 2: Get detailed information for top stocks
         logger.info("Step 2: Getting detailed stock information...")
