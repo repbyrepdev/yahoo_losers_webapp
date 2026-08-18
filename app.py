@@ -732,6 +732,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
     <!DOCTYPE html>
     <html>
     <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Yahoo Finance Daily Losers Analysis</title>
         <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
         <meta http-equiv="Pragma" content="no-cache">
@@ -1078,14 +1080,45 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 100% { transform: rotate(360deg); }
             }
             
+            /* The tables scroll sideways inside this wrapper on narrow
+               screens; without it nine columns crush into one-word-per-line
+               cells and every row grows to several hundred pixels tall. */
+            .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .table-wrap table { min-width: 760px; }
+            .table-wrap th:first-child, .table-wrap td:first-child {
+                position: sticky; left: 0; z-index: 2;
+                background: var(--bg-secondary);
+            }
+
             /* Responsive Design */
             @media (max-width: 768px) {
                 .container { padding: 0 8px; }
-                .section { padding: 16px; margin: 12px 0; }
-                h1 { font-size: 2rem; }
-                h2 { font-size: 1.5rem; }
-                th, td { padding: 8px 12px; font-size: 0.8rem; }
-                .ai-button { font-size: 10px; padding: 6px 10px; }
+                .section { padding: 12px; margin: 10px 0; }
+                h1 { font-size: 1.5rem; }
+                h2 { font-size: 1.15rem; }
+                th, td { padding: 8px 10px; font-size: 0.8rem; }
+                th { white-space: nowrap; }
+                .ai-button { font-size: 11px; padding: 8px 10px; }
+
+                /* The toggle floated over the header controls and covered the
+                   Force Refresh button; on small screens it joins the flow. */
+                .theme-toggle { position: static; margin: 8px auto; display: block; }
+
+                /* Status pills: tighter so they wrap into tidy rows. */
+                .status-badge { font-size: 11px !important; padding: 4px 8px; }
+
+                /* Market overview cards stack full-width instead of leaving an
+                   orphaned half-width card in a two-column grid. */
+                .metrics-grid { grid-template-columns: 1fr !important; }
+
+                /* The analysis modal becomes a full-screen sheet: the floating
+                   card wasted a third of a phone screen on backdrop. */
+                .modal-overlay > div {
+                    width: 100% !important; max-width: 100% !important;
+                    height: 100% !important; max-height: 100% !important;
+                    border-radius: 0 !important; padding: 14px !important;
+                }
+                .ultimate-tab-btn { padding: 8px 8px !important; font-size: 11px !important; margin: 0 !important; }
             }
         </style>
         <script>
@@ -1534,6 +1567,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
         
         function createModal(id) {
             const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
             modal.id = id;
             modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 10000; display: flex; justify-content: center; align-items: center;';
             return modal;
@@ -3365,7 +3399,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             <!-- Clean Market Overview -->
             <div class="section">
                 <h2 style="margin-bottom: 24px; text-align: left;">📈 Market Overview</h2>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 8px;">
+                <div class="metrics-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 8px;">
                     <!-- VIX Volatility Card -->
                     <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
                         <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">📊 VOLATILITY INDEX</div>
@@ -3408,7 +3442,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             <div class="section">
                 <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
                 {% if recommendations %}
-                    <table>
+                    <div class="table-wrap"><table>
                         <thead>
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
@@ -3454,7 +3488,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </tr>
                             {% endfor %}
                         </tbody>
-                    </table>
+                    </table></div>
                 {% else %}
                     <div style="background: var(--bg-secondary); border: 2px solid var(--border-color); border-radius: 10px; padding: 25px; text-align: center;">
                         <div style="font-size: 48px; margin-bottom: 15px;">🤖</div>
@@ -3500,7 +3534,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <h2 style="text-align: left;">📊 Complete Analysis (All Daily Losers)</h2>
                 <p><em>Comprehensive analysis of all daily losers with AI recovery predictions and market insights.</em></p>
                 {% if all_analysis %}
-                    <table>
+                    <div class="table-wrap"><table>
                         <thead>
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
@@ -3545,7 +3579,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             </tr>
                             {% endfor %}
                         </tbody>
-                    </table>
+                    </table></div>
                 {% else %}
                     <p>No investment analysis data available.</p>
                 {% endif %}
