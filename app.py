@@ -3517,6 +3517,13 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             <div class="section">
                 <h2 style="margin-bottom: 24px; text-align: left;">📈 Market Overview</h2>
                 <div class="metrics-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 8px;">
+                    {% if market_analysis.macro %}
+                    <div style="grid-column: 1 / -1; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary);">
+                        {% for m in market_analysis.macro %}
+                        <span>📐 {{ m.label }}: <strong style="color: var(--text-primary);">{{ '%.2f'|format(m.value) }}%</strong> <em style="font-size: 11px;">({{ m.as_of }}, FRED)</em></span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                     <!-- VIX Volatility Card -->
                     <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; text-align: center; box-shadow: var(--shadow);">
                         <div style="font-size: 14px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">📊 VOLATILITY INDEX</div>
@@ -3983,6 +3990,9 @@ def api_snapshot():
         universe.append(row)
 
     prior = [s for s in tracking.tracked_symbols() if s not in set(symbols)]
+    # SPY rides in every snapshot so the track record can price picks against
+    # the market over the same span; ^VIX so regimes are reconstructable.
+    prior = sorted(set(prior) | {"SPY", "^VIX"})
     tracked_prices = {}
     if prior:
         market_data.batch_history(prior)
@@ -4006,7 +4016,9 @@ def track_record_page():
             if not r:
                 return '<td class="pending">pending</td>'
             tone = '#2ecc71' if r['pct'] > 0 else '#e74c3c'
-            return f'<td style="color:{tone}">{r["pct"]:+.1f}%</td>'
+            spy = (' <span style="color:#8b949e; font-size:11px;">(' +
+                   format(r['vs_spy'], '+.1f') + ' vs SPY)</span>') if r.get('vs_spy') is not None else ''
+            return f'<td style="color:{tone}">{r["pct"]:+.1f}%{spy}</td>'
         rows += (f'<tr><td>{pick["date"]}</td><td class="sym">{pick["symbol"]}</td>'
                  f'<td>{pick["score"]:.1f}</td><td>${pick["entry"]:.2f}</td>'
                  f'{cell(7)}{cell(30)}</tr>')
@@ -4020,6 +4032,10 @@ def track_record_page():
         if e.get("baseline_mean") is not None:
             parts.append(f" vs unpicked-losers baseline {e['baseline_mean']:+.2f}% "
                          f"(excess <strong>{e.get('excess', 0):+.2f}%</strong>, n={e['n_baseline']})")
+        if e.get("vs_spy_mean") is not None:
+            parts.append(f"; vs SPY same window <strong>{e['vs_spy_mean']:+.2f}%</strong> (n={e['n_vs_spy']})")
+        else:
+            parts.append("; SPY comparison pending (SPY joins every snapshot from 2026-08-18)")
         return f"<p>{''.join(parts)}</p>"
 
     body = f"""
@@ -4459,6 +4475,19 @@ def get_market_status():
             "next_open": "Check market hours manually"
         }
 
+def macro_context():
+    """Yield-curve and credit-spread readings for the overview, cache-only."""
+    out = []
+    for series in ("T10Y2Y", "BAMLH0A0HYM2"):
+        # Cache-only: a cold FRED cache must cost the render nothing. The
+        # warmer owns the fetching.
+        sourced = market_data.fred_latest(series, allow_fetch=False)
+        if sourced.ok:
+            v = sourced.value
+            out.append({"label": v["label"], "value": v["value"], "as_of": v["as_of"]})
+    return out
+
+
 def get_comprehensive_market_analysis():
     """Get comprehensive market analysis with detailed insights and explanations"""
     try:
@@ -4467,6 +4496,7 @@ def get_comprehensive_market_analysis():
             'market_trend': {},
             'volatility_regime': {},
             'sector_rotation': {},
+            'macro': macro_context(),
             'recommendation_logic': {},
             'ai_insights': {}
         }
@@ -5085,13 +5115,46 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
     closes = np.array(history.value, dtype=float)
     band_for = {'short_term': 'short', 'medium_term': 'medium', 'long_term': 'long'}
 
+    # Date-aligned arrays for regime conditioning only. The headline
+    # probabilities keep the full five-year history; overwriting `closes` with
+    # the one-year OHLCV here silently rebased every hit rate onto a fifth of
+    # its sample (260/1247 became 10/244) -- caught in pre-ship vetting.
+    vix_by_date, regime_dates, regime_closes = {}, None, None
+    try:
+        sym_ohlcv = market_data.ohlcv_history(symbol)
+        vix_ohlcv = market_data.ohlcv_history("^VIX")
+        if vix_ohlcv.ok:
+            vix_by_date = {d[:10]: c for d, c in
+                           zip(vix_ohlcv.value["index"], vix_ohlcv.value["close"])
+                           if c is not None}
+        if sym_ohlcv.ok:
+            pairs = [(d[:10], c) for d, c in
+                     zip(sym_ohlcv.value["index"], sym_ohlcv.value["close"])
+                     if c is not None]
+            regime_dates = [d for d, _ in pairs]
+            regime_closes = np.array([c for _, c in pairs], dtype=float)
+    except Exception as e:
+        logger.warning(f"regime alignment unavailable for {symbol}: {type(e).__name__}")
+
     predictions = sophisticated_result.get('timeframe_predictions') or {}
     distributions = {}
     for band_key, targets in predictions.items():
         if not isinstance(targets, dict):
             continue
         band = band_for.get(band_key, 'medium')
-        predictions[band_key] = timeframes.annotate_targets(closes, targets, band)
+        annotated = timeframes.annotate_targets(closes, targets, band)
+        for t in annotated.values():
+            if not (isinstance(t, dict) and t.get('probability_available')):
+                continue
+            regime = timeframes.regime_conditioned(
+                regime_closes, regime_dates, vix_by_date,
+                t.get('upside_percent') or 0, band) if regime_closes is not None else None
+            if regime:
+                t['regime'] = regime
+                t['evidence'] = (t.get('evidence', '') +
+                                 f" · in today's {regime['bucket']} regime (past year): "
+                                 f"{regime['probability']*100:.0f}% ({regime['hits']}/{regime['windows']})")
+        predictions[band_key] = annotated
         dist = timeframes.horizon_distribution(
             closes, timeframes.HORIZON_BARS.get(band, 21))
         if dist:

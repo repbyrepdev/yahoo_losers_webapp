@@ -918,6 +918,55 @@ def solvency(symbol: str, allow_fetch: bool = True) -> Sourced:
     }, source)
 
 
+
+# --- FRED macro series -------------------------------------------------------
+FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
+FRED_MACRO_SERIES = {
+    "T10Y2Y": "10y-2y Treasury spread",
+    "BAMLH0A0HYM2": "High-yield OAS",
+}
+
+
+def fred_latest(series_id: str, allow_fetch: bool = True) -> Sourced:
+    """Latest observation of a FRED series, cached for six hours.
+
+    Kept off the render path: the warmer refreshes these alongside the
+    indices, and the overview card reads cache-only.
+    """
+    source = f"fred:{series_id}"
+    import secrets_store
+    api_key = secrets_store.get("FRED_API_KEY")
+    if not api_key:
+        return Sourced.unavailable(source, "FRED_API_KEY not configured")
+
+    def produce():
+        import requests as _rq
+        try:
+            _throttle()
+            response = _rq.get(FRED_OBS_URL, params={
+                "series_id": series_id, "api_key": api_key, "file_type": "json",
+                "sort_order": "desc", "limit": 5}, timeout=20)
+            response.raise_for_status()
+            observations = response.json().get("observations", [])
+        except Exception as e:
+            return {"ok": False, "reason": f"fred unavailable ({type(e).__name__})"}
+        for obs in observations:
+            raw = obs.get("value")
+            if raw in (None, "", "."):
+                continue
+            try:
+                return {"ok": True, "value": float(raw), "as_of": obs["date"]}
+            except (TypeError, ValueError):
+                continue  # malformed row; keep walking to older observations
+        return {"ok": False, "reason": "no numeric observations"}
+
+    payload = _cached(f"fred:{series_id}", 6 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({"value": payload["value"], "as_of": payload["as_of"],
+                         "label": FRED_MACRO_SERIES.get(series_id, series_id)}, source)
+
+
 def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
     """Top institutional holders, by name, from 13F filings."""
     source = "yfinance:institutional_holders"
@@ -1140,8 +1189,15 @@ def _warm_loop():
         # with nothing to renew it.
         try:
             batch_history(["^VIX", "SPY"])
+            for series in FRED_MACRO_SERIES:
+                fred_latest(series)
         except Exception as e:
             logger.warning(f"index warm failed: {type(e).__name__}")
+
+        # Persist whatever the index/macro refresh just wrote, even when the
+        # symbol queue is empty -- otherwise a restart on a quiet cycle
+        # restores stale FRED values from the last busy one.
+        save_cache_to_disk()
 
         if batch:
             try:
