@@ -5860,6 +5860,15 @@ def _evidence_bases(symbol, closes):
                     hi_dates, etf_dates, etf_closes,
                     max_ret_pct=market_data.SECTOR_SELLOFF_PCT)
                 sector_label = "post-drop with the sector also down"
+            elif (sector.value.get("etf_day_move_pct") is not None
+                  and sector.value["etf_day_move_pct"] > market_data.SECTOR_FLAT_UPPER_PCT):
+                # Today the sector is rallying while this stock craters --
+                # still company-specific, but the matching windows are
+                # "sector not down", not "sector flat", and the label says so.
+                sector_mask = timeframes.same_day_return_mask(
+                    hi_dates, etf_dates, etf_closes,
+                    min_ret_pct=market_data.SECTOR_FLAT_PCT)
+                sector_label = "post-drop with the sector not down (company-specific)"
             else:
                 # Bounded flat band: a sector rally day is not "flat", so it
                 # must not satisfy this condition (CR finding on PR 49).
