@@ -263,7 +263,9 @@ def page_cache_policy():
     Overnight and weekend pages expire exactly when pre-market begins.
     """
     phase = market_data.market_phase()
-    seconds_to_change = max(60, (phase["changes_at"] - market_data._eastern_now()).total_seconds())
+    # The true remainder, un-floored: a 9:29:30 render must expire at 9:30,
+    # not thirty seconds into the open session.
+    seconds_to_change = max(1, (phase["changes_at"] - market_data._eastern_now()).total_seconds())
 
     cadence_min = PAGE_CADENCE_MINUTES.get(phase["phase"])
     if cadence_min is not None:
@@ -359,6 +361,7 @@ def save_cache(data):
     """Save analysis results to cache with timestamp (Redis + file fallback)"""
     try:
         cache_data = {
+            'expires_at': time.time() + page_cache_policy()['seconds'],
             'timestamp': datetime.now(),
             'data': data
         }
@@ -415,7 +418,14 @@ def load_cache():
         current_time = datetime.now()
         time_diff = current_time - cache_time
         
-        if time_diff.total_seconds() / 3600 < page_cache_hours():
+        if cache_data.get('expires_at') is not None:
+            fresh = time.time() < cache_data['expires_at']
+        else:
+            # Legacy entry without an absolute expiry: written under an older
+            # policy, so treat it as expired rather than revalidating it under
+            # whichever phase the reader happens to be in.
+            fresh = False
+        if fresh:
             logger.info(f"Valid cache found from file from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
             return cache_data
         else:
@@ -455,7 +465,8 @@ def get_cache_status():
         time_diff = current_time - cache_time
         hours_old = time_diff.total_seconds() / 3600
         
-        if hours_old < page_cache_hours():
+        expires_at = cache_data.get('expires_at') if isinstance(cache_data, dict) else None
+        if expires_at is not None and time.time() < expires_at:
             return {
                 "exists": True,
                 "valid": True,

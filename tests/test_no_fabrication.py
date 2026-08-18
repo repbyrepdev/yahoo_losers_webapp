@@ -1098,3 +1098,27 @@ class TestSessionPhases:
         policy = app.page_cache_policy()
         assert "cannot change" in policy["description"]
         assert policy["seconds"] > 5 * 3600     # ~6h to 4 AM
+
+    def test_cached_page_expiry_is_absolute_not_rederived(self, monkeypatch, tmp_path):
+        """CodeRabbit finding: a 9:25 pre-market entry must not be revalidated
+        under the 10-minute open-session policy after 9:30 and served stale."""
+        import app, pickle, time
+        from datetime import datetime
+        cache_file = tmp_path / "page.pkl"
+        monkeypatch.setattr(app, "CACHE_FILE", str(cache_file))
+        monkeypatch.setattr(app, "USE_REDIS", False)
+        # Written at 9:25 pre-market with a 5-minute lifetime...
+        payload = {"expires_at": time.time() - 30, "timestamp": datetime.now(),
+                   "data": {"x": 1}}
+        cache_file.write_bytes(pickle.dumps(payload))
+        # ...read after the boundary: expired regardless of the current phase.
+        assert app.load_cache() is None
+
+    def test_legacy_cache_without_expiry_is_rejected(self, monkeypatch, tmp_path):
+        import app, pickle
+        from datetime import datetime
+        cache_file = tmp_path / "page.pkl"
+        monkeypatch.setattr(app, "CACHE_FILE", str(cache_file))
+        monkeypatch.setattr(app, "USE_REDIS", False)
+        cache_file.write_bytes(pickle.dumps({"timestamp": datetime.now(), "data": {}}))
+        assert app.load_cache() is None
