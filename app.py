@@ -5819,17 +5819,47 @@ def _horizon_summaries(symbol, target_price=None):
     tech = market_data.technicals(symbol, allow_fetch=False)
     ma20 = (tech.value or {}).get("ma20") if tech.ok else None
 
+    # The same evidence ladder the drill-in uses, from cache only: post-drop
+    # windows first (that is the situation every row on this board is in),
+    # intraday-touch beating close-basis within each. The OHLCV highs are
+    # whatever the warmer has stored; a cold cache just skips those rungs.
+    drop_label = f"post-drop (≥{timeframes.SETUP_DROP_PCT:.0f}% down day)"
+    hi_closes = hi_highs = None
+    ohlcv = market_data._cache.get(f"ohlcv:{symbol.upper()}:1y")
+    if ohlcv and ohlcv.get("ok"):
+        rows = [(c, h) for c, h in zip(ohlcv.get("close") or [], ohlcv.get("high") or [])
+                if c is not None and h is not None]
+        if len(rows) >= 60:
+            hi_closes = np.array([c for c, _ in rows], dtype=float)
+            hi_highs = np.array([h for _, h in rows], dtype=float)
+    bases = []
+    if hi_closes is not None:
+        bases.append({"closes": hi_closes, "highs": hi_highs,
+                      "mask": timeframes.day_drop_mask(hi_closes),
+                      "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                      "label": drop_label})
+    bases.append({"closes": closes, "mask": timeframes.day_drop_mask(closes),
+                  "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                  "label": drop_label})
+    if hi_closes is not None:
+        bases.append({"closes": hi_closes, "highs": hi_highs, "label": "all windows"})
+    bases.append({"closes": closes, "label": "all windows"})
+
     def measure(key, level, horizon_key):
         if not level or level <= price:
             return
         upside = (level / price - 1.0) * 100.0
-        sourced = timeframes.target_probability(closes, upside, horizon_key)
-        if sourced.ok:
-            v = sourced.value
-            pct = v["probability"] * 100
+        measured = timeframes.best_hit_rate(
+            bases, upside, timeframes.HORIZON_BARS.get(horizon_key, 21))
+        if measured:
+            pct = measured["probability"] * 100
+            basis = (", intraday-touch"
+                     if measured.get("touch_basis") == "intraday-high" else "")
             out[key] = {
                 "display": f"{pct:.0f}%",
-                "detail": f"{v['hits']}/{v['windows']} windows, +{upside:.1f}% needed",
+                "detail": (f"{measured['hits']}/{measured['windows']} "
+                           f"{measured['conditioning']} windows{basis}, "
+                           f"+{upside:.1f}% needed"),
                 "sort": round(pct, 1),
             }
 

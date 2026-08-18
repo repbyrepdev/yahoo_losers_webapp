@@ -1443,7 +1443,9 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
     """
     symbols = [s.upper() for s in symbols]
     pending = [s for s in symbols
-               if _cache.get(f"tech:{s}") is None or _cache.get(f"hist:{s}:{period}") is None]
+               if (_cache.get(f"tech:{s}") is None
+                   or _cache.get(f"hist:{s}:{period}") is None
+                   or _cache.get(f"ohlcv:{s}:1y") is None)]
     if not pending:
         return 0
 
@@ -1480,6 +1482,22 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
         _cache.set(f"tech:{symbol}",
                    _compute_technicals_from_closes(closes[-130:], volumes[-130:]),
                    _effective_ttl(TTL_TECHNICALS))
+        # The same response carries the highs; storing the last year in the
+        # ohlcv shape gives intraday-touch odds to every board row without a
+        # single extra request.
+        try:
+            recent = sub.dropna(subset=["Close"]).tail(260)
+            _cache.set(f"ohlcv:{symbol}:1y", {
+                "ok": True,
+                "index": [d.isoformat() for d in recent.index],
+                "open": [None if o != o else float(o) for o in recent["Open"]],
+                "high": [None if h != h else float(h) for h in recent["High"]],
+                "low": [None if low != low else float(low) for low in recent["Low"]],
+                "close": [None if c != c else float(c) for c in recent["Close"]],
+                "volume": [0 if v != v else float(v) for v in recent["Volume"]],
+            }, _effective_ttl(TTL_TECHNICALS))
+        except Exception as e:
+            logger.debug(f"ohlcv store skipped for {symbol}: {type(e).__name__}")
         populated += 1
 
     logger.info(f"batch history populated {populated}/{len(pending)} symbols in one request")

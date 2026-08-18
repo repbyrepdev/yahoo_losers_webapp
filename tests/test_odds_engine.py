@@ -286,3 +286,82 @@ class TestModestRung:
         entry = result["timeframe_predictions"]["short_term"]["t1"]
         assert entry["probability_available"]
         assert entry["windows"] >= timeframes.MIN_WINDOWS
+
+
+class TestBoardColumnsUseTheLadder:
+    def _drop_bounce_closes(self, n_cycles=80):
+        pattern = [100.0]
+        for _ in range(n_cycles):
+            pattern.append(pattern[-1] * 0.95)   # a >=4% down day
+            pattern.append(pattern[-1] * 1.06)   # that bounces
+        return [round(c, 6) for c in pattern]
+
+    def test_board_detail_names_the_conditioned_rung(self):
+        import app
+        closes = self._drop_bounce_closes()
+        market_data._cache.set("hist:ZZBD1:5y", {"ok": True, "closes": closes}, 60)
+        market_data._cache.set("tech:ZZBD1", {"ok": True, "ma20": None}, 60)
+        out = app._horizon_summaries("ZZBD1")
+        # Short column: previous close is above the last (bounced) price only
+        # when the series ends on a down day -- end it there.
+        closes_down = closes + [round(closes[-1] * 0.95, 6)]
+        market_data._cache.set("hist:ZZBD2:5y", {"ok": True, "closes": closes_down}, 60)
+        market_data._cache.set("tech:ZZBD2", {"ok": True, "ma20": None}, 60)
+        out = app._horizon_summaries("ZZBD2")
+        assert out["short"]["display"].endswith("%")
+        assert "post-drop" in out["short"]["detail"]
+
+    def test_board_uses_intraday_highs_when_warmed(self):
+        import app
+        # Flat closes but a recurring intraday spike: only the highs rung
+        # can measure a nonzero rate, so seeing one proves the rung is live.
+        closes = [100.0] * 320 + [95.0]
+        highs = [100.2] * 260
+        for i in range(0, 260, 5):
+            highs[i] = 107.0
+        market_data._cache.set("hist:ZZBD3:5y", {"ok": True, "closes": closes}, 60)
+        market_data._cache.set("tech:ZZBD3", {"ok": True, "ma20": None}, 60)
+        market_data._cache.set("ohlcv:ZZBD3:1y", {
+            "ok": True, "close": [100.0] * 260, "high": highs}, 60)
+        out = app._horizon_summaries("ZZBD3")
+        assert "intraday-touch" in out["short"]["detail"]
+
+
+class TestBatchStoresOhlcv:
+    def test_batch_populates_ohlcv_highs(self, monkeypatch):
+        import pandas as pd
+        dates = pd.date_range("2025-01-02", periods=90, freq="B")
+        frame = pd.DataFrame({
+            "Open": 100.0, "High": 103.0, "Low": 98.0,
+            "Close": [100.0 + (i % 5) for i in range(90)],
+            "Volume": 1_000_000.0,
+        }, index=dates)
+        monkeypatch.setattr(market_data.yf, "download",
+                            lambda *a, **k: frame)
+        monkeypatch.setattr(market_data, "_throttle", lambda: None)
+        market_data._cache._local.pop("hist:ZZBH1:5y", None)
+        market_data._cache._local.pop("tech:ZZBH1", None)
+        market_data._cache._local.pop("ohlcv:ZZBH1:1y", None)
+        assert market_data.batch_history(["ZZBH1"]) == 1
+        stored = market_data._cache.get("ohlcv:ZZBH1:1y")
+        assert stored and stored["ok"]
+        assert stored["high"][0] == 103.0
+        assert len(stored["close"]) == 90
+
+    def test_cold_ohlcv_alone_makes_symbol_pending(self, monkeypatch):
+        """Warm tech+hist with cold OHLCV must still fetch, or the intraday
+        rung never lights up after a deploy restores the older caches."""
+        import pandas as pd
+        dates = pd.date_range("2025-01-02", periods=90, freq="B")
+        frame = pd.DataFrame({
+            "Open": 100.0, "High": 104.0, "Low": 98.0,
+            "Close": [100.0 + (i % 5) for i in range(90)],
+            "Volume": 1_000_000.0,
+        }, index=dates)
+        monkeypatch.setattr(market_data.yf, "download", lambda *a, **k: frame)
+        monkeypatch.setattr(market_data, "_throttle", lambda: None)
+        market_data._cache.set("tech:ZZBH2", {"ok": True}, 60)
+        market_data._cache.set("hist:ZZBH2:5y", {"ok": True, "closes": [1.0] * 40}, 60)
+        market_data._cache._local.pop("ohlcv:ZZBH2:1y", None)
+        assert market_data.batch_history(["ZZBH2"]) == 1
+        assert market_data._cache.get("ohlcv:ZZBH2:1y")["high"][0] == 104.0
