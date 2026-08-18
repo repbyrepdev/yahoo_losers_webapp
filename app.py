@@ -64,7 +64,7 @@ def stable_universe():
         status = dict(cached['status'])
         status['data_source'] = 'cached'
         status['message'] = (f"Universe reused from a scrape "
-                             f"{int(time.time() - cached['at'])}s ago")
+                             f"{int(time.time() - cached.get('at', time.time()))}s ago")
         return cached['losers'], status
 
     cached = market_data._cache.get('universe:v1')

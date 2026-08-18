@@ -451,8 +451,9 @@ class TestRenderPathMakesNoProviderCalls:
         monkeypatch.setattr(market_data.threading, "Thread",
                             lambda *a, **k: type("T", (), {"start": lambda self: started.append(1)})())
         assert market_data.start_background_warmer() is True
+        assert len(started) == 2  # fast lane + info lane
         assert market_data.start_background_warmer() is False
-        assert len(started) == 1
+        assert len(started) == 2  # second call spawns nothing
 
     def test_warmer_can_source_symbols_without_a_request(self):
         """The queue must not depend on a page render having happened."""
@@ -1261,3 +1262,27 @@ class TestStableUniverse:
                             lambda: ([], {'success': False}))
         app.stable_universe()
         assert fake.store.get('universe:v1') is None
+
+
+class TestLaneIndependence:
+    """The fast lane may never wait on the slow one."""
+
+    def test_missing_info_selector_only_returns_uncached(self, monkeypatch):
+        import market_data
+        fake = {}
+        monkeypatch.setattr(market_data._cache, "get",
+                            lambda k: fake.get(k))
+        fake["info:AAA"] = {"ok": True}
+        out = market_data._symbols_missing_info(["AAA", "BBB", "^VIX"])
+        assert out == ["BBB"]          # cached and index symbols excluded
+
+    def test_both_lanes_start(self, monkeypatch):
+        import market_data
+        monkeypatch.setattr(market_data, "_warmer_started", False)
+        started = []
+        class T:
+            def __init__(self, target=None, daemon=None, name=None): self.name = name
+            def start(self): started.append(self.name)
+        monkeypatch.setattr(market_data.threading, "Thread", T)
+        market_data.start_background_warmer()
+        assert "market-data-warmer" in started and "market-data-info-lane" in started

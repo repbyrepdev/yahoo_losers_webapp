@@ -99,8 +99,9 @@ def _info_throttle():
     with _info_throttle_lock:
         elapsed = time.time() - _info_last_call_at[0]
         wait = _info_interval[0] - elapsed
-        if wait > 0:
-            time.sleep(min(wait, 30))  # long adaptive waits yield in slices
+        while wait > 0:
+            time.sleep(min(wait, 30))
+            wait = _info_interval[0] - (time.time() - _info_last_call_at[0])
         _info_last_call_at[0] = time.time()
 
 
@@ -327,14 +328,32 @@ def clear_cache():
     return cleared
 
 
+_persist_lock = threading.Lock()
+
+
 def save_cache_to_disk():
-    """Write the in-memory cache out so the next process can reuse it."""
+    """Write the in-memory cache out so the next process can reuse it.
+
+    Both lanes call this, so the snapshot is taken under the cache lock and
+    the file is replaced atomically under a persistence lock -- a reader (or
+    a restart) can never observe a half-written file.
+    """
     try:
         import json
-        with open(CACHE_FILE, "w", encoding="utf-8") as handle:
-            json.dump({k: [exp, val] for k, (exp, val) in list(_cache._local.items())
-                       if isinstance(val, dict) and val.get("ok")},
-                      handle, default=str)
+        import tempfile
+        with _cache._lock:
+            snapshot = {k: [exp, val] for k, (exp, val) in _cache._local.items()
+                        if isinstance(val, dict) and val.get("ok")}
+        with _persist_lock:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(CACHE_FILE) or ".", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(snapshot, handle, default=str)
+                os.replace(tmp_path, CACHE_FILE)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
     except (OSError, TypeError, ValueError) as e:
         logger.debug(f"cache persist skipped: {type(e).__name__}")
 
@@ -1276,10 +1295,40 @@ def _unused_claim_warmer_role() -> bool:
     return True
 
 
+def _symbols_missing_info(symbols):
+    """The subset whose profile is absent from cache -- the info lane's queue."""
+    return [s for s in symbols
+            if not s.startswith("^") and _cache.get(f"info:{s.upper()}") is None]
+
+
+def _info_loop():
+    """Slow lane: drains missing profiles at the adaptive pace, independently.
+
+    This lane crawling -- ninety seconds between calls under a provider
+    penalty -- must never delay the fast lane. When it ran inside the same
+    cycle, twenty-five paced info calls blocked the next technicals refresh
+    for over half an hour and the whole board's scores decayed to zero while
+    the loop was still "working". The monitor caught it: 14, 12, 8, 4, 0.
+    """
+    time.sleep(WARM_STARTUP_DELAY_SECONDS + 5)
+    while True:
+        try:
+            source = _symbol_source[0]
+            missing = _symbols_missing_info(source() if source else [])
+            if not missing:
+                time.sleep(20)
+                continue
+            for symbol in missing[:5]:
+                _info(symbol)   # adaptive lane pacing happens inside
+            save_cache_to_disk()
+        except Exception as e:
+            logger.warning(f"info lane cycle failed: {type(e).__name__}: {e}")
+            time.sleep(15)
+
+
 def _warm_loop():
-    # Sleep before the first cycle. The thread starts during module import, so
-    # working immediately would race the definitions it depends on, and would
-    # also put a burst of provider calls right at process start.
+    # Fast lane. Everything here is batched or cheap, and nothing in it may
+    # wait on the info lane.
     time.sleep(WARM_STARTUP_DELAY_SECONDS)
     while True:
         with _warm_queue_lock:
@@ -1309,19 +1358,18 @@ def _warm_loop():
         # restores stale FRED values from the last busy one.
         save_cache_to_disk()
 
-        if batch:
-            try:
-                batch_history(batch)
-                for symbol in batch:
-                    if not symbol.startswith("^"):
-                        _info(symbol)
-                # One global file serves every symbol; warming it here keeps
-                # the first modal open of the day off a 3MB download.
-                finra_short_volume(batch[0])
+        try:
+            source = _symbol_source[0]
+            universe = [s for s in (source() if source else []) if s and not s.startswith("^")]
+            if universe:
+                # One batched call for the whole board: cheap, and it is what
+                # keeps technicals -- and therefore scores -- alive. Cached
+                # entries make it a no-op until their TTLs approach.
+                batch_history(universe)
+                finra_short_volume(universe[0])
                 save_cache_to_disk()
-                logger.info(f"background warm completed {len(batch)} symbols")
-            except Exception as e:
-                logger.warning(f"background warm failed: {type(e).__name__}: {e}")
+        except Exception as e:
+            logger.warning(f"fast-lane warm failed: {type(e).__name__}: {e}")
         time.sleep(WARM_INTERVAL_SECONDS)
 
 
@@ -1332,7 +1380,8 @@ def start_background_warmer():
         return False
     _warmer_started = True
     threading.Thread(target=_warm_loop, daemon=True, name="market-data-warmer").start()
-    logger.info("background warmer started")
+    threading.Thread(target=_info_loop, daemon=True, name="market-data-info-lane").start()
+    logger.info("background warmer started (fast lane + info lane)")
     return True
 
 
