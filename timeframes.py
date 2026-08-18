@@ -38,21 +38,91 @@ logger = logging.getLogger(__name__)
 # by exactly one.
 MIN_WINDOWS = 40
 
+# Conditioned samples (post-drop days, oversold days) are structurally rarer
+# than all-days samples; demanding the full forty would silence exactly the
+# estimates this app is about. The Wilson interval shown alongside carries the
+# extra width honestly.
+MIN_WINDOWS_CONDITIONAL = 25
+
+# A window "starts like today" when that day itself fell at least this much,
+# close to close. Fixed rather than per-stock so the conditioning means the
+# same thing on every row of the board.
+SETUP_DROP_PCT = 4.0
+
+RSI_OVERSOLD = 30.0
+
 # Trading days per horizon band.
 HORIZON_BARS = {"short": 7, "medium": 21, "long": 126}
 
 
+def day_drop_mask(closes, min_drop_pct: float = SETUP_DROP_PCT) -> np.ndarray:
+    """True on days whose close-to-close move was a drop of at least the bound.
+
+    This is the conditioning the whole app implies: every symbol on the board
+    is here because it just fell hard, so the informative history is windows
+    that started from the same situation, not windows starting on any random
+    Tuesday.
+    """
+    closes = np.asarray(closes, dtype=float)
+    mask = np.zeros(len(closes), dtype=bool)
+    if len(closes) < 2:
+        return mask
+    prior = closes[:-1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rets = np.where(prior > 0, closes[1:] / prior - 1.0, 0.0)
+    mask[1:] = rets <= -(min_drop_pct / 100.0)
+    return mask
+
+
+def rsi_series(closes, period: int = 14) -> np.ndarray:
+    """Wilder RSI for every bar, NaN through the warm-up. Same formula as the
+    board's RSI so 'oversold' means one thing everywhere."""
+    import pandas as pd
+    close = pd.Series(np.asarray(closes, dtype=float))
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    return (100 - (100 / (1 + rs))).to_numpy()
+
+
+def oversold_mask(closes, threshold: float = RSI_OVERSOLD) -> np.ndarray:
+    """True where RSI is below the oversold bound. NaN warm-up bars are False."""
+    rsi = rsi_series(closes)
+    return np.nan_to_num(rsi, nan=100.0) < threshold
+
+
+def shrink_toward(hits: int, windows: int, prior_p: float,
+                  prior_weight: int = 20) -> float:
+    """Beta-binomial shrinkage of a thin sample toward a cohort rate.
+
+    Twenty pseudo-windows of the cohort's rate are blended in, so 3/41 stops
+    presenting itself as a precise 7% while a 400-window estimate barely moves.
+    The display states both the raw and the shrunk figure.
+    """
+    return (hits + prior_p * prior_weight) / (windows + prior_weight)
+
+
 def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
-             mask: Optional[np.ndarray] = None) -> Optional[dict]:
+             mask: Optional[np.ndarray] = None,
+             highs: Optional[np.ndarray] = None,
+             min_windows: int = MIN_WINDOWS) -> Optional[dict]:
     """How often this stock gained at least `target_pct` within `horizon_bars`.
 
     A window counts as a hit if the target was reached at any point inside it,
     not only at the close, because a target being touched is what the display
-    claims. The median number of days to first touch is returned alongside, so
-    the timeframe shown is measured rather than assumed.
+    claims. When intraday highs are supplied (aligned with the closes), the
+    touch test uses them -- a spike through the target that faded by the close
+    is still a touch; testing closes alone systematically understates. The
+    median number of days to first touch is returned alongside, so the
+    timeframe shown is measured rather than assumed.
     """
-    if closes is None or len(closes) < horizon_bars + MIN_WINDOWS:
+    if closes is None or len(closes) < horizon_bars + min_windows:
         return None  # caller states the shortfall, with the actual bar count
+    if highs is not None and len(highs) != len(closes):
+        highs = None  # misaligned highs would test the wrong days
 
     threshold = 1.0 + (target_pct / 100.0)
     hits = 0
@@ -70,7 +140,9 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
             continue
         windows += 1
         forward = closes[start + 1: start + 1 + horizon_bars]
-        reached = np.nonzero(forward >= entry * threshold)[0]
+        touch = (highs[start + 1: start + 1 + horizon_bars]
+                 if highs is not None else forward)
+        reached = np.nonzero(touch >= entry * threshold)[0]
         if reached.size:
             hits += 1
             days_to_hit.append(int(reached[0]) + 1)
@@ -80,7 +152,7 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
             # of the expected-value arithmetic, measured rather than assumed.
             miss_end_returns.append(float(forward[-1] / entry - 1.0) * 100.0)
 
-    if windows < MIN_WINDOWS:
+    if windows < min_windows:
         return None
 
     p = hits / windows
@@ -104,7 +176,28 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
         "horizon_bars": horizon_bars,
         "miss_median_return": round(miss_median, 2) if miss_median is not None else None,
         "expected_value": round(expected_value, 2) if expected_value is not None else None,
+        "touch_basis": "intraday-high" if highs is not None else "close",
     }
+
+
+def best_hit_rate(bases: List[dict], target_pct: float,
+                  horizon_bars: int) -> Optional[dict]:
+    """First adequate estimate down an evidence ladder.
+
+    Each basis is {closes, highs, mask, min_windows, label}, best first --
+    typically: post-drop intraday-touch, then unconditional intraday-touch,
+    then post-drop close-basis, then the plain five-year close rate. The
+    chosen rung's label rides in the result so the display can state exactly
+    which question was answered.
+    """
+    for basis in bases:
+        measured = hit_rate(basis["closes"], target_pct, horizon_bars,
+                            mask=basis.get("mask"), highs=basis.get("highs"),
+                            min_windows=basis.get("min_windows", MIN_WINDOWS))
+        if measured:
+            measured["conditioning"] = basis.get("label", "all windows")
+            return measured
+    return None
 
 
 VIX_BUCKETS = ((0, 17, "calm (VIX<17)"), (17, 25, "normal (VIX 17-25)"),
@@ -211,17 +304,30 @@ def horizon_distribution(closes: np.ndarray, horizon_bars: int) -> Optional[dict
 
 def describe(measured: dict) -> str:
     """Plain statement of the evidence, for display next to the number."""
-    return (f"{measured['hits']}/{measured['windows']} past "
-            f"{measured['horizon_bars']}-day windows")
+    conditioning = measured.get("conditioning")
+    scope = f" {conditioning}" if conditioning and conditioning != "all windows" else " past"
+    basis = (", intraday-touch" if measured.get("touch_basis") == "intraday-high" else "")
+    return (f"{measured['hits']}/{measured['windows']}{scope} "
+            f"{measured['horizon_bars']}-day windows{basis}")
 
 
-def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) -> Dict[str, dict]:
+def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
+                     bases: Optional[List[dict]] = None,
+                     cohort_prior: Optional[float] = None) -> Dict[str, dict]:
     """Attach an empirical probability to each target in a timeframe band.
 
     Targets themselves are real -- previous close, moving averages, analyst
     consensus. Only the probability attached to them was invented, so only that
     is replaced here.
+
+    `bases` is the evidence ladder for best_hit_rate; without one, the plain
+    five-year close-basis rate is used, which is the original behaviour.
+    `cohort_prior` (0-1) shrinks thin samples toward the cohort's rate for
+    similar targets; both the raw and shrunk figures are reported.
     """
+    horizon = HORIZON_BARS.get(band, 21)
+    if not bases:
+        bases = [{"closes": closes, "label": "all windows"}]
     annotated = {}
     for name, target in targets.items():
         upside = target.get("upside_percent")
@@ -233,7 +339,19 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) ->
             annotated[name] = entry
             continue
 
-        sourced = target_probability(closes, upside, band)
+        if upside <= 0:
+            sourced = Sourced.unavailable(
+                "empirical:price-history", "target is at or below the current price")
+        else:
+            measured_best = best_hit_rate(bases, upside, horizon)
+            if measured_best:
+                sourced = Sourced.live(measured_best, "empirical:price-history")
+            else:
+                bars = 0 if closes is None else len(closes)
+                sourced = Sourced.unavailable(
+                    "empirical:price-history",
+                    f"only {bars} trading days of history; measuring a "
+                    f"{horizon}-day window needs at least {horizon + MIN_WINDOWS}")
         if sourced.ok:
             measured = sourced.value
             # The displayed timeframe was produced by a formula ("5 hours",
@@ -246,14 +364,34 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str) ->
                 entry["timeframe_source"] = "empirical:price-history"
 
             ci_low, ci_high = wilson_interval(measured["hits"], measured["windows"])
+            probability = measured["probability"]
+            evidence = describe(measured)
+            expected_value = measured.get("expected_value")
+            # cohort_prior may be a float or a callable of the target's upside,
+            # since the right prior depends on how far the target sits.
+            prior_p = cohort_prior(upside) if callable(cohort_prior) else cohort_prior
+            if prior_p is not None:
+                shrunk = shrink_toward(measured["hits"], measured["windows"],
+                                       prior_p)
+                if abs(shrunk - probability) >= 0.005:
+                    entry["probability_raw"] = round(probability * 100, 1)
+                    evidence += (f" · shrunk toward cohort {prior_p * 100:.0f}% "
+                                 f"for similar targets (raw {probability * 100:.0f}%)")
+                probability = shrunk
+                miss_median = measured.get("miss_median_return")
+                if miss_median is not None:
+                    expected_value = round(
+                        probability * upside + (1 - probability) * miss_median, 2)
             entry.update({
                 "probability_available": True,
-                "expected_value": measured.get("expected_value"),
+                "expected_value": expected_value,
                 "miss_median_return": measured.get("miss_median_return"),
-                "probability": round(measured["probability"] * 100, 1),
+                "probability": round(probability * 100, 1),
                 "ci_low": round(ci_low * 100, 1),
                 "ci_high": round(ci_high * 100, 1),
-                "evidence": describe(measured),
+                "evidence": evidence,
+                "conditioning": measured.get("conditioning"),
+                "touch_basis": measured.get("touch_basis"),
                 "hits": measured["hits"],
                 "windows": measured["windows"],
                 "median_days_to_hit": measured["median_days_to_hit"],

@@ -4873,6 +4873,55 @@ def analyze_stock_news(symbol):
 
     return payload
 
+def _cohort_prior(band, upside_pct):
+    """Mean unconditional hit rate across today's losers for a similar target.
+
+    The prior for shrinkage: what fraction of this cohort's history reached a
+    target of roughly this size within the band's horizon. Cache-only reads of
+    already-warmed histories; None (no shrinkage) when fewer than five symbols
+    have usable history, rather than a prior invented from two.
+    """
+    bucket = int(min(50, max(5, round(upside_pct / 5.0) * 5)))
+    key = f"cohort:hit:{band}:{bucket}"
+    cached = market_data._cache.get(key)
+    if cached is not None:
+        return cached.get("p")
+    horizon = timeframes.HORIZON_BARS.get(band, 21)
+    rates = []
+    try:
+        source = market_data._symbol_source[0]
+        for sym in (source() if source else [])[:30]:
+            hist = market_data.price_history(sym, allow_fetch=False)
+            if hist.ok:
+                measured = timeframes.hit_rate(
+                    np.array(hist.value, dtype=float), float(bucket), horizon)
+                if measured:
+                    rates.append(measured["probability"])
+    except Exception as e:
+        logger.warning(f"cohort prior failed for {band}/{bucket}: {type(e).__name__}")
+    prior = round(sum(rates) / len(rates), 4) if len(rates) >= 5 else None
+    market_data._cache.set(key, {"p": prior}, 3600)
+    return prior
+
+
+def _earnings_in_window(symbol, horizon_days):
+    """The earnings date inside the horizon, or None. A window that contains
+    an earnings print is a different bet, and the display says so."""
+    from datetime import date as _date, timedelta as _td
+    sourced = market_data.earnings_date(symbol)
+    if not sourced.ok:
+        return None
+    today = tracking.trading_date_today()
+    for raw in (sourced.value.get("dates") or []):
+        try:
+            when = _date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        if today <= when <= today + _td(days=horizon_days):
+            return when.isoformat()
+    return None
+
+
 def _attach_empirical_probabilities(symbol, sophisticated_result):
     """Swap invented target probabilities for measured historical hit rates."""
     if not sophisticated_result:
@@ -4899,6 +4948,7 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
     # the one-year OHLCV here silently rebased every hit rate onto a fifth of
     # its sample (260/1247 became 10/244) -- caught in pre-ship vetting.
     vix_by_date, regime_dates, regime_closes = {}, None, None
+    sym_ohlcv = None
     try:
         sym_ohlcv = market_data.ohlcv_history(symbol)
         vix_ohlcv = market_data.ohlcv_history("^VIX")
@@ -4915,13 +4965,70 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
     except Exception as e:
         logger.warning(f"regime alignment unavailable for {symbol}: {type(e).__name__}")
 
+    # Evidence ladder. Conditioning outranks touch precision: the informative
+    # windows are the ones that started the way today did (a hard down day),
+    # so post-drop rungs come first, intraday-touch beating close-basis within
+    # each. The chosen rung's label rides into every evidence string.
+    drop_label = f"post-drop (≥{timeframes.SETUP_DROP_PCT:.0f}% down day)"
+    hi_closes = hi_highs = None
+    if sym_ohlcv is not None and sym_ohlcv.ok:
+        rows = [(c, h) for c, h in zip(sym_ohlcv.value["close"], sym_ohlcv.value["high"])
+                if c is not None and h is not None]
+        if len(rows) >= 60:
+            hi_closes = np.array([c for c, _ in rows], dtype=float)
+            hi_highs = np.array([h for _, h in rows], dtype=float)
+    bases = []
+    if hi_closes is not None:
+        bases.append({"closes": hi_closes, "highs": hi_highs,
+                      "mask": timeframes.day_drop_mask(hi_closes),
+                      "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                      "label": drop_label})
+    bases.append({"closes": closes, "mask": timeframes.day_drop_mask(closes),
+                  "min_windows": timeframes.MIN_WINDOWS_CONDITIONAL,
+                  "label": drop_label})
+    if hi_closes is not None:
+        bases.append({"closes": hi_closes, "highs": hi_highs, "label": "all windows"})
+    bases.append({"closes": closes, "label": "all windows"})
+
+    oversold = timeframes.oversold_mask(closes)
+
     predictions = sophisticated_result.get('timeframe_predictions') or {}
     distributions = {}
     for band_key, targets in predictions.items():
         if not isinstance(targets, dict):
             continue
         band = band_for.get(band_key, 'medium')
-        annotated = timeframes.annotate_targets(closes, targets, band)
+        # A realistic rung beside the analyst-target rungs: without it the
+        # short-term column is dominated by lottery odds on distant targets.
+        if band_key == 'short_term' and len(closes) and closes[-1] > 0:
+            targets.setdefault('modest_bounce', {
+                'target_price': round(float(closes[-1]) * 1.05, 2),
+                'upside_percent': 5.0,
+                'label': 'Modest +5% bounce',
+                'timeframe': 'short-term',
+            })
+        annotated = timeframes.annotate_targets(
+            closes, targets, band, bases=bases,
+            cohort_prior=lambda upside, _band=band: _cohort_prior(_band, upside))
+        earnings_flag = _earnings_in_window(symbol, BAND_CALENDAR_DAYS.get(band_key, 30))
+        for t in annotated.values():
+            if not (isinstance(t, dict) and t.get('probability_available')):
+                continue
+            # From-oversold rate as extra evidence when today is that setup's
+            # natural question; thin samples simply don't print the line.
+            from_oversold = timeframes.hit_rate(
+                closes, t.get('upside_percent') or 0,
+                timeframes.HORIZON_BARS.get(band, 21), mask=oversold,
+                min_windows=timeframes.MIN_WINDOWS_CONDITIONAL)
+            if from_oversold:
+                t['evidence'] = (t.get('evidence', '') +
+                                 f" · from oversold RSI<30: "
+                                 f"{from_oversold['probability'] * 100:.0f}% "
+                                 f"({from_oversold['hits']}/{from_oversold['windows']})")
+            if earnings_flag:
+                t['earnings_in_window'] = earnings_flag
+                t['evidence'] = (t.get('evidence', '') +
+                                 f" · ⚠️ earnings {earnings_flag} inside window")
         for t in annotated.values():
             if not (isinstance(t, dict) and t.get('probability_available')):
                 continue
@@ -4942,7 +5049,10 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
 
     sophisticated_result['probability_basis'] = (
         'Measured frequency with which this stock reached each target within '
-        'the horizon, over its own price history. Not a forecast.')
+        'the horizon. Windows that began after a hard down day like today\'s '
+        'are preferred over random-day windows, and intraday touches count '
+        'when high data is available; the evidence line under each number '
+        'states exactly which sample answered. Not a forecast.')
     return sophisticated_result
 
 
