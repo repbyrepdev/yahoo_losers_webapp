@@ -338,6 +338,15 @@ class TestOptionsCooldown:
 
 
 class TestFactorBackups:
+    @pytest.fixture(autouse=True)
+    def _isolated_options_cooldown(self):
+        """_options_refused() inside these tests arms the REAL shared
+        cooldown, which would relabel later tests' refusals as cooling-down."""
+        prior = market_data._options_cooldown_until[0]
+        market_data._options_cooldown_until[0] = 0
+        yield
+        market_data._options_cooldown_until[0] = prior
+
     def test_putcall_parses_contract_sides(self, monkeypatch):
         monkeypatch.setattr(sources.requests, "get", _fake_get({
             "/v1beta1/options/snapshots/ZZPC1": {"snapshots": {
@@ -373,7 +382,7 @@ class TestFactorBackups:
                                     {"call_volume": 400, "put_volume": 200,
                                      "put_call_ratio": 0.5, "contracts": 3,
                                      "window": "expiries to x"}, "alpaca:options-indicative"))
-            market_data._cache._local.pop("options:ZZFB9", None)
+            market_data._cache._local.pop("options:v2:ZZFB9", None)
             result = market_data.options_flow("ZZFB9")
             assert result.ok
             assert result.value["put_call_ratio"] == 0.5
@@ -390,7 +399,7 @@ class TestFactorBackups:
                                 {"strongBuy": 2, "buy": 4, "hold": 3,
                                  "sell": 0, "strongSell": 0, "total": 9},
                                 "finnhub:recommendation-trends"))
-        market_data._cache._local.pop("recs:ZZFB8", None)
+        market_data._cache._local.pop("recs:v2:ZZFB8", None)
         result = market_data.analyst_recommendations("ZZFB8")
         assert result.ok
         assert result.value["total"] == 9
@@ -428,3 +437,71 @@ class TestFactorBackups:
         result = sources.options_putcall("ZZPG2")
         assert not result.ok
         assert "page budget" in result.reason
+
+
+    def test_options_falls_back_on_chain_stage_failure(self, monkeypatch):
+        """Live 2026-08-19: Yahoo failed at option_chain(), not expiries, and
+        the refusal cached with no fallback attempt. Every exit must try."""
+        class ChainDies:
+            options = ("2026-09-18",)
+            def option_chain(self, expiry):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: ChainDies())
+        monkeypatch.setattr(sources, "options_putcall",
+                            lambda s: market_data.Sourced.live(
+                                {"call_volume": 100, "put_volume": 150,
+                                 "put_call_ratio": 1.5, "contracts": 2,
+                                 "window": "expiries to x"}, "alpaca:options-indicative"))
+        result = market_data.options_flow("ZZFB7")
+        assert result.ok
+        assert result.value["put_call_ratio"] == 1.5
+        assert result.source == "alpaca:options-indicative"
+
+    def test_options_falls_back_when_yahoo_reports_none_listed(self, monkeypatch):
+        """Yahoo degrades into empty 200s wearing structural prose; the
+        independent feed gets to disagree before the refusal caches."""
+        class NoChain:
+            options = ()
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoChain())
+        monkeypatch.setattr(sources, "options_putcall",
+                            lambda s: market_data.Sourced.live(
+                                {"call_volume": 40, "put_volume": 10,
+                                 "put_call_ratio": 0.25, "contracts": 1,
+                                 "window": "expiries to x"}, "alpaca:options-indicative"))
+        result = market_data.options_flow("ZZFB6")
+        assert result.ok
+        assert result.value["put_call_ratio"] == 0.25
+
+    def test_options_refusal_stands_when_both_providers_empty(self, monkeypatch):
+        class NoChain:
+            options = ()
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoChain())
+        monkeypatch.setattr(sources, "options_putcall",
+                            lambda s: market_data.Sourced.unavailable(
+                                "alpaca:options-indicative", "no listed options"))
+        result = market_data.options_flow("ZZFB5")
+        assert not result.ok
+        assert result.reason == "no listed options"
+
+    def test_unavailable_fallback_called_once_when_rate_limited(self, monkeypatch):
+        """CR PR59: re-raising after a failed fallback let _cached's quick
+        retry re-enter under the armed cooldown -- a second Alpaca request
+        per symbol per cycle. The refusal must return, classified, instead."""
+        calls = []
+
+        class ExpiryDies:
+            @property
+            def options(self):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: ExpiryDies())
+
+        def counting_unavailable(sym):
+            calls.append(sym)
+            return market_data.Sourced.unavailable(
+                "alpaca:options-indicative", "budget exhausted")
+        monkeypatch.setattr(sources, "options_putcall", counting_unavailable)
+        result = market_data.options_flow("ZZFB4")
+        assert not result.ok
+        assert len(calls) == 1
+        assert "429" in result.reason or "429" in (result.value or {}).get("detail", "") \
+            or result.reason == "RuntimeError"
