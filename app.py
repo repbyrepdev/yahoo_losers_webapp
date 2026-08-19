@@ -528,7 +528,10 @@ def save_cache(data):
                 'expires_at': cache_data['expires_at'],
                 'data': data
             }
-            redis_client.setex('yahoo_losers_cache', int(page_cache_hours() * 3600), json.dumps(redis_data, default=str))
+            # The SAME lifetime that expires_at was computed from: recomputing
+            # the normal page policy here let a degraded page outlive its
+            # 90-second limit inside Redis (CR, PR 53).
+            redis_client.setex('yahoo_losers_cache', max(1, int(lifetime)), json.dumps(redis_data, default=str))
             logger.info(f"Cache saved to Redis successfully at {cache_data['timestamp']}")
         except Exception as redis_error:
             logger.warning(f"Redis cache save failed: {redis_error}, falling back to file")

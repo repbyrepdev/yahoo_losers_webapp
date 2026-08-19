@@ -350,7 +350,13 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
             for d, c in zip(dates, closes):
                 if d == start_iso and c:
                     ratio = c / entry
-                    if not (0.995 <= ratio <= 1.005):
+                    # Rescale ONLY on corporate-action-scale ratios. A
+                    # provisional intraday close being revised to the settled
+                    # close moves a few percent; a split moves 1.5x-10x.
+                    # Rescaling on small drift silently moved the graded bar
+                    # (CR, PR 53). Small drift barely shifts a percent-scale
+                    # threshold, so it is left alone.
+                    if ratio >= 1.4 or ratio <= (1 / 1.4):
                         anchored = threshold * ratio
                     break
         seen = extends_past_end = False

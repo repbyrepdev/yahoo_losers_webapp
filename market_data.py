@@ -451,6 +451,7 @@ def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
     classify_on = value.get("detail") or value.get("reason") or ""
     if value.get("ok"):
         lifetime = _effective_ttl(ttl)
+        _cache.set(f"negcand:{key}", {}, 1)  # success clears any candidate
     elif "cooling down" in (value.get("reason") or ""):
         lifetime = 90  # retry shortly after the shared cooldown lifts
     elif _is_rate_limited(classify_on):
@@ -464,10 +465,17 @@ def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
         # expired (that is why produce ran), so reading it back could only
         # ever see None and the long TTL was unreachable (CR, PR 53).
         marker_key = f"negcand:{key}"
-        if _cache.get(marker_key) == value.get("reason"):
+        marker = _cache.get(marker_key)
+        # Promotion needs a DISTINCT later confirmation: same reason AND the
+        # candidate interval fully elapsed. Without the age check, concurrent
+        # misses promoted instantly; and the marker is refreshed on every
+        # sighting so a stale one cannot promote a much later first failure.
+        if (isinstance(marker, dict) and marker.get("reason") == value.get("reason")
+                and time.time() - marker.get("at", 0) >= 4 * 60):
             lifetime = _effective_ttl(TTL_NEGATIVE_STRUCTURAL)
         else:
-            _cache.set(marker_key, value.get("reason"), 6 * 60 * 60)
+            _cache.set(marker_key, {"reason": value.get("reason"),
+                                    "at": time.time()}, 60 * 60)
             lifetime = 5 * 60
     else:
         lifetime = TTL_NEGATIVE_TRANSIENT
