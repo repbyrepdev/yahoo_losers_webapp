@@ -334,3 +334,63 @@ class TestOptionsCooldown:
         result = market_data.options_flow("ZZOC4")
         assert not result.ok and "cooling down" in result.reason
         assert calls == []
+
+
+class TestFactorBackups:
+    def test_putcall_parses_contract_sides(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "/v1beta1/options/snapshots/ZZPC1": {"snapshots": {
+                "ZZPC1260918C00010000": {"dailyBar": {"v": 300}},
+                "ZZPC1260918C00012000": {"dailyBar": {"v": 100}},
+                "ZZPC1260918P00010000": {"dailyBar": {"v": 200}},
+            }}}))
+        result = sources.options_putcall("ZZPC1")
+        assert result.ok
+        assert result.value["call_volume"] == 400
+        assert result.value["put_volume"] == 200
+        assert result.value["put_call_ratio"] == 0.5
+
+    def test_ratings_spread_shape_matches_yahoo(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "stock/recommendation": [
+                {"period": "2026-08-01", "strongBuy": 3, "buy": 7,
+                 "hold": 5, "sell": 1, "strongSell": 0}]}))
+        result = sources.ratings_spread("ZZRS1")
+        assert result.ok
+        assert result.value == {"strongBuy": 3, "buy": 7, "hold": 5,
+                                "sell": 1, "strongSell": 0, "total": 16}
+
+    def test_options_flow_falls_back_during_cooldown(self, monkeypatch):
+        """The 2026-08-19 incident scenario: Yahoo options in cooldown must
+        no longer blank the factor -- the indicative feed answers instead."""
+        import time as _time
+        prior = market_data._options_cooldown_until[0]
+        market_data._options_cooldown_until[0] = _time.time() + 600
+        try:
+            monkeypatch.setattr(sources, "options_putcall",
+                                lambda s: market_data.Sourced.live(
+                                    {"call_volume": 400, "put_volume": 200,
+                                     "put_call_ratio": 0.5, "contracts": 3,
+                                     "window": "expiries to x"}, "alpaca:options-indicative"))
+            market_data._cache._local.pop("options:ZZFB9", None)
+            result = market_data.options_flow("ZZFB9")
+            assert result.ok
+            assert result.value["put_call_ratio"] == 0.5
+            assert result.source == "alpaca:options-indicative"
+        finally:
+            market_data._options_cooldown_until[0] = prior
+
+    def test_ratings_falls_back_when_yahoo_empty(self, monkeypatch):
+        class NoRecs:
+            recommendations = None
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoRecs())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.live(
+                                {"strongBuy": 2, "buy": 4, "hold": 3,
+                                 "sell": 0, "strongSell": 0, "total": 9},
+                                "finnhub:recommendation-trends"))
+        market_data._cache._local.pop("recs:ZZFB8", None)
+        result = market_data.analyst_recommendations("ZZFB8")
+        assert result.ok
+        assert result.value["total"] == 9
+        assert result.source == "finnhub:recommendation-trends"

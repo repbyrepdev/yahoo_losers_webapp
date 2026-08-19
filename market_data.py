@@ -756,8 +756,22 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     source = "yfinance:recommendations"
 
     def produce():
-        frame = _ticker(symbol).recommendations
+        try:
+            frame = _ticker(symbol).recommendations
+        except Exception as e:
+            frame = None
+            logger.info(f"yahoo ratings failed for {symbol}: {type(e).__name__}")
         if frame is None or frame.empty:
+            # Backup: Finnhub's trends carry the same spread, so the score's
+            # ratings factor survives a quoteSummary outage.
+            try:
+                import sources
+                fallback = sources.ratings_spread(symbol)
+                if fallback.ok:
+                    return {"ok": True, "spread": fallback.value,
+                            "provider": "finnhub"}
+            except Exception as e:
+                logger.info(f"ratings fallback failed for {symbol}: {type(e).__name__}")
             return {"ok": False, "reason": "no ratings published"}
         row = frame.iloc[0].to_dict()
         spread = {k: int(row.get(k, 0) or 0) for k in
@@ -771,7 +785,9 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     payload = _cached(f"recs:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    return Sourced.live(payload["spread"], source)
+    actual = ("finnhub:recommendation-trends" if payload.get("provider") == "finnhub"
+              else source)
+    return Sourced.live(payload["spread"], actual)
 
 
 def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
@@ -783,8 +799,32 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
     """
     source = "yfinance:option_chain"
 
+    def _alpaca_fallback():
+        """Put/call positioning from the indicative feed: keeps the score's
+        options factor alive while Yahoo's chain endpoint is limited."""
+        try:
+            import sources
+            fallback = sources.options_putcall(symbol)
+            if fallback.ok:
+                v = fallback.value
+                return {"ok": True, "provider": "alpaca",
+                        "expiry": v.get("window"),
+                        "call_volume": v["call_volume"],
+                        "put_volume": v["put_volume"],
+                        "total_volume": v["call_volume"] + v["put_volume"],
+                        "put_call_ratio": v.get("put_call_ratio"),
+                        "open_interest_put_call": None,
+                        "top_calls": [], "top_puts": [],
+                        "contracts": v.get("contracts", 0)}
+        except Exception as e:
+            logger.info(f"options fallback failed for {symbol}: {type(e).__name__}")
+        return None
+
     def produce():
         if _options_cooldown_active():
+            fallback = _alpaca_fallback()
+            if fallback:
+                return fallback
             return {"ok": False, "reason": "options endpoint cooling down"}
         try:
             ticker = _ticker(symbol)
@@ -792,6 +832,9 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
         except Exception as e:
             if _is_rate_limited(f"{type(e).__name__}: {e}"):
                 _options_refused()
+                fallback = _alpaca_fallback()
+                if fallback:
+                    return fallback
             raise
         if not expiries:
             return {"ok": False, "reason": "no listed options"}
@@ -836,7 +879,9 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
     payload = _cached(f"options:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    return Sourced.live(payload, source)
+    actual = ("alpaca:options-indicative" if payload.get("provider") == "alpaca"
+              else source)
+    return Sourced.live(payload, actual)
 
 
 def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
