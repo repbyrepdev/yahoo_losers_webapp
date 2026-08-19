@@ -135,6 +135,7 @@ the highest-conviction setup is at the top:
 
 | Column | Meaning |
 | --- | --- |
+| **Rank** | The composite default ordering: 0.40 × setup score + 0.35 × short-horizon EV shape + 0.25 × 7-day bounce odds, renormalized over what is measurable |
 | **Score** | The backtested rebound score (0–100) with its confidence and how many of the six inputs were available |
 | **Upside** | Analyst consensus upside, with the analyst count |
 | **P(prev close, 7d)** | How often this stock has reached yesterday's close within 7 trading days, over its own history |
@@ -142,9 +143,10 @@ the highest-conviction setup is at the top:
 | **P(target, 6mo)** | Same measure against the analyst consensus within ~126 trading days |
 
 Hover any probability for its evidence (hits/windows and the gain required).
-Click any header to re-sort. Default order: scored stocks first, highest score
-first, coverage as the tiebreak. An em dash means the input is genuinely
-absent — no analyst coverage, or too little trading history to measure.
+Click any header to re-sort. Default order: the **composite rank** (see below)
+highest first, with score and coverage as tiebreaks — the same order on the
+mobile cards. An em dash means the input is genuinely absent — no analyst
+coverage, or too little trading history to measure.
 
 ## 🎲 Timeframe probabilities are measured, not assumed
 
@@ -259,6 +261,17 @@ python backtest.py --years 6 --step-days 10
 
 Rank correlation between score and realised return: **+0.032 (5d), +0.043 (20d),
 +0.024 (60d)**.
+
+### The composite rank (default sort)
+
+The board's five numbers answer five different questions, so none of them is
+the right default ordering on its own. The **Rank** column is one stated
+formula for "which row first": `0.40 × setup score + 0.35 × short-horizon EV
+shape (clipped ±10%) + 0.25 × 7-day bounce odds`, renormalized over whichever
+components are measurable, exactly the way the score renormalizes its own
+factors. It is a ranking device, not a probability, and it deliberately
+excludes raw analyst upside -- distance to a target is already priced inside
+the EV term, and counting it twice would reward lottery tickets.
 
 ### Reading this honestly
 
