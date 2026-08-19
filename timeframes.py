@@ -17,7 +17,8 @@ Limitations, stated rather than buried:
   For a company whose situation has fundamentally changed, it is not.
 * Windows overlap, so they are not statistically independent; the sample size
   overstates how much evidence is present.
-* The history is split-adjusted but ignores dividends.
+* The history is split- AND dividend-adjusted (auto_adjust): measured rates
+  are total-return touch frequencies, slightly optimistic for dividend payers.
 * A stock with too little history returns unavailable rather than a guess.
 """
 
@@ -372,14 +373,24 @@ def horizon_distribution(closes: np.ndarray, horizon_bars: int) -> Optional[dict
 
 
 def describe(measured: dict) -> str:
-    """Plain statement of the evidence, for display next to the number."""
+    """Plain statement of the evidence, for display next to the number.
+
+    The recency note triggers on what a reader would actually notice: the
+    displayed rate diverging from the raw fraction they can compute from the
+    counts shown. The earlier n_eff-ratio trigger missed exactly those cases
+    -- hits clustered early or late move the weighted rate a lot while
+    barely moving the effective sample (live audit, 2026-08-19).
+    """
     conditioning = measured.get("conditioning")
     scope = f" {conditioning}" if conditioning and conditioning != "all windows" else " past"
     basis = (", intraday-touch" if measured.get("touch_basis") == "intraday-high" else "")
-    n_eff = measured.get("n_eff")
     recency = ""
-    if measured.get("recency_half_life_bars") and n_eff and n_eff < measured["windows"] * 0.95:
-        recency = f" · recency-weighted (n_eff {n_eff:.0f})"
+    if measured.get("recency_half_life_bars") and measured.get("windows"):
+        raw_pct = measured["hits"] / measured["windows"] * 100
+        if abs(measured["probability"] * 100 - raw_pct) >= 2:
+            n_eff = measured.get("n_eff") or measured["windows"]
+            recency = (f" · recency-weighted from {raw_pct:.0f}% raw "
+                       f"(n_eff {n_eff:.0f})")
     return (f"{measured['hits']}/{measured['windows']}{scope} "
             f"{measured['horizon_bars']}-day windows{basis}{recency}")
 
@@ -453,20 +464,29 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
                 if raw_pct != round(shrunk * 100, 1):
                     entry["probability_raw"] = raw_pct
                     evidence += (f" · shrunk toward cohort {prior_p * 100:.0f}% "
-                                 f"for similar targets (raw {probability * 100:.0f}%)")
+                                 f"for similar targets (raw {raw_pct:.1f}%)")
                 probability = shrunk
                 miss_median = measured.get("miss_median_return")
                 if miss_median is not None:
                     expected_value = round(
                         probability * upside + (1 - probability) * miss_median, 2)
+                elif measured["hits"] == measured["windows"]:
+                    # every window hit: EV re-derives from the shrunk p with a
+                    # zero miss term, not the pre-shrinkage figure
+                    expected_value = round(probability * upside, 2)
             # The interval belongs to the probability the page displays. After
             # shrinkage that is the posterior rate over the posterior evidence
             # (n_eff plus the prior's pseudo-windows); without shrinkage it is
             # the weighted rate over n_eff. Computing it before shrinkage
             # paired a shrunk number with raw-rate bounds (CR, PR 50).
-            ci_n = n_eff + (SHRINK_PRIOR_WEIGHT if prior_p is not None else 0)
-            # Fractional evidence stays fractional: rounding the effective
-            # sample would compute bounds for a different rate than displayed.
+            # Overlap-adjusted evidence: adjacent windows share horizon-1 of
+            # horizon bars, so the ~independent observation count is close to
+            # windows/horizon, not windows. The old interval understated
+            # uncertainty by up to ~7x on the long band (audit, 2026-08-19).
+            # The shrinkage prior's pseudo-counts are added after the
+            # correction -- they are not overlapping windows.
+            ci_n = (n_eff / max(1, horizon)
+                    + (SHRINK_PRIOR_WEIGHT if prior_p is not None else 0))
             ci_low, ci_high = wilson_interval(probability * ci_n, max(1.0, ci_n))
             entry.update({
                 "probability_available": True,

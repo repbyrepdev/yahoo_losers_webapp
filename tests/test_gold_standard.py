@@ -372,7 +372,9 @@ class TestHonestyUX:
         }}}
         predictions = app._snapshot_predictions(result)
         assert predictions == {"short_term:t1": {"probability": 0.62, "target_pct": 5.0,
-                                                 "horizon_days": 10}}
+                                                 "target_price": None,
+                                                 "horizon_days": 10,
+                                                 "horizon_bars": 7}}
 
     def test_oldest_price_fetch_reads_stamps(self):
         import app

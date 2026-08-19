@@ -96,8 +96,14 @@ def build_snapshot(universe_rows, tracked_prices):
     }
 
 
-def tracked_symbols(directory=None, lookback_days=70):
-    """Symbols whose forward prices the next snapshot should carry."""
+def tracked_symbols(directory=None, lookback_days=210):
+    """Symbols whose forward prices the next snapshot should carry.
+
+    The lookback must exceed the longest prediction horizon (183 calendar
+    days) or long-band predictions could never resolve: their symbols would
+    drop out of tracked_prices before the window closed and calibration
+    would starve (live audit, 2026-08-19). 210 covers 183 plus slack.
+    """
     cutoff = None
     symbols = set()
     for snap in _load_snapshots(directory):
@@ -176,10 +182,19 @@ def compute_track_record(directory=None):
                 hit = later_price(snap_date, symbol, horizon)
                 if not hit:
                     continue
-                resolved_any = True
                 price, at = hit
                 ret = (price - entry) / entry * 100.0
+                # Basis guard: snapshots store raw closes, and a split between
+                # the two dates would fabricate a huge "return" (a 1-for-10
+                # reverse split reads as +900%). Implausible moves are counted
+                # and excluded rather than averaged into the record.
+                if abs(ret) > 300:
+                    result["basis_suspect"] = result.get("basis_suspect", 0) + 1
+                    continue
+                resolved_any = True
                 entry_row = {"pct": round(ret, 2), "as_of": at.isoformat()}
+                horizon_rows[horizon].setdefault("spans", []).append(
+                    at.toordinal() - snap_date.toordinal())
                 # Same-span SPY return, when both endpoints recorded it. A pick
                 # that beat its own history but trailed the market is a worse
                 # trade than the raw number suggests.
@@ -196,6 +211,11 @@ def compute_track_record(directory=None):
             if is_pick:
                 if not resolved_any:
                     result["pending"] += 1
+                for horizon in HORIZONS:
+                    if str(horizon) not in pick_row["returns"]:
+                        result.setdefault("pending_by_horizon", {}).setdefault(
+                            str(horizon), 0)
+                        result["pending_by_horizon"][str(horizon)] += 1
                 result["picks"].append(pick_row)
 
     for horizon in HORIZONS:
@@ -209,6 +229,11 @@ def compute_track_record(directory=None):
             entry["baseline_mean"] = round(sum(base) / len(base), 2)
         if picks and base:
             entry["excess"] = round(entry["picks_mean"] - entry["baseline_mean"], 2)
+        spans = horizon_rows[horizon].get("spans") or []
+        if spans:
+            # The +/-40% matching smear, made visible: the label says ~7d or
+            # ~30d, this says what the resolved rows actually averaged.
+            entry["mean_span_days"] = round(sum(spans) / len(spans), 1)
         spy_rows = horizon_rows[horizon].get("vs_spy") or []
         if spy_rows:
             entry["vs_spy_mean"] = round(sum(spy_rows) / len(spy_rows), 2)
@@ -227,10 +252,14 @@ CALIBRATION_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 101))
 
 
 def _default_highs_lookup(symbol):
-    """Cached intraday highs for grading, as (dates, highs) or None.
+    """Cached intraday series for grading, as (dates, highs, closes) or None.
 
-    Reads the same OHLCV entries the warmer maintains. Import is local and
-    failure-tolerant so the tracking module stays usable standalone.
+    Closes ride along so grading can ANCHOR: the cached series is
+    back-adjusted for splits/dividends, while snapshots store the raw close
+    of their day. Comparing a raw-basis threshold against an adjusted series
+    silently mis-grades every prediction after a corporate action -- a
+    reverse split graded everything "hit" (audit, 2026-08-19). The series'
+    own close on the entry date rescales the threshold onto its basis.
     """
     try:
         import market_data
@@ -241,9 +270,12 @@ def _default_highs_lookup(symbol):
         return None
     dates = [d[:10] for d in (payload.get("index") or [])]
     highs = payload.get("high") or []
+    closes = payload.get("close") or [None] * len(dates)
     if len(dates) != len(highs) or not dates:
         return None
-    return dates, highs
+    if len(closes) != len(dates):
+        closes = [None] * len(dates)
+    return dates, highs, closes
 
 
 def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
@@ -284,21 +316,49 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
     graded_on_highs = 0
     highs_cache = {}
 
-    def window_high_verdict(symbol, start_iso, end_iso, threshold):
-        """Grade one window from cached intraday highs.
+    def window_high_verdict(symbol, start_iso, end_iso, threshold, entry):
+        """Grade one window from cached intraday highs, on the SERIES' basis.
 
-        "hit": a high inside the window reached the threshold. "miss": highs
-        were observed across the whole window (the series extends past its
-        end) and none reached it -- highs bound closes, so this is final.
-        "partial": some in-window highs seen, none touched, but the series
-        stops before the window ends. None: no in-window high data at all.
+        "hit": an in-window high reached the (basis-anchored) threshold.
+        "miss": the series covers the window START and extends past its end
+        with no touch -- final, since highs bound closes. "partial": some
+        in-window data but the window is not fully covered; decides nothing.
+        None: no usable in-window data. A series that begins after the window
+        opened cannot call a final miss -- post-drop bounces concentrate in
+        exactly those first unobserved days (audit, 2026-08-19).
         """
         if symbol not in highs_cache:
             highs_cache[symbol] = highs_lookup(symbol) if highs_lookup else None
         series = highs_cache[symbol]
         if not series:
             return None
-        dates, highs = series
+        if len(series) == 2:
+            dates, highs = series
+            closes = [None] * len(dates)
+        else:
+            dates, highs, closes = series
+        # Coverage from the first in-window day suffices: the entry day
+        # itself is outside the window (start_iso < d).
+        first_needed = date.fromordinal(
+            date.fromisoformat(start_iso).toordinal() + 1).isoformat()
+        covers_start = dates[0] <= first_needed
+        # Basis anchor: the threshold was built from the snapshot's raw
+        # entry close; rescale it by the ratio of the series' own close on
+        # the entry date to that stored entry, when both are known.
+        anchored = threshold
+        if entry:
+            for d, c in zip(dates, closes):
+                if d == start_iso and c:
+                    ratio = c / entry
+                    # Rescale ONLY on corporate-action-scale ratios. A
+                    # provisional intraday close being revised to the settled
+                    # close moves a few percent; a split moves 1.5x-10x.
+                    # Rescaling on small drift silently moved the graded bar
+                    # (CR, PR 53). Small drift barely shifts a percent-scale
+                    # threshold, so it is left alone.
+                    if ratio >= 1.4 or ratio <= (1 / 1.4):
+                        anchored = threshold * ratio
+                    break
         seen = extends_past_end = False
         for d, h in zip(dates, highs):
             if d > end_iso:
@@ -306,11 +366,11 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
                 continue
             if h is not None and start_iso < d <= end_iso:
                 seen = True
-                if h >= threshold:
+                if h >= anchored:
                     return "hit"
         if not seen:
             return None
-        return "miss" if extends_past_end else "partial"
+        return "miss" if (extends_past_end and covers_start) else "partial"
 
     for snap_date in ordered_dates:
         for row in by_date[snap_date].get("universe", []):
@@ -318,31 +378,66 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
             predictions = row.get("predictions") or {}
             if not symbol or not entry or not predictions:
                 continue
+            # ONE representative per (symbol, horizon) per day. The bands
+            # publish several nested targets on the same window -- one price
+            # path settles all of them, and counting each as independent
+            # evidence let a single market day satisfy the readiness floor
+            # (audit, 2026-08-19). The target nearest +5% represents the
+            # group; the modest rung anchors comparability across symbols.
+            groups = {}
             for pred in predictions.values():
                 prob = pred.get("probability")
                 target = pred.get("target_pct")
                 horizon = pred.get("horizon_days")
                 if prob is None or target is None or not horizon:
                     continue
-                threshold = entry * (1 + target / 100.0)
-                end_ordinal = snap_date.toordinal() + horizon
+                key = horizon
+                if key not in groups or abs(target - 5.0) < abs(groups[key]["target_pct"] - 5.0):
+                    groups[key] = pred
+            for pred in groups.values():
+                prob = pred.get("probability")
+                target = pred.get("target_pct")
+                horizon = pred.get("horizon_days")
+                # The graded threshold is the target the app DISPLAYED when
+                # it was recorded; re-deriving from an entry price that may
+                # be staler than the modal's own price grades a different
+                # claim (CR, PR 53). Percent-derivation is the fallback for
+                # records made before target_price was stored.
+                threshold = (float(pred["target_price"])
+                             if pred.get("target_price")
+                             else entry * (1 + target / 100.0))
+                # Predictions measured in TRADING bars grade over a window of
+                # that many trading days (weekend walk); older records that
+                # stored only calendar days keep the calendar window.
+                bars = pred.get("horizon_bars")
+                if bars:
+                    end_date = snap_date
+                    steps = 0
+                    while steps < bars:
+                        end_date = date.fromordinal(end_date.toordinal() + 1)
+                        if end_date.weekday() < 5:
+                            steps += 1
+                    end_ordinal = end_date.toordinal()
+                else:
+                    end_ordinal = snap_date.toordinal() + horizon
                 hit = window_elapsed = price_observed = high_graded = False
 
                 # Highs first: the prediction claimed a TOUCH, and intraday
                 # highs are the matching evidence -- they credit touches the
-                # daily closes missed, and a full-window high series that
-                # never touched is a final miss (highs bound closes). Snapshot
-                # closes are the fallback, not the primary.
+                # daily closes missed, and a start-covered full-window high
+                # series that never touched is a final miss (highs bound
+                # closes). Snapshot closes are the fallback, not the primary.
                 verdict = window_high_verdict(
                     symbol, snap_date.isoformat(),
-                    date.fromordinal(end_ordinal).isoformat(), threshold)
+                    date.fromordinal(end_ordinal).isoformat(), threshold, entry)
                 if verdict == "hit":
                     hit = high_graded = True
                 elif verdict == "miss":
                     price_observed = window_elapsed = high_graded = True
                 else:
-                    if verdict == "partial":
-                        price_observed = high_graded = True
+                    # "partial" decides nothing: it neither observes the
+                    # window's outcome nor proves it elapsed. The old code let
+                    # a 3-observed-of-10-day window grade as a final miss.
                     for later in ordered_dates:
                         if later <= snap_date:
                             continue
@@ -354,14 +449,9 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
                             price_observed = True
                             if price >= threshold:
                                 hit = True
-                                high_graded = False  # the close, not a high, decided it
                                 break
-                        # 80% of the window observed counts as resolved-enough.
-                        if later.toordinal() >= snap_date.toordinal() + horizon * 0.8:
-                            window_elapsed = True
-                # A miss must be supported by at least one recorded in-window
-                # price. A symbol that vanished from every later snapshot has
-                # no observed outcome, and grading it would fabricate one.
+                # A miss must be supported by observed in-window prices AND a
+                # fully elapsed window -- an unobserved tail can only add hits.
                 if hit or (window_elapsed and price_observed):
                     pairs.append((float(prob), 1 if hit else 0))
                     if high_graded:

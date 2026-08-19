@@ -99,18 +99,10 @@ def walk_forward(directory=None):
                             "with resolved forward returns")
         return result
 
-    factor_keys = sorted({key for r in rows for key in r["scores"]})
-
-    def vectorize(scores):
-        # 50.0 stands in for an absent factor; the imputation share is
-        # counted and published so a fit built mostly on filler says so.
-        return [scores.get(key, 50.0) / 100.0 for key in factor_keys]
-
-    imputed = sum(1 for r in rows for key in factor_keys if key not in r["scores"])
-    total_cells = max(1, len(rows) * len(factor_keys))
-
     fitted_daily, equal_daily = [], []
     weights = None
+    factor_keys = []
+    imputed = total_cells = 0
     # Strict out-of-sample, both ways the leak can happen: testing starts
     # only after MIN_FIT_DAYS full days exist, and a training row qualifies
     # only when the snapshot that RESOLVED its forward return predates the
@@ -121,6 +113,16 @@ def walk_forward(directory=None):
         test = [r for r in rows if r["day"] == test_day]
         if len({r["day"] for r in train}) < MIN_FIT_DAYS or not test:
             continue
+        # Factor set and imputation accounting come from the TRAINING rows
+        # only: deriving them from all rows let future days leak the feature
+        # set into earlier fits (audit, 2026-08-19).
+        factor_keys = sorted({key for r in train for key in r["scores"]})
+
+        def vectorize(scores, keys=tuple(factor_keys)):
+            return [scores.get(key, 50.0) / 100.0 for key in keys]
+
+        imputed += sum(1 for r in train for key in factor_keys if key not in r["scores"])
+        total_cells += len(train) * len(factor_keys)
         matrix = np.array([vectorize(r["scores"]) for r in train])
         returns = np.array([r["fwd_return"] for r in train])
         # Centered fit: the intercept (mean return) is absorbed before the
@@ -152,7 +154,7 @@ def walk_forward(directory=None):
         "equal_weight_top3_mean_return": round(float(np.mean(equal_daily)), 2),
         "latest_weights": {key: round(float(w), 4)
                            for key, w in zip(factor_keys, weights)},
-        "imputed_factor_share": round(imputed / total_cells, 3),
+        "imputed_factor_share": round(imputed / max(1, total_cells), 3),
         "status": "report-only: live scoring still uses the hand-chosen weights",
     })
     return result
