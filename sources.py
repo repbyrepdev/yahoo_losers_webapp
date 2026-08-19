@@ -522,3 +522,106 @@ def paper_recent_fills(days: int = 7) -> Sourced:
         return Sourced.live(fills, source)
     except Exception as e:
         return Sourced.unavailable(source, f"paper fills failed ({type(e).__name__})")
+
+
+# --- Factor backups ----------------------------------------------------------
+
+def ratings_spread(symbol: str) -> Sourced:
+    """Analyst buy/hold/sell spread from Finnhub's recommendation trends.
+
+    The same shape Yahoo's spread factor consumes, so the score's ratings
+    input survives a quoteSummary outage (live incident 2026-08-19: the
+    factor went missing board-wide with no backup).
+    """
+    source = "finnhub:recommendation-trends"
+    key = f"src:ratings:{symbol.upper()}"
+
+    def produce():
+        try:
+            payload, err = _finnhub_get("stock/recommendation",
+                                        {"symbol": symbol.upper()})
+            if err:
+                return {"ok": False, "reason": err}
+            if not payload:
+                return {"ok": False, "reason": "no ratings published"}
+            latest = payload[0]
+            spread = {k: int(latest.get(k, 0) or 0) for k in
+                      ("strongBuy", "buy", "hold", "sell", "strongSell")}
+            total = sum(spread.values())
+            if total == 0:
+                return {"ok": False, "reason": "no ratings published"}
+            spread["total"] = total
+            return {"ok": True, "spread": spread, "period": latest.get("period")}
+        except Exception as e:
+            return {"ok": False, "reason": f"finnhub ratings failed ({type(e).__name__})"}
+
+    payload = market_data._cached(key, 24 * 60 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["spread"], source)
+
+
+def options_putcall(symbol: str) -> Sourced:
+    """Put/call volume positioning from Alpaca's indicative options feed.
+
+    One chain-snapshot request; contract symbols encode call/put, and the
+    daily bars carry per-contract volume. This keeps the options factor
+    alive while Yahoo's chain endpoint is limited -- the factor that went
+    dark board-wide in the 2026-08-19 incident.
+    """
+    source = "alpaca:options-indicative"
+    key = f"src:putcall:{symbol.upper()}"
+
+    def produce():
+        import re as _re
+        until = (date.today() + timedelta(days=45)).isoformat()
+        # The endpoint paginates (max 1000/page). Contracts sort C-before-P
+        # within each expiry, so a truncated chain would overweight calls --
+        # merge every page or refuse.
+        snapshots = {}
+        token = None
+        for _page in range(5):
+            params = {"feed": "indicative", "limit": 1000,
+                      "expiration_date_lte": until}
+            if token:
+                params["page_token"] = token
+            try:
+                payload, err = _alpaca_get(
+                    ALPACA_DATA_BASE,
+                    f"/v1beta1/options/snapshots/{symbol.upper()}", params)
+                if err:
+                    return {"ok": False, "reason": err}
+            except Exception as e:
+                return {"ok": False, "reason": f"alpaca options failed ({type(e).__name__})"}
+            snapshots.update(payload.get("snapshots") or {})
+            token = payload.get("next_page_token")
+            if not token:
+                break
+        else:
+            return {"ok": False, "reason": "options chain exceeds page budget"}
+        if not snapshots:
+            return {"ok": False, "reason": "no listed options"}
+        # OCC symbology is fixed from the right (8-digit strike, C/P,
+        # 6-digit date); anchor there so roots with digits still parse.
+        pattern = _re.compile(r"\d{6}([CP])\d{8}$")
+        call_volume = put_volume = 0
+        for contract, snap in snapshots.items():
+            match = pattern.search(contract)
+            if not match:
+                continue
+            volume = int((snap.get("dailyBar") or {}).get("v") or 0)
+            if match.group(1) == "C":
+                call_volume += volume
+            else:
+                put_volume += volume
+        if call_volume + put_volume == 0:
+            return {"ok": False, "reason": "no option volume today"}
+        return {"ok": True, "call_volume": call_volume, "put_volume": put_volume,
+                "put_call_ratio": (round(put_volume / call_volume, 3)
+                                   if call_volume else None),
+                "contracts": len(snapshots), "window": f"expiries to {until}"}
+
+    payload = market_data._cached(key, market_data.TTL_OPTIONS, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
