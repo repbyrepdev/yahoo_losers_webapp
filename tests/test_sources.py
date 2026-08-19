@@ -558,3 +558,101 @@ class TestFactorLaneDrain:
         result = market_data.analyst_recommendations("ZZLD6")
         assert not result.ok
         assert result.reason == "no ratings published"
+
+
+class TestTargetFallback:
+    def test_fmp_summary_prefers_quarter_window(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "price-target-summary": [
+                {"lastQuarterCount": 5, "lastQuarterAvgPriceTarget": 12.5,
+                 "lastYearCount": 20, "lastYearAvgPriceTarget": 15.0}]}))
+        result = sources.price_targets("ZZTF1")
+        assert result.ok
+        assert result.value == {"mean": 12.5, "count": 5, "window": "3mo"}
+
+    def test_fmp_summary_falls_back_to_year_window(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "price-target-summary": [
+                {"lastQuarterCount": 0, "lastQuarterAvgPriceTarget": 0,
+                 "lastYearCount": 8, "lastYearAvgPriceTarget": 30.0}]}))
+        result = sources.price_targets("ZZTF2")
+        assert result.ok
+        assert result.value == {"mean": 30.0, "count": 8, "window": "12mo"}
+
+    def test_producer_fills_from_fmp_when_profile_blocked(self, monkeypatch):
+        monkeypatch.setattr(market_data, "_info",
+                            lambda sym, allow_fetch=True: {"ok": False, "reason": "401"})
+        monkeypatch.setattr(sources, "price_targets",
+                            lambda sym, allow_fetch=True: market_data.Sourced.live(
+                                {"mean": 205.25, "count": 12, "window": "3mo"},
+                                "fmp:price-target-summary"))
+        result = market_data.analyst_target("ZZTF3")
+        assert result["mean"].ok and result["mean"].value == 205.25
+        assert result["analysts"].value == 12
+        assert result["mean"].source == "fmp:price-target-summary"
+        assert not result["high"].ok  # fallback feed has no extremes; never invent
+
+    def test_thin_fallback_coverage_still_gated(self, monkeypatch):
+        monkeypatch.setattr(market_data, "_info",
+                            lambda sym, allow_fetch=True: {"ok": False, "reason": "401"})
+        monkeypatch.setattr(sources, "price_targets",
+                            lambda sym, allow_fetch=True: market_data.Sourced.live(
+                                {"mean": 9.0, "count": 1, "window": "3mo"},
+                                "fmp:price-target-summary"))
+        result = market_data.analyst_target("ZZTF4")
+        assert not result["mean"].ok
+        assert "1 analyst" in result["mean"].reason
+
+    def test_healthy_yahoo_never_touches_fmp(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(market_data, "_info",
+                            lambda sym, allow_fetch=True: {
+                                "ok": True, "target_mean": 50.0, "analysts": 9,
+                                "target_high": 60.0, "target_low": 40.0})
+        monkeypatch.setattr(sources, "price_targets",
+                            lambda sym, allow_fetch=True: calls.append(sym))
+        result = market_data.analyst_target("ZZTF5")
+        assert result["mean"].ok and result["mean"].source == "yfinance:targetMeanPrice"
+        assert result["high"].ok
+        assert calls == []
+
+    def test_lane_scan_targets_only_failed_profiles(self):
+        market_data._cache.set("info:ZZTF6", {"ok": False, "reason": "401"}, 60)
+        market_data._cache.set("info:ZZTF7", {"ok": True, "target_mean": 5.0}, 60)
+        market_data._cache.set("info:ZZTF8", {"ok": False, "reason": "401"}, 60)
+        market_data._cache.set("src:targets:ZZTF8", {"ok": True}, 60)
+        need = market_data._symbols_needing_target_fallback(
+            ["ZZTF6", "ZZTF7", "ZZTF8", "ZZTF9", "^GSPC"])
+        assert need == ["ZZTF6"]
+
+    def test_one_fmp_request_per_symbol_per_day(self, monkeypatch):
+        """CR PR62: response-cache TTLs (5-min structural first strike,
+        off-market shortening) must not translate into repeat FMP spends.
+        The day stamp caps HTTP at one, whatever the response cache does."""
+        hits = []
+
+        def counting(url, params=None, headers=None, timeout=None, **kw):
+            hits.append(url)
+            return FakeResponse([])  # structural: no coverage published
+
+        monkeypatch.setattr(sources.requests, "get", counting)
+        first = sources.price_targets("ZZTF10")
+        assert not first.ok and "no analyst coverage" in first.reason
+        # simulate the 5-minute first-strike expiry: response cache gone
+        market_data._cache._local.pop("src:targets:ZZTF10", None)
+        second = sources.price_targets("ZZTF10")
+        assert not second.ok
+        assert "already spent today" in second.reason
+        assert len(hits) == 1
+
+    def test_day_stamp_set_even_on_transport_failure(self, monkeypatch):
+        def dying(url, params=None, headers=None, timeout=None, **kw):
+            raise RuntimeError("connection reset")
+        monkeypatch.setattr(sources.requests, "get", dying)
+        first = sources.price_targets("ZZTF11")
+        assert not first.ok
+        market_data._cache._local.pop("src:targets:ZZTF11", None)
+        monkeypatch.setattr(sources.requests, "get",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("second HTTP")))
+        second = sources.price_targets("ZZTF11")
+        assert not second.ok and "already spent today" in second.reason

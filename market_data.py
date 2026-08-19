@@ -599,7 +599,24 @@ def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
     info = _info(symbol, allow_fetch)
     source = "yfinance:targetMeanPrice"
 
-    if not info.get("ok"):
+    mean = count = None
+    if info.get("ok"):
+        mean, count = info.get("target_mean"), info.get("analysts")
+    if not mean:
+        # Backup: FMP's price-target summary carries mean and count, so the
+        # consensus-upside factor survives a blocked quoteSummary. The same
+        # thin-coverage gates below apply to either provider.
+        try:
+            import sources
+            fallback = sources.price_targets(symbol, allow_fetch)
+            if fallback.ok:
+                mean = fallback.value["mean"]
+                count = fallback.value["count"]
+                source = fallback.source
+        except Exception as e:
+            logger.info(f"targets fallback failed for {symbol}: {type(e).__name__}")
+
+    if not info.get("ok") and not mean:
         reason = info.get("reason", "unavailable")
         return {
             "mean": Sourced.unavailable(source, reason),
@@ -608,7 +625,6 @@ def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
             "analysts": Sourced.unavailable(source, reason),
         }
 
-    mean, count = info.get("target_mean"), info.get("analysts")
     if not mean:
         gap = "no analyst coverage published"
         return {
@@ -628,10 +644,15 @@ def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
                          else Sourced.unavailable(source, "analyst count not reported")),
         }
 
+    yahoo_extremes = info.get("ok") and source == "yfinance:targetMeanPrice"
     return {
         "mean": Sourced.live(mean, source),
-        "high": Sourced.live(info.get("target_high"), source) if info.get("target_high") else Sourced.unavailable(source, "no high estimate"),
-        "low": Sourced.live(info.get("target_low"), source) if info.get("target_low") else Sourced.unavailable(source, "no low estimate"),
+        "high": (Sourced.live(info.get("target_high"), source)
+                 if yahoo_extremes and info.get("target_high")
+                 else Sourced.unavailable(source, "no high estimate")),
+        "low": (Sourced.live(info.get("target_low"), source)
+                if yahoo_extremes and info.get("target_low")
+                else Sourced.unavailable(source, "no low estimate")),
         "analysts": Sourced.live(count, source),
     }
 
@@ -2166,6 +2187,24 @@ def _symbols_missing_factor_keys(symbols):
     return recs, options
 
 
+def _symbols_needing_target_fallback(symbols):
+    """Symbols whose consensus factor has no usable Yahoo mean and no cached
+    FMP fallback yet. A healthy profile keeps this empty, so FMP budget is
+    spent only while quoteSummary is blocked or coverage is absent."""
+    out = []
+    for s in symbols:
+        if s.startswith("^"):
+            continue
+        if _cache.get(f"src:targets:{s.upper()}") is not None:
+            continue
+        info = _cache.get(f"info:{s.upper()}")
+        if info is None:
+            continue  # profile drain owns it first; revisit next tick
+        if not info.get("ok") or not info.get("target_mean"):
+            out.append(s)
+    return out
+
+
 def _symbols_missing_info(symbols):
     """The subset whose profile is absent from cache -- the info lane's queue."""
     return [s for s in symbols
@@ -2201,10 +2240,12 @@ def _info_loop():
             earnings_missing = [s for s in universe
                                 if _cache.get(f"src:earnings:{s.upper()}") is None]
             recs_missing, options_missing = _symbols_missing_factor_keys(universe)
+            targets_missing = _symbols_needing_target_fallback(universe)
             calendar_cold = _cache.get("src:trading-days") is None
             if (not missing and not gc_missing and not grades_missing
                     and not earnings_missing and not recs_missing
-                    and not options_missing and not calendar_cold):
+                    and not options_missing and not targets_missing
+                    and not calendar_cold):
                 time.sleep(20)
                 continue
             for symbol in missing[:5]:
@@ -2240,6 +2281,11 @@ def _info_loop():
                     options_flow(symbol)
                 except Exception as e:
                     logger.warning(f"options warm skipped for {symbol}: {type(e).__name__}")
+            for symbol in targets_missing[:3]:
+                try:
+                    analyst_target(symbol)
+                except Exception as e:
+                    logger.warning(f"targets warm skipped for {symbol}: {type(e).__name__}")
             save_cache_to_disk()
         except Exception as e:
             logger.warning(f"info lane cycle failed: {type(e).__name__}: {e}")

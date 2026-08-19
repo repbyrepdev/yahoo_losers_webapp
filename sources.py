@@ -625,3 +625,54 @@ def options_putcall(symbol: str) -> Sourced:
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+def price_targets(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Analyst target mean and count from FMP's price-target summary.
+
+    Backup for the score's consensus-upside factor when Yahoo's quoteSummary
+    is blocked (verified free on the /stable/ endpoints 2026-08-19). One
+    request per symbol per day, inside the FMP daily budget.
+    """
+    source = "fmp:price-target-summary"
+    key = f"src:targets:{symbol.upper()}"
+
+    def produce():
+        # The response cache alone cannot hold the one-request-per-symbol-per-
+        # day contract: structural first-strikes live 5 minutes and successes
+        # can expire early off-market. A day-keyed stamp, set before the
+        # request and regardless of outcome, makes the contract literal (CR,
+        # PR 62). The lane is lease-gated, so a cross-worker race costs at
+        # worst one duplicate request.
+        stamp_key = f"src:targets:asked:{symbol.upper()}:{date.today().isoformat()}"
+        if market_data._cache.get(stamp_key) is not None:
+            return {"ok": False,
+                    "reason": "fmp target request already spent today"}
+        market_data._cache.set(stamp_key, {"asked": True}, 24 * 60 * 60)
+        try:
+            payload, err = _fmp_get("price-target-summary",
+                                    {"symbol": symbol.upper()})
+            if err:
+                return {"ok": False, "reason": err}
+            if not payload:
+                return {"ok": False, "reason": "no analyst coverage published"}
+            row = payload[0]
+            # Prefer the fresher quarter window; a quiet quarter falls back
+            # to the trailing year.
+            for count_key, mean_key, window in (
+                    ("lastQuarterCount", "lastQuarterAvgPriceTarget", "3mo"),
+                    ("lastYearCount", "lastYearAvgPriceTarget", "12mo")):
+                count = int(row.get(count_key) or 0)
+                mean = row.get(mean_key)
+                if count > 0 and mean:
+                    return {"ok": True, "mean": float(mean), "count": count,
+                            "window": window}
+            return {"ok": False, "reason": "no analyst coverage published"}
+        except Exception as e:
+            return {"ok": False, "reason": f"fmp targets failed ({type(e).__name__})"}
+
+    payload = market_data._cached(key, 24 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({"mean": payload["mean"], "count": payload["count"],
+                         "window": payload["window"]}, source)
