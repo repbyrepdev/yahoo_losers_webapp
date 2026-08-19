@@ -27,3 +27,20 @@ def _in_memory_cache_only(monkeypatch):
     cache._local.clear()
     yield
     cache._local.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_network_in_sources(monkeypatch):
+    """Tests must never reach a real provider through the sources layer.
+
+    Any unmocked call fails loudly instead of hanging on a 20s timeout.
+    Individual tests monkeypatch sources.requests themselves when they need
+    a fake response.
+    """
+    import sources
+
+    def _blocked(*args, **kwargs):
+        raise AssertionError("network call escaped a test via sources.requests")
+
+    monkeypatch.setattr(sources.requests, "get", _blocked)
+    monkeypatch.setattr(sources.requests, "post", _blocked)

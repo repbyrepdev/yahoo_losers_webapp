@@ -76,6 +76,15 @@ def stable_universe():
         if cached is not None:
             return labelled(cached)
         losers, status = scrape_yahoo_losers()
+        if not status.get('success'):
+            # First-ever backup for the app's spine: FMP's losers screener.
+            import sources
+            fallback = sources.fmp_losers()
+            if fallback.ok:
+                losers = fallback.value
+                status = {'success': True, 'data_source': 'fmp-failover',
+                          'message': '⚠️ Yahoo screener failed; universe from '
+                                     'FMP biggest-losers'}
         if status.get('success'):
             market_data._cache.set('universe:v1',
                                    {'losers': losers, 'status': status,
@@ -93,6 +102,30 @@ def _current_universe():
 
 
 market_data.set_symbol_source(_current_universe)
+
+# Real exchange calendar and price failover, injected to avoid circular
+# imports. Both tolerate total provider failure by returning None.
+import sources as _sources
+
+
+def _calendar_days():
+    # Cache-only: market_phase consults this constantly; the info lane does
+    # the actual daily fetch via warm paths. Missing cache = weekday logic.
+    try:
+        return _sources.trading_days_set(cache_only=True)
+    except Exception:
+        return None
+
+
+def _price_failover(symbols):
+    trades = _sources.latest_trades(symbols)
+    if not trades.ok:
+        return {}
+    return {sym: t["price"] for sym, t in trades.value.items()}
+
+
+market_data.set_trading_days_source(_calendar_days)
+market_data.set_price_failover(_price_failover)
 
 
 # The page cache is rebuilt proactively this long before it expires, so a
@@ -3328,7 +3361,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
                         <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
                         <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
-                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}
+                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}{% if stock.get('Analyst Revisions') %}<span class="chip" style="border-color: #17a2b8; color: #7fd8e8;" title="Analyst rating changes, past 30 days.">📣 {{ stock['Analyst Revisions'].upgrades }}⬆ {{ stock['Analyst Revisions'].downgrades }}⬇</span>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -3373,7 +3406,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].upgrades }}⬆ {{ stock['Analyst Revisions'].downgrades }}⬇ analysts 30d</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
                                     {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
@@ -3478,7 +3511,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].upgrades }}⬆ {{ stock['Analyst Revisions'].downgrades }}⬇ analysts 30d</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
                                     {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
@@ -3870,7 +3903,32 @@ def api_snapshot():
             if history.ok and history.value:
                 tracked_prices[symbol] = history.value[-1]
 
-    return jsonify(tracking.build_snapshot(universe, tracked_prices))
+    snapshot = tracking.build_snapshot(universe, tracked_prices)
+
+    # Paper execution: simulated-money orders for the day's top picks, queued
+    # market-on-open, endpoint hard-pinned to paper. Fills recorded by later
+    # snapshots become the measured-slippage track record.
+    try:
+        import sources
+        scored = sorted((r for r in universe
+                         if isinstance(r.get("score"), (int, float))),
+                        key=lambda r: r["score"], reverse=True)
+        top = [r["symbol"] for r in scored[:sources.PAPER_MAX_PICKS]
+               if r.get("score", 0) >= 70]
+        if top:
+            orders = sources.paper_execute_picks(top)
+            snapshot["paper_orders"] = (orders.value if orders.ok
+                                        else {"unavailable": orders.reason})
+        fills = sources.paper_recent_fills()
+        if fills.ok and fills.value:
+            snapshot["paper_fills"] = fills.value
+        survivorship = sources.delisted_recent()
+        if survivorship.ok:
+            snapshot["delisted_last_year"] = survivorship.value.get("count")
+    except Exception as e:
+        logger.warning(f"paper/survivorship record failed: {type(e).__name__}")
+
+    return jsonify(snapshot)
 
 
 def _calibration_section():
@@ -5092,6 +5150,18 @@ def _earnings_in_window(symbol, horizon_days):
     horizon if it starts before the horizon ends and ends on or after today.
     """
     from datetime import date as _date, timedelta as _td
+    # A CONFIRMED calendar date (FMP/Finnhub, warmed by the info lane) beats
+    # Yahoo's estimated ranges when one is cached.
+    confirmed = market_data._cache.get(f"src:earnings:{symbol.upper()}")
+    if confirmed and confirmed.get("ok") and confirmed.get("date"):
+        try:
+            when = _date.fromisoformat(str(confirmed["date"])[:10])
+            today = tracking.trading_date_today()
+            if today <= when <= today + _td(days=horizon_days):
+                return when.isoformat()
+            return None
+        except ValueError:
+            pass
     sourced = market_data.earnings_date(symbol)
     if not sourced.ok or not sourced.value.get("upcoming"):
         return None
@@ -6284,6 +6354,18 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         # move. Cache-only: absent until the lanes have warmed it, never a stall.
         sector = market_data.sector_context(symbol)
         enhanced['Sector Context'] = sector.value if sector.ok else None
+
+        # Analyst revisions since the drop window, warmed by the info lane.
+        # Cache-only read; the chip renders when there are recent events.
+        grades = market_data._cache.get(f"src:grades:{symbol.upper()}")
+        if grades and grades.get("ok") and (grades.get("upgrades") or grades.get("downgrades")):
+            enhanced['Analyst Revisions'] = {
+                "upgrades": grades.get("upgrades", 0),
+                "downgrades": grades.get("downgrades", 0),
+                "events": grades.get("events") or [],
+            }
+        else:
+            enhanced['Analyst Revisions'] = None
 
         # Going-concern language in recent filings, warmed by the info lane.
         # Only a flagged finding renders; a clear or unchecked state shows

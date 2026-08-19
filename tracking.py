@@ -121,6 +121,32 @@ def tracked_symbols(directory=None, lookback_days=210):
     return sorted(symbols)
 
 
+def _split_factor_between(symbol, start, end):
+    """Product of split ratios between two dates, from the sources layer.
+
+    A 1-for-10 reverse split has ratio 0.1: multiplying the post-split price
+    by it restores the entry basis. Returns None when no data is available;
+    import is local and failure-tolerant so tracking stays standalone.
+    """
+    try:
+        import sources
+        events = sources.splits_for(symbol)
+        if not events.ok:
+            return None
+        factor = 1.0
+        for event in events.value:
+            try:
+                when = date.fromisoformat(str(event.get("date"))[:10])
+            except (TypeError, ValueError):
+                continue
+            ratio = event.get("ratio")
+            if ratio and start < when <= end:
+                factor *= ratio
+        return factor
+    except Exception:
+        return None
+
+
 def compute_track_record(directory=None):
     """Join every logged pick with the prices later snapshots recorded.
 
@@ -185,12 +211,18 @@ def compute_track_record(directory=None):
                 price, at = hit
                 ret = (price - entry) / entry * 100.0
                 # Basis guard: snapshots store raw closes, and a split between
-                # the two dates would fabricate a huge "return" (a 1-for-10
-                # reverse split reads as +900%). Implausible moves are counted
-                # and excluded rather than averaged into the record.
+                # the two dates fabricates a huge "return" (a 1-for-10 reverse
+                # split reads as +900%). With real split events available the
+                # return is CORRECTED onto the entry basis; otherwise the
+                # implausible move is counted and excluded, never averaged in.
                 if abs(ret) > 300:
-                    result["basis_suspect"] = result.get("basis_suspect", 0) + 1
-                    continue
+                    factor = _split_factor_between(symbol, snap_date, at)
+                    if factor and factor != 1.0:
+                        ret = (price * factor - entry) / entry * 100.0
+                        result["split_corrected"] = result.get("split_corrected", 0) + 1
+                    if abs(ret) > 300:
+                        result["basis_suspect"] = result.get("basis_suspect", 0) + 1
+                        continue
                 resolved_any = True
                 entry_row = {"pct": round(ret, 2), "as_of": at.isoformat()}
                 horizon_rows[horizon].setdefault("spans", []).append(
