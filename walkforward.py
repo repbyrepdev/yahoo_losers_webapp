@@ -132,10 +132,11 @@ def walk_forward(directory=None):
         by_fitted = sorted(test, key=lambda r: float(
             np.dot(np.array(vectorize(r["scores"])) - matrix_means, weights)),
             reverse=True)[:3]
-        # Equal-weight mean, and labelled as such: reproducing the live
-        # scorer's renormalized weights over historical factor rows would
-        # claim a fidelity the snapshot data cannot verify.
-        by_equal = sorted(test, key=lambda r: sum(r["scores"].values()) / len(r["scores"]),
+        # Equal-weight mean over the SAME imputed vector the fitted ranking
+        # uses -- with different missing-factor policies, a row could rank
+        # differently purely because of missingness, and the fitted-vs-equal
+        # comparison would measure imputation rules instead of weighting.
+        by_equal = sorted(test, key=lambda r: float(np.mean(vectorize(r["scores"]))),
                           reverse=True)[:3]
         fitted_daily.append(sum(r["fwd_return"] for r in by_fitted) / len(by_fitted))
         equal_daily.append(sum(r["fwd_return"] for r in by_equal) / len(by_equal))

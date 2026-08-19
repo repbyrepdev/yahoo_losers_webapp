@@ -327,8 +327,11 @@ def target_probability(closes: np.ndarray, target_pct: float, band: str) -> Sour
     return Sourced.live(measured, source)
 
 
-def wilson_interval(hits: int, windows: int, z: float = 1.96):
+def wilson_interval(hits: float, windows: float, z: float = 1.96):
     """95% Wilson score interval for a proportion.
+
+    Accepts fractional evidence: recency weighting and shrinkage produce a
+    real-valued effective sample, and the arithmetic is identical.
 
     Reported beside every hit rate so a thin sample cannot masquerade as a
     solid one: 20/59 reads plus-or-minus twelve points, 1004/1233 plus-or-minus
@@ -462,8 +465,9 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
             # the weighted rate over n_eff. Computing it before shrinkage
             # paired a shrunk number with raw-rate bounds (CR, PR 50).
             ci_n = n_eff + (SHRINK_PRIOR_WEIGHT if prior_p is not None else 0)
-            ci_low, ci_high = wilson_interval(
-                int(round(probability * ci_n)), max(1, int(round(ci_n))))
+            # Fractional evidence stays fractional: rounding the effective
+            # sample would compute bounds for a different rate than displayed.
+            ci_low, ci_high = wilson_interval(probability * ci_n, max(1.0, ci_n))
             entry.update({
                 "probability_available": True,
                 "expected_value": expected_value,

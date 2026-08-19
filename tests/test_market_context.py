@@ -13,15 +13,8 @@ import market_data
 import timeframes
 
 
-@pytest.fixture(autouse=True)
-def _isolated_cache(monkeypatch):
-    """Force the in-memory cache: with REDIS_URL set in the environment,
-    popping _local would not remove entries and these tests would both flake
-    and write keys into a shared Redis (CR, PR 49)."""
-    monkeypatch.setattr(market_data._cache, "_redis", None)
-    market_data._cache._local.clear()
-    yield
-    market_data._cache._local.clear()
+# Cache isolation is provided for every test by the autouse fixture in
+# tests/conftest.py (CR, PRs 49 and 52).
 
 
 class TestDropBandMask:
