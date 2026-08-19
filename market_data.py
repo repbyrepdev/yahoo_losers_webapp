@@ -743,9 +743,10 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
             return {"ok": False, "reason": "one-sided chain"}
 
         # Spot must be a real underlying price. A strike is not one, and a
-        # straddle anchored to a guessed level is a fabricated figure.
-        tech = _cache.get(f"tech:{symbol.upper()}")
-        spot = tech.get("close") if (tech and tech.get("ok")) else None
+        # straddle anchored to a guessed level is a fabricated figure. Read
+        # through technicals() so the payload contract has one owner.
+        tech = technicals(symbol, allow_fetch=False)
+        spot = tech.value.get("close") if tech.ok else None
         if not spot:
             return {"ok": False, "reason": "no cached underlying price to anchor the strike"}
 
@@ -788,8 +789,10 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
             "spot": round(float(spot), 2),
             "strike": float(strike),
             "quality": quality,
-            "estimate_basis": "ATM straddle mid-quotes / spot; not a probability, "
-                              "the magnitude of move the market is pricing",
+            "estimate_basis": "ATM straddle mid-quotes over the last daily close "
+                              "(intraday moves scale the figure until the next "
+                              "close); not a probability, the magnitude of move "
+                              "the market is pricing",
         }
 
     payload = _cached(f"implied:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
@@ -832,10 +835,16 @@ def going_concern(symbol: str, allow_fetch: bool = True) -> Sourced:
         cutoff = (_eastern_now().date() - _td(days=GOING_CONCERN_LOOKBACK_DAYS)).isoformat()
         try:
             _throttle()
+            # The date range rides in the request: EFTS returns at most 100
+            # relevance-ranked hits, so without it a recent match could be
+            # crowded off the page by decades of old ones. The local cutoff
+            # below stays as the guard.
             response = _rq.get(
                 EDGAR_FTS_URL,
                 params={"q": '"substantial doubt"', "forms": "10-K,10-Q",
-                        "ciks": str(cik).zfill(10)},
+                        "ciks": str(cik).zfill(10), "dateRange": "custom",
+                        "startdt": cutoff,
+                        "enddt": _eastern_now().date().isoformat()},
                 headers={"User-Agent": EDGAR_UA}, timeout=30)
             response.raise_for_status()
             hits = ((response.json().get("hits") or {}).get("hits")) or []

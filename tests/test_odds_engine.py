@@ -233,7 +233,8 @@ class TestEarningsWindow:
         through = date.today() + timedelta(days=9)
 
         class FakeTicker:
-            calendar = {"Earnings Date": [start, through]}
+            def __init__(self):
+                self.calendar = {"Earnings Date": [start, through]}
 
         monkeypatch.setattr(market_data, "_ticker", lambda s: FakeTicker())
         market_data._cache._local.pop("earnings:ZZECT1", None)

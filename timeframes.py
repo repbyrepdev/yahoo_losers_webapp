@@ -129,8 +129,11 @@ def oversold_mask(closes, threshold: float = RSI_OVERSOLD) -> np.ndarray:
     return np.nan_to_num(rsi, nan=100.0) < threshold
 
 
+SHRINK_PRIOR_WEIGHT = 20
+
+
 def shrink_toward(hits: int, windows: int, prior_p: float,
-                  prior_weight: int = 20) -> float:
+                  prior_weight: int = SHRINK_PRIOR_WEIGHT) -> float:
     """Beta-binomial shrinkage of a thin sample toward a cohort rate.
 
     Twenty pseudo-windows of the cohort's rate are blended in, so 3/41 stops
@@ -238,7 +241,7 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
 
 
 def shrink_toward_rate(p: float, n_eff: float, prior_p: float,
-                       prior_weight: int = 20) -> float:
+                       prior_weight: int = SHRINK_PRIOR_WEIGHT) -> float:
     """shrink_toward generalised to a weighted rate and effective sample."""
     return (p * n_eff + prior_p * prior_weight) / (n_eff + prior_weight)
 
@@ -324,8 +327,11 @@ def target_probability(closes: np.ndarray, target_pct: float, band: str) -> Sour
     return Sourced.live(measured, source)
 
 
-def wilson_interval(hits: int, windows: int, z: float = 1.96):
+def wilson_interval(hits: float, windows: float, z: float = 1.96):
     """95% Wilson score interval for a proportion.
+
+    Accepts fractional evidence: recency weighting and shrinkage produce a
+    real-valued effective sample, and the arithmetic is identical.
 
     Reported beside every hit rate so a thin sample cannot masquerade as a
     solid one: 20/59 reads plus-or-minus twelve points, 1004/1233 plus-or-minus
@@ -433,8 +439,6 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
             # The interval reflects the evidence actually carrying the rate:
             # the recency-weighted effective sample, not the raw window count.
             n_eff = measured.get("n_eff") or measured["windows"]
-            ci_low, ci_high = wilson_interval(
-                int(round(measured["probability"] * n_eff)), max(1, int(round(n_eff))))
             probability = measured["probability"]
             evidence = describe(measured)
             expected_value = measured.get("expected_value")
@@ -455,6 +459,15 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
                 if miss_median is not None:
                     expected_value = round(
                         probability * upside + (1 - probability) * miss_median, 2)
+            # The interval belongs to the probability the page displays. After
+            # shrinkage that is the posterior rate over the posterior evidence
+            # (n_eff plus the prior's pseudo-windows); without shrinkage it is
+            # the weighted rate over n_eff. Computing it before shrinkage
+            # paired a shrunk number with raw-rate bounds (CR, PR 50).
+            ci_n = n_eff + (SHRINK_PRIOR_WEIGHT if prior_p is not None else 0)
+            # Fractional evidence stays fractional: rounding the effective
+            # sample would compute bounds for a different rate than displayed.
+            ci_low, ci_high = wilson_interval(probability * ci_n, max(1.0, ci_n))
             entry.update({
                 "probability_available": True,
                 "expected_value": expected_value,

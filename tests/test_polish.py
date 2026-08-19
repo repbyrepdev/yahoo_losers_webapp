@@ -206,3 +206,111 @@ class TestMethodologyDisclosures:
         assert calib["n_graded_on_highs"] == 1
         bucket = next(b for b in calib["buckets"] if b["n"])
         assert bucket["realized_rate"] == 0.0
+
+
+class TestAuditRegressions:
+    """Regression tests for the CodeRabbit findings recovered by the audit
+    of review bodies (outside-diff and nitpick sections, PRs 43-50)."""
+
+    def test_info_success_halves_interval(self, monkeypatch):
+        """PR 43 nitpick: one success halves the adaptive interval exactly."""
+        monkeypatch.setattr(market_data, "_info_interval",
+                            [market_data.INFO_CALL_INTERVAL_SECONDS * 8])
+        market_data._info_lane_succeeded()
+        assert market_data._info_interval[0] == market_data.INFO_CALL_INTERVAL_SECONDS * 4
+
+    def test_info_refusals_cap_at_max(self, monkeypatch):
+        monkeypatch.setattr(market_data, "_info_interval",
+                            [market_data.INFO_CALL_INTERVAL_SECONDS])
+        monkeypatch.setattr(market_data, "_info_cooldown_until", [0.0])
+        for _ in range(20):
+            market_data._info_lane_refused()
+        assert market_data._info_interval[0] == market_data.INFO_INTERVAL_MAX_SECONDS
+
+    def test_walkforward_excludes_unresolved_train_rows(self, tmp_path):
+        """PR 45 outside-diff Major: a training row is usable only once the
+        snapshot that RESOLVED its forward return predates the test day --
+        otherwise future prices leak into the fit."""
+        import walkforward
+        from datetime import date, timedelta
+        start = date(2026, 1, 5)
+        for i in range(30):
+            day = (start + timedelta(days=i)).isoformat()
+            _snap(tmp_path, day, [{"symbol": "AAA", "price": 100.0 + i,
+                                   "factors": {"a": {"score": 50 + i}}}])
+        rows = walkforward._training_rows(str(tmp_path))
+        assert rows and all("resolved_on" in r for r in rows)
+        for r in rows:
+            assert r["resolved_on"] > r["day"]
+
+    def test_walkforward_trains_on_full_minimum(self, tmp_path):
+        """PR 45 outside-diff Major: the first fitted test day must have
+        MIN_FIT_DAYS distinct training days, not half of them."""
+        import walkforward
+        from datetime import date, timedelta
+        start = date(2026, 1, 5)
+        # Enough days that at least one test day qualifies under the strict rule.
+        for i in range(walkforward.MIN_FIT_DAYS + 18):
+            day = (start + timedelta(days=i)).isoformat()
+            rows = []
+            for j, sym in enumerate(("AAA", "BBB", "CCC", "DDD")):
+                score = (j * 25 + i * 3) % 100
+                rows.append({"symbol": sym, "price": 100.0 * (1 + score / 1000.0) ** i,
+                             "factors": {"a": {"score": score}}})
+            _snap(tmp_path, day, rows)
+        wf = walkforward.walk_forward(str(tmp_path))
+        assert wf["ready"]
+        assert "imputed_factor_share" in wf
+
+    def test_ci_moves_with_shrinkage(self):
+        """PR 50 outside-diff Major: the displayed interval must belong to the
+        displayed (shrunk) probability, not the raw one."""
+        import numpy as np
+        import timeframes
+        closes = np.full(80, 100.0)
+        highs = closes.copy()
+        highs[5] = 106.0  # thin evidence: raw rate near zero
+        targets = {"t1": {"upside_percent": 5.0, "target_price": 105.0}}
+        bases = [{"closes": closes, "highs": highs, "label": "all windows"}]
+        raw = timeframes.annotate_targets(closes, dict(targets), "short", bases=bases)["t1"]
+        shrunk = timeframes.annotate_targets(closes, dict(targets), "short", bases=bases,
+                                             cohort_prior=0.50)["t1"]
+        assert shrunk["probability"] > raw["probability"]
+        assert shrunk["ci_low"] > raw["ci_low"]   # interval followed the estimate
+
+    def test_going_concern_sends_date_range(self, monkeypatch):
+        """PR 49 outside-diff Major: EFTS caps at 100 relevance-ranked hits, so
+        the date range must ride in the request."""
+        monkeypatch.setattr(market_data, "_edgar_cik_table",
+                            lambda: {"ok": True, "table": {"ZZDR1": "123456"}})
+        captured = {}
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return {"hits": {"hits": []}}
+
+        def fake_get(url, params=None, **kw):
+            captured.update(params or {})
+            return FakeResponse()
+
+        import requests
+        monkeypatch.setattr(requests, "get", fake_get)
+        monkeypatch.setattr(market_data, "_throttle", lambda: None)
+        market_data._cache._local.pop("gc:ZZDR1", None)
+        market_data.going_concern("ZZDR1")
+        assert captured.get("dateRange") == "custom"
+        assert captured.get("startdt") and captured.get("enddt")
+
+    def test_stable_universe_missing_at_field(self):
+        """PR 44 nitpick: a cached universe written before the 'at' field
+        existed must serve as cached with a sane reuse message, not raise."""
+        import app
+        market_data._cache.set("universe:v1", {
+            "losers": [{"Symbol": "ZZUA1"}],
+            "status": {"success": True, "message": "scraped"}}, 60)
+        losers, status = app.stable_universe()
+        assert losers == [{"Symbol": "ZZUA1"}]
+        assert status["data_source"] == "cached"
+        assert "reused" in status["message"]

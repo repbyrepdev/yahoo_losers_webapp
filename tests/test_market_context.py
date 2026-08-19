@@ -13,6 +13,10 @@ import market_data
 import timeframes
 
 
+# Cache isolation is provided for every test by the autouse fixture in
+# tests/conftest.py (CR, PRs 49 and 52).
+
+
 class TestDropBandMask:
     def test_two_sided_band(self):
         # -5%, -12%, -25% days: a 4-15% band keeps the middle two only.
@@ -270,17 +274,42 @@ class TestEvidenceBasesLadder:
 
 
 class TestSnapshotContextFields:
-    def test_snapshot_rows_carry_new_context(self, monkeypatch):
+    def test_snapshot_route_rows_carry_new_context(self, monkeypatch):
+        """Exercise the real /api/snapshot assembly (CR, PR 49): a field
+        removed from the row would previously still pass the accessor-only
+        version of this test."""
         import app
+        import tracking
+        monkeypatch.setattr(app, "scrape_yahoo_losers", lambda: (
+            [{"Symbol": "ZZSN1", "Name": "Test Co", "Change": "-1",
+              "Percent Change": "-10%", "Volume": "1M"}],
+            {"success": True, "message": "mocked"}))
+        monkeypatch.setattr(market_data, "batch_history", lambda *a, **k: 0)
+        monkeypatch.setattr(app, "score_stock", lambda *a, **k: {
+            "scored": True, "score": 75.0, "confidence": "High", "coverage": 1.0,
+            "factors": [], "recommendation": "x", "recommendation_color": "g",
+            "factors_used": 6, "factors_total": 6, "missing": []})
+        monkeypatch.setattr(market_data, "technicals",
+                            lambda s, **kw: market_data.Sourced.live({"close": 10.0}, "t"))
+        monkeypatch.setattr(market_data, "analyst_target", lambda s, **kw: {
+            "mean": market_data.Sourced.unavailable("t", "none"),
+            "analysts": market_data.Sourced.unavailable("t", "none")})
+        monkeypatch.setattr(market_data, "sector_context",
+                            lambda s: market_data.Sourced.derived({"sector": "Energy"}, "t"))
         monkeypatch.setattr(market_data, "implied_move",
                             lambda s, **kw: market_data.Sourced.derived(
-                                {"implied_move_pct": 7.5}, "test"))
+                                {"implied_move_pct": 7.5}, "t"))
         monkeypatch.setattr(market_data, "going_concern",
-                            lambda s, **kw: market_data.Sourced.live(
-                                {"flagged": True}, "test"))
-        # The api_snapshot row assembly is exercised end to end elsewhere;
-        # here assert the accessors integrate the way the route consumes them.
-        implied = market_data.implied_move("ANY")
-        concern = market_data.going_concern("ANY")
-        assert implied.value.get("implied_move_pct") == 7.5
-        assert concern.value.get("flagged") is True
+                            lambda s, **kw: market_data.Sourced.live({"flagged": True}, "t"))
+        monkeypatch.setattr(app, "_sophisticated_cached", lambda s: {})
+        monkeypatch.setattr(tracking, "tracked_symbols", lambda **kw: [])
+        monkeypatch.setattr(market_data, "price_history",
+                            lambda s, **kw: market_data.Sourced.unavailable("t", "none"))
+        client = app.app.test_client()
+        response = client.get("/api/snapshot")
+        assert response.status_code == 200
+        row = response.get_json()["universe"][0]
+        assert row["symbol"] == "ZZSN1"
+        assert row["implied_move_pct"] == 7.5
+        assert row["going_concern"] is True
+        assert row["sector"] == "Energy"

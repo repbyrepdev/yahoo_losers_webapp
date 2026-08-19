@@ -381,8 +381,17 @@ class TestHonestyUX:
         assert app._oldest_price_fetch(["ZZTS1", "ZZTS2"]) is not None
         assert app._oldest_price_fetch(["ZZNONE"]) is None
 
-    def test_track_record_page_has_new_sections(self):
+    def test_track_record_page_has_new_sections(self, tmp_path, monkeypatch):
+        # Fixture-backed (CR, PR 45): the committed snapshot directory grows
+        # daily, so rendering against it made this test slower every day and
+        # hid walk-forward failures behind an empty section.
         import app
+        import market_data
+        _snap(tmp_path, "2026-01-05",
+              [{"symbol": "AAA", "price": 100.0, "score": 75.0,
+                "factors": {"a": {"score": 80}}}])
+        monkeypatch.setattr(tracking, "SNAPSHOT_DIR", str(tmp_path))
+        market_data._cache._local.pop("page:track-record", None)
         client = app.app.test_client()
         response = client.get("/track-record")
         assert response.status_code == 200

@@ -87,3 +87,36 @@ class TestRankTemplates:
     def test_header_indices_shifted(self):
         source = self._source()
         assert source.count("sortLoserTable(this, 8, 'num')\">Today") == 2
+
+
+class TestPickCompositeRecompute:
+    def test_pick_composite_reflects_fresh_score(self, monkeypatch):
+        """CR outside-diff Major on PR 51: the picks pass re-scores, so the
+        composite must be recomputed from the fields the row displays --
+        never carried stale from the main board pass."""
+        import app
+        stale = {"value": 1.0, "components": 1, "basis": "stale"}
+        stock = {"Symbol": "ZZPK1", "Current Price": 10.0,
+                 "Composite": stale,
+                 "P Short": {"sort": 30.0, "ev": 4.0}}
+        fresh = {"scored": True, "score": 80.0, "recommendation": "x",
+                 "recommendation_color": "green", "confidence": "High",
+                 "coverage": 1.0, "factors_used": 6, "factors_total": 6,
+                 "factors": [], "missing": []}
+        monkeypatch.setattr(app, "score_stock", lambda *a, **k: fresh)
+        monkeypatch.setattr(app, "MIN_REBOUND_SCORE", 0)
+        picks = app.filter_ai_recovery_potential([stock])
+        assert len(picks) == 1
+        composite = picks[0]["Composite"]
+        assert composite is not stale
+        # 0.40*0.80 + 0.35*(14/20) + 0.25*0.30 = 0.64
+        assert composite["value"] == 64.0
+
+    def test_sorters_keep_finite_zero(self):
+        """CR outside-diff Minor: a rank of exactly 0.0 must stay sortable;
+        both sort functions must use Number.isFinite, not `|| -Infinity`."""
+        source = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "app.py"), encoding="utf-8").read()
+        assert source.count("Number.isFinite") >= 3
+        assert "parseFloat(b.dataset[key]) || -Infinity" not in source
+        assert "?? ca?.innerText) || -Infinity" not in source

@@ -265,6 +265,20 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
             continue
     ordered_dates = sorted(by_date)
 
+    # One pass builds a date -> {symbol: price} index; the resolution scan
+    # below is quadratic-ish in snapshots x universe and previously re-walked
+    # each universe list per lookup.
+    prices_by_date = {}
+    for snap_date, snap in by_date.items():
+        table = {}
+        for row in snap.get("universe", []):
+            if row.get("symbol") and row.get("price"):
+                table[row["symbol"]] = float(row["price"])
+        for symbol, value in (snap.get("tracked_prices") or {}).items():
+            if value:
+                table.setdefault(symbol, float(value))
+        prices_by_date[snap_date] = table
+
     pairs = []          # (predicted probability 0-1, hit 0/1)
     unresolved = 0
     graded_on_highs = 0
@@ -335,7 +349,7 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
                         if later.toordinal() > end_ordinal:
                             window_elapsed = True   # a snapshot exists past the window
                             break
-                        price = _price_on(by_date[later], symbol)
+                        price = prices_by_date[later].get(symbol)
                         if price is not None:
                             price_observed = True
                             if price >= threshold:
