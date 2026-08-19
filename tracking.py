@@ -392,7 +392,14 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
                 prob = pred.get("probability")
                 target = pred.get("target_pct")
                 horizon = pred.get("horizon_days")
-                threshold = entry * (1 + target / 100.0)
+                # The graded threshold is the target the app DISPLAYED when
+                # it was recorded; re-deriving from an entry price that may
+                # be staler than the modal's own price grades a different
+                # claim (CR, PR 53). Percent-derivation is the fallback for
+                # records made before target_price was stored.
+                threshold = (float(pred["target_price"])
+                             if pred.get("target_price")
+                             else entry * (1 + target / 100.0))
                 # Predictions measured in TRADING bars grade over a window of
                 # that many trading days (weekend walk); older records that
                 # stored only calendar days keep the calendar window.

@@ -136,26 +136,35 @@ class TestEvidenceGapDisclosure:
         assert f"recency-weighted from {raw:.0f}% raw" in text
 
     def test_describe_quiet_when_rates_agree(self):
+        # Uniformly alternating hits: the weighted rate equals the raw rate
+        # by construction, so the precondition is asserted, not hoped for.
         closes = np.array([100.0, 95.0] * 60)
         measured = timeframes.hit_rate(closes, 4.0, 7)
         raw = measured["hits"] / measured["windows"] * 100
-        if abs(measured["probability"] * 100 - raw) < 2:
-            assert "recency-weighted" not in timeframes.describe(measured)
+        assert abs(measured["probability"] * 100 - raw) < 2, "fixture no longer uniform"
+        assert "recency-weighted" not in timeframes.describe(measured)
 
     def test_board_detail_names_raw_when_diverging(self):
         import app
-        closes = list(self._early_hits_series()) + [95.0]
+        # Early drop-days that all bounced, then a recent staircase of
+        # drop-days that never recover: the post-drop rung's weighted rate
+        # must sit far below its raw fraction. Preconditions asserted, so
+        # this can never pass vacuously.
+        closes = [100.0, 106.0] * 30
+        level = 100.0
+        for _ in range(60):
+            level *= 0.95
+            closes.append(round(level, 6))
         market_data._cache.set("hist:ZZEG1:5y", {"ok": True, "closes": closes}, 60)
         market_data._cache.set("tech:ZZEG1", {"ok": True, "ma20": None}, 60)
         out = app._horizon_summaries("ZZEG1")
+        assert out["short"]["display"] != "—", "fixture failed to measure"
         detail = out["short"]["detail"]
-        if out["short"]["display"] != "—":
-            shown = float(out["short"]["sort"])
-            hits_windows = detail.split(" ")[0]
-            hits, windows = (int(x) for x in hits_windows.split("/"))
-            raw = hits / windows * 100
-            if abs(shown - raw) >= 2:
-                assert "recency-weighted from" in detail
+        shown = float(out["short"]["sort"])
+        hits, windows = (int(x) for x in detail.split(" ")[0].split("/"))
+        raw = hits / windows * 100
+        assert abs(shown - raw) >= 2, "fixture no longer diverges"
+        assert "recency-weighted from" in detail
 
 
 class TestTrackingLookback:

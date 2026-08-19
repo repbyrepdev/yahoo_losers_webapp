@@ -458,14 +458,16 @@ def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
     elif _is_structural(value.get("reason", "")):
         # Providers degrade by returning EMPTY 200s wearing the same prose as
         # genuine structural absence ("no listed options" during an outage).
-        # A structural negative therefore needs two consecutive confirmations:
-        # the first sighting is held briefly and marked; only a repeat earns
-        # the long TTL. An outage blip costs minutes, not half a day.
-        prior = _cache.get(key)
-        if isinstance(prior, dict) and prior.get("structural_candidate")                 and prior.get("reason") == value.get("reason"):
+        # A structural negative therefore needs two consecutive confirmations.
+        # The candidate marker lives under a SIDE key with its own longer
+        # lifetime: by the time this code runs the main key has already
+        # expired (that is why produce ran), so reading it back could only
+        # ever see None and the long TTL was unreachable (CR, PR 53).
+        marker_key = f"negcand:{key}"
+        if _cache.get(marker_key) == value.get("reason"):
             lifetime = _effective_ttl(TTL_NEGATIVE_STRUCTURAL)
         else:
-            value["structural_candidate"] = True
+            _cache.set(marker_key, value.get("reason"), 6 * 60 * 60)
             lifetime = 5 * 60
     else:
         lifetime = TTL_NEGATIVE_TRANSIENT
@@ -1747,7 +1749,9 @@ def refresh_last_bar(symbols: List[str]) -> int:
                              ("volume", bar.get("Volume"))):
             series = list(ohlcv.get(field) or [])
             if not series:
-                continue
+                # Pad, never skip: a shorter series desynchronizes from the
+                # index every consumer zips against (CR, PR 53).
+                series = [None] * len(ohlcv["index"])
             cleaned = (None if value is None or value != value else float(value))
             if same_day:
                 series[-1] = cleaned
@@ -1765,7 +1769,9 @@ def refresh_last_bar(symbols: List[str]) -> int:
         volumes = [0 if v is None else v for v in (ohlcv.get("volume") or [0] * len(closes))]
         ttl = _effective_ttl(TTL_TECHNICALS)
         _cache.set(f"ohlcv:{symbol}:1y", ohlcv, ttl)
-        _cache.set(f"hist:{symbol}:5y", {"ok": True, "closes": closes}, ttl)
+        _cache.set(f"hist:{symbol}:5y",
+                   {"ok": True, "closes": closes,
+                    "full_fetched_at": hist.get("full_fetched_at")}, ttl)
         tech_payload = _compute_technicals_from_closes(closes[-130:], volumes[-130:])
         _cache.set(f"tech:{symbol}", tech_payload,
                    ttl if tech_payload.get("ok") else TTL_NEGATIVE_TRANSIENT)
@@ -1784,10 +1790,21 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
     raw-closes caches so no per-symbol call is needed afterwards.
     """
     symbols = [s.upper() for s in symbols]
-    pending = [s for s in symbols
-               if (_cache.get(f"tech:{s}") is None
-                   or _cache.get(f"hist:{s}:{period}") is None
-                   or _cache.get(f"ohlcv:{s}:1y") is None)]
+
+    def _full_history_stale(s):
+        # refresh_last_bar rewrites these keys every few minutes with fresh
+        # TTLs, so absence alone would never trigger a re-fetch and the
+        # provider's re-adjusted history (splits, dividends) would never
+        # replace the tail-patched copy (CR, PR 53). The stamp of the last
+        # FULL download breaks that loop.
+        hist = _cache.get(f"hist:{s}:{period}")
+        if hist is None or _cache.get(f"tech:{s}") is None \
+                or _cache.get(f"ohlcv:{s}:1y") is None:
+            return True
+        fetched = hist.get("full_fetched_at")
+        return fetched is None or (time.time() - fetched) > _effective_ttl(TTL_TECHNICALS)
+
+    pending = [s for s in symbols if _full_history_stale(s)]
     if not pending:
         return 0
 
@@ -1828,7 +1845,8 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
             skipped.append(f"{symbol}(only {len(closes)} bars)")
             continue
 
-        _cache.set(f"hist:{symbol}:{period}", {"ok": True, "closes": closes},
+        _cache.set(f"hist:{symbol}:{period}",
+                   {"ok": True, "closes": closes, "full_fetched_at": time.time()},
                    _effective_ttl(TTL_TECHNICALS))
         tech_payload = _compute_technicals_from_closes(closes[-130:], volumes[-130:])
         _cache.set(f"tech:{symbol}", tech_payload,
@@ -1880,6 +1898,10 @@ WARM_STARTUP_DELAY_SECONDS = int(os.environ.get("MARKET_DATA_WARM_DELAY", 10))
 # rolling expiry). Without Redis every process warms for itself, as before.
 WARM_LEASE_KEY = f"md:{CACHE_SCHEMA_VERSION}:warmer-lease"
 WARM_LEASE_SECONDS = 180
+# Unique per process: two containers can share a PID, and a PID-keyed lease
+# would let both believe they hold it (CR, PR 53).
+import uuid as _uuid
+_WARM_LEASE_TOKEN = _uuid.uuid4().hex
 
 
 def _holds_warm_lease() -> bool:
@@ -1893,7 +1915,7 @@ def _holds_warm_lease() -> bool:
     redis_client = _cache._redis
     if redis_client is None:
         return True
-    me = str(os.getpid())
+    me = _WARM_LEASE_TOKEN
     try:
         if redis_client.set(WARM_LEASE_KEY, me, nx=True, ex=WARM_LEASE_SECONDS):
             return True

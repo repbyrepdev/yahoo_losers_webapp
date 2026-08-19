@@ -118,8 +118,8 @@ def walk_forward(directory=None):
         # set into earlier fits (audit, 2026-08-19).
         factor_keys = sorted({key for r in train for key in r["scores"]})
 
-        def vectorize(scores):
-            return [scores.get(key, 50.0) / 100.0 for key in factor_keys]
+        def vectorize(scores, keys=tuple(factor_keys)):
+            return [scores.get(key, 50.0) / 100.0 for key in keys]
 
         imputed += sum(1 for r in train for key in factor_keys if key not in r["scores"])
         total_cells += len(train) * len(factor_keys)

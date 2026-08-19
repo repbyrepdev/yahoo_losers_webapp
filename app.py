@@ -100,6 +100,7 @@ market_data.set_symbol_source(_current_universe)
 PAGE_PREBUILD_LOOKAHEAD_SECONDS = 120
 
 _prebuilders_started = [False]
+_prebuilders_lock = threading.Lock()
 
 
 def _page_needs_prebuild(cache_data) -> bool:
@@ -116,10 +117,13 @@ def _page_needs_prebuild(cache_data) -> bool:
 def _page_prebuild_loop():
     """Rebuild the page cache in the background, just before it expires.
 
-    Uses an internal request through the normal route, so the build is
-    IDENTICAL to a visitor's -- and costs zero provider calls: the render
-    path reads caches only, and the universe scrape stays behind its own
-    ten-minute single-flight either way. Visitors then serve warm.
+    An internal request through the normal route, so the build is IDENTICAL
+    to a visitor's -- including the provider calls a cache-miss render makes
+    (per-symbol detail quotes; the universe scrape behind its ten-minute
+    single-flight). Those calls are not free; they are the SAME calls the
+    next visitor would have triggered, moved off the request path. The
+    warm-lease gates it so two workers cannot double the load; the page
+    cache is shared, one build serves everyone.
     """
     client = app.test_client()
     time.sleep(45)
@@ -128,7 +132,8 @@ def _page_prebuild_loop():
         try:
             if market_data.market_phase()["phase"] == "closed":
                 sleep_for = 300
-            elif _page_needs_prebuild(load_cache()):
+            elif (_page_needs_prebuild(load_cache())
+                  and market_data._holds_warm_lease()):
                 client.get('/')
         except Exception as e:
             logger.warning(f"page prebuild cycle failed: {type(e).__name__}: {e}")
@@ -153,7 +158,7 @@ def _stf_prewarm_loop():
                 symbols = _current_universe() or []
                 missing = [s for s in symbols
                            if market_data._cache.get(f"stf:{s.upper()}") is None]
-                if missing:
+                if missing and market_data._holds_warm_lease():
                     client.get(f"/api/sophisticated-timeframe/{missing[0]}")
                     sleep_for = 45
         except Exception as e:
@@ -172,7 +177,10 @@ def _ensure_warmer_running():
     if not market_data._warmer_started:
         market_data.start_background_warmer()
     if not _prebuilders_started[0] and not os.environ.get("MARKET_DATA_DISABLE_WARMER"):
-        _prebuilders_started[0] = True
+        with _prebuilders_lock:
+            if _prebuilders_started[0]:
+                return
+            _prebuilders_started[0] = True
         threading.Thread(target=_page_prebuild_loop, daemon=True,
                          name="page-prebuilder").start()
         threading.Thread(target=_stf_prewarm_loop, daemon=True,
@@ -514,6 +522,10 @@ def save_cache(data):
         try:
             redis_data = {
                 'timestamp': cache_data['timestamp'].isoformat(),
+                # The deadline must travel: without it load_cache resolves
+                # expires_at to None and the prebuilder is inert whenever
+                # Redis serves the page cache (CR, PR 53).
+                'expires_at': cache_data['expires_at'],
                 'data': data
             }
             redis_client.setex('yahoo_losers_cache', int(page_cache_hours() * 3600), json.dumps(redis_data, default=str))
@@ -3827,12 +3839,16 @@ def api_snapshot():
         concern = market_data.going_concern(symbol)
         row["going_concern"] = concern.value.get("flagged") if concern.ok else None
         # The probabilities published today, so tomorrow's snapshots can grade
-        # them. Prediction failure must never sink the snapshot itself.
+        # them. MERGE into whatever the board block recorded above -- a plain
+        # assignment silently discarded every board:* entry and left the
+        # board pills ungraded after all (CR Critical, PR 53). Prediction
+        # failure must never sink the snapshot itself.
         try:
-            row["predictions"] = _snapshot_predictions(_sophisticated_cached(symbol))
+            modal_predictions = _snapshot_predictions(_sophisticated_cached(symbol))
         except Exception as e:
             logger.warning(f"snapshot predictions failed for {symbol}: {type(e).__name__}")
-            row["predictions"] = {}
+            modal_predictions = {}
+        row.setdefault("predictions", {}).update(modal_predictions)
         universe.append(row)
 
     prior = [s for s in tracking.tracked_symbols() if s not in set(symbols)]
@@ -3841,7 +3857,11 @@ def api_snapshot():
     prior = sorted(set(prior) | {"SPY", "^VIX"})
     tracked_prices = {}
     if prior:
-        market_data.batch_history(prior)
+        # The 210-day lookback grows this set toward hundreds; one giant
+        # yf.download is slower and likelier to come back empty (which now
+        # reads as a suspected rate limit). Fixed-size chunks instead.
+        for i in range(0, len(prior), 50):
+            market_data.batch_history(prior[i:i + 50])
         for symbol in prior:
             history = market_data.price_history(symbol, allow_fetch=False)
             if history.ok and history.value:
@@ -5024,38 +5044,40 @@ def _cohort_prior(band, upside_pct, exclude_symbol=None):
     usable histories.
     """
     bucket = min(COHORT_BUCKETS, key=lambda b: abs(b - upside_pct))
-    key = f"cohort:hit2:{band}:{bucket}:{(exclude_symbol or '').upper()}"
+    # One cached rate LIST per (band, bucket); the subject is subtracted at
+    # read time. Keying the cache by the excluded symbol multiplied the
+    # 30-symbol scan by the universe size (CR, PR 53).
+    key = f"cohort:rates:{band}:{bucket}"
     cached = market_data._cache.get(key)
-    if cached is not None:
-        return cached.get("p")
-    horizon = timeframes.HORIZON_BARS.get(band, 21)
-    rates = []
-    try:
-        source = market_data._symbol_source[0]
-        for sym in (source() if source else [])[:30]:
-            if exclude_symbol and sym.upper() == exclude_symbol.upper():
-                continue
-            hist = market_data.price_history(sym, allow_fetch=False)
-            if not hist.ok:
-                continue
-            closes = np.array(hist.value, dtype=float)
-            highs = None
-            ohlcv = market_data._cache.get(f"ohlcv:{sym.upper()}:1y")
-            if ohlcv and ohlcv.get("ok"):
-                rows = [(c, h) for c, h in zip(ohlcv.get("close") or [],
-                                               ohlcv.get("high") or [])
-                        if c is not None and h is not None]
-                if len(rows) >= horizon + timeframes.MIN_WINDOWS:
-                    closes = np.array([c for c, _ in rows], dtype=float)
-                    highs = np.array([h for _, h in rows], dtype=float)
-            measured = timeframes.hit_rate(closes, float(bucket), horizon, highs=highs)
-            if measured:
-                rates.append(measured["probability"])
-    except Exception as e:
-        logger.warning(f"cohort prior failed for {band}/{bucket}: {type(e).__name__}")
-    prior = round(sum(rates) / len(rates), 4) if len(rates) >= 5 else None
-    market_data._cache.set(key, {"p": prior}, 3600)
-    return prior
+    if cached is None:
+        horizon = timeframes.HORIZON_BARS.get(band, 21)
+        rates = []
+        try:
+            source = market_data._symbol_source[0]
+            for sym in (source() if source else [])[:30]:
+                hist = market_data.price_history(sym, allow_fetch=False)
+                if not hist.ok:
+                    continue
+                closes = np.array(hist.value, dtype=float)
+                highs = None
+                ohlcv = market_data._cache.get(f"ohlcv:{sym.upper()}:1y")
+                if ohlcv and ohlcv.get("ok"):
+                    rows = [(c, h) for c, h in zip(ohlcv.get("close") or [],
+                                                   ohlcv.get("high") or [])
+                            if c is not None and h is not None]
+                    if len(rows) >= horizon + timeframes.MIN_WINDOWS:
+                        closes = np.array([c for c, _ in rows], dtype=float)
+                        highs = np.array([h for _, h in rows], dtype=float)
+                measured = timeframes.hit_rate(closes, float(bucket), horizon, highs=highs)
+                if measured:
+                    rates.append([sym.upper(), measured["probability"]])
+        except Exception as e:
+            logger.warning(f"cohort prior failed for {band}/{bucket}: {type(e).__name__}")
+        cached = {"rates": rates}
+        market_data._cache.set(key, cached, 3600)
+    usable = [p for sym, p in cached.get("rates") or []
+              if not (exclude_symbol and sym == exclude_symbol.upper())]
+    return round(sum(usable) / len(usable), 4) if len(usable) >= 5 else None
 
 
 def _earnings_in_window(symbol, horizon_days):
