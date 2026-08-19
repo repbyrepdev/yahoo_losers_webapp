@@ -120,10 +120,13 @@ def _is_rate_limited(reason: str) -> bool:
     return any(marker in lowered for marker in _RATE_LIMIT_MARKERS)
 
 
+# Compared lowercased against lowercased reasons; keep every marker lowercase
+# or it can never match (the old "no 13F holders" was dead on arrival).
 _STRUCTURAL_MARKERS = (
-    "no analyst coverage", "no listed options", "no 13F holders",
+    "no analyst coverage", "no listed options", "no 13f holders",
     "no ratings published", "insufficient history", "no earnings date published",
-    "only ", "empty chain", "no recent headlines", "not in SEC registry",
+    "only ", "empty chain", "no recent headlines", "not in sec registry",
+    "no usd facts",
 )
 
 
@@ -150,7 +153,9 @@ def _eastern_now():
         import pytz
 
         return datetime.now(pytz.timezone("America/New_York"))
-    except Exception:
+    except Exception as e:
+        logger.warning(f"eastern clock unavailable ({type(e).__name__}); "
+                       "falling back to server time -- phase logic may misread")
         return datetime.now()
 
 
@@ -221,6 +226,7 @@ class TTLCache:
         self._local: Dict[str, tuple] = {}
         self._lock = threading.Lock()
         self._redis = None
+        self._redis_failures = 0
         if redis_url:
             try:
                 import redis
@@ -235,16 +241,27 @@ class TTLCache:
     def _key(self, key: str) -> str:
         return f"md:{CACHE_SCHEMA_VERSION}:{key}"
 
+    def _redis_failed(self, e):
+        """Count consecutive failures; after three, stop paying the socket
+        timeout on every cache operation and say so once. A process restart
+        re-enables Redis -- simple, and impossible to flap."""
+        self._redis_failures += 1
+        if self._redis_failures >= 3 and self._redis is not None:
+            logger.warning(f"Redis disabled after {self._redis_failures} consecutive "
+                           f"failures ({type(e).__name__}); per-process cache only")
+            self._redis = None
+
     def get(self, key: str):
         if self._redis is not None:
             try:
                 import json
 
                 raw = self._redis.get(self._key(key))
+                self._redis_failures = 0
                 if raw is not None:
                     return json.loads(raw)
-            except Exception:
-                pass
+            except Exception as e:
+                self._redis_failed(e)
         with self._lock:
             entry = self._local.get(key)
         if entry and entry[0] > time.time():
@@ -262,8 +279,9 @@ class TTLCache:
                 import json
 
                 self._redis.setex(self._key(key), ttl, json.dumps(value, default=str))
-            except Exception:
-                pass
+                self._redis_failures = 0
+            except Exception as e:
+                self._redis_failed(e)
         with self._lock:
             self._local[key] = (time.time() + ttl, value)
 
@@ -274,22 +292,39 @@ _cache = TTLCache(os.environ.get("REDIS_URL"))
 
 
 def _load_cache_from_disk():
-    """Restore unexpired entries written by a previous process."""
+    """Restore unexpired entries written by a previous process.
+
+    Fully guarded: this runs at import, and a corrupt or old-schema file must
+    cost a cold start with a log line -- never the process.
+    """
     try:
         import json
         with open(CACHE_FILE, "r", encoding="utf-8") as handle:
             stored = json.load(handle)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return 0
-    now = time.time()
-    restored = 0
-    for key, (expires_at, value) in stored.items():
-        if expires_at > now:
-            _cache._local[key] = (expires_at, value)
-            restored += 1
-    if restored:
-        logger.info(f"restored {restored} cached entries from disk")
-    return restored
+    except (OSError, ValueError) as e:
+        logger.warning(f"disk cache unreadable ({type(e).__name__}); cold-starting")
+        return 0
+    try:
+        if stored.get("_schema") != CACHE_SCHEMA_VERSION:
+            logger.info("disk cache from another schema version; cold-starting")
+            return 0
+        now = time.time()
+        restored = 0
+        for key, entry in stored.items():
+            if key == "_schema":
+                continue
+            expires_at, value = entry
+            if expires_at > now:
+                _cache._local[key] = (expires_at, value)
+                restored += 1
+        if restored:
+            logger.info(f"restored {restored} cached entries from disk")
+        return restored
+    except Exception as e:
+        logger.warning(f"disk cache malformed ({type(e).__name__}); cold-starting")
+        return 0
 
 
 def cache_size() -> int:
@@ -308,6 +343,7 @@ def clear_cache():
     Used by /refresh so a manual refresh can actually recover from a bad state
     rather than only clearing the rendered page on top of it.
     """
+    redis_clear_failed = False
     with _cache._lock:
         cleared = len(_cache._local)
         _cache._local.clear()
@@ -320,11 +356,18 @@ def clear_cache():
                 cleared += int(_cache._redis.delete(key) or 0)
         except Exception as e:
             logger.warning(f"Redis cache clear failed: {type(e).__name__}")
+            redis_clear_failed = True
     try:
         os.remove(CACHE_FILE)
     except OSError:
         pass
-    logger.info(f"market_data cache cleared ({cleared} entries)")
+    if redis_clear_failed:
+        # Claiming a clean slate while poisoned entries survive in Redis
+        # (and immediately re-share to every worker) is a false recovery.
+        logger.warning(f"market_data cache PARTIALLY cleared ({cleared} local entries; "
+                       "Redis entries survived)")
+    else:
+        logger.info(f"market_data cache cleared ({cleared} entries)")
     return cleared
 
 
@@ -344,6 +387,7 @@ def save_cache_to_disk():
         with _cache._lock:
             snapshot = {k: [exp, val] for k, (exp, val) in _cache._local.items()
                         if isinstance(val, dict) and val.get("ok")}
+        snapshot["_schema"] = CACHE_SCHEMA_VERSION
         with _persist_lock:
             fd, tmp_path = tempfile.mkstemp(
                 dir=os.path.dirname(CACHE_FILE) or ".", suffix=".tmp")
@@ -355,7 +399,9 @@ def save_cache_to_disk():
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
     except (OSError, TypeError, ValueError) as e:
-        logger.debug(f"cache persist skipped: {type(e).__name__}")
+        # WARNING, not debug: a full or read-only disk means every restart
+        # cold-starts against the limiter, and that must be visible.
+        logger.warning(f"cache persist failed: {type(e).__name__}")
 
 
 _load_cache_from_disk()
@@ -392,17 +438,35 @@ def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
                 time.sleep(1.5 + random.random())
                 continue
             logger.warning(f"market_data fetch failed for {key}: {detail}")
-            value = {"ok": False, "reason": name}
+            # The full detail rides along for classification: a 429 inside a
+            # generic HTTPError must hit the rate-limited tier, not be retried
+            # every sixty seconds for the life of the limiter event.
+            value = {"ok": False, "reason": name, "detail": detail}
             break
 
+    if not isinstance(value, dict):
+        # Producers must return dicts; a stray None must not AttributeError
+        # into the render path.
+        value = {"ok": False, "reason": "producer returned no payload"}
+    classify_on = value.get("detail") or value.get("reason") or ""
     if value.get("ok"):
         lifetime = _effective_ttl(ttl)
     elif "cooling down" in (value.get("reason") or ""):
         lifetime = 90  # retry shortly after the shared cooldown lifts
-    elif _is_rate_limited(value.get("reason", "")):
+    elif _is_rate_limited(classify_on):
         lifetime = TTL_RATE_LIMITED
     elif _is_structural(value.get("reason", "")):
-        lifetime = _effective_ttl(TTL_NEGATIVE_STRUCTURAL)
+        # Providers degrade by returning EMPTY 200s wearing the same prose as
+        # genuine structural absence ("no listed options" during an outage).
+        # A structural negative therefore needs two consecutive confirmations:
+        # the first sighting is held briefly and marked; only a repeat earns
+        # the long TTL. An outage blip costs minutes, not half a day.
+        prior = _cache.get(key)
+        if isinstance(prior, dict) and prior.get("structural_candidate")                 and prior.get("reason") == value.get("reason"):
+            lifetime = _effective_ttl(TTL_NEGATIVE_STRUCTURAL)
+        else:
+            value["structural_candidate"] = True
+            lifetime = 5 * 60
     else:
         lifetime = TTL_NEGATIVE_TRANSIENT
 
@@ -496,7 +560,8 @@ def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
             "mean": Sourced.unavailable(source, gap),
             "high": Sourced.unavailable(source, gap),
             "low": Sourced.unavailable(source, gap),
-            "analysts": Sourced.live(count or 0, source),
+            "analysts": (Sourced.live(count, source) if count is not None
+                         else Sourced.unavailable(source, "analyst count not reported")),
         }
     if not count or count < MIN_ANALYSTS_FOR_CONSENSUS:
         thin = f"only {count or 0} analyst estimate(s)"
@@ -504,7 +569,8 @@ def analyst_target(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
             "mean": Sourced.unavailable(source, thin),
             "high": Sourced.unavailable(source, thin),
             "low": Sourced.unavailable(source, thin),
-            "analysts": Sourced.live(count or 0, source),
+            "analysts": (Sourced.live(count, source) if count is not None
+                         else Sourced.unavailable(source, "analyst count not reported")),
         }
 
     return {
@@ -847,7 +913,12 @@ def going_concern(symbol: str, allow_fetch: bool = True) -> Sourced:
                         "enddt": _eastern_now().date().isoformat()},
                 headers={"User-Agent": EDGAR_UA}, timeout=30)
             response.raise_for_status()
-            hits = ((response.json().get("hits") or {}).get("hits")) or []
+            payload_json = response.json()
+            if not isinstance(payload_json, dict) or "hits" not in payload_json:
+                # A 200 with a drifted schema is a failed lookup, and a
+                # failed lookup must never render as a clean bill of health.
+                return {"ok": False, "reason": "edgar full-text response shape changed"}
+            hits = (payload_json.get("hits") or {}).get("hits") or []
         except Exception as e:
             return {"ok": False, "reason": f"edgar full-text search unavailable ({type(e).__name__})"}
 
@@ -1196,7 +1267,7 @@ def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
         # stripping the stylesheet path yields the raw XML EDGAR also serves.
         totals = {"buy_value": 0.0, "sell_value": 0.0, "buys": 0, "sells": 0,
                   "unpriced": 0}
-        parsed = unparsed = 0
+        parsed = unparsed = fetch_failed = 0
         for _fdate, accession, doc in in_window[:MAX_FORM4_DOCS]:
             if not accession or not doc:
                 unparsed += 1
@@ -1208,9 +1279,13 @@ def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
                 _throttle()
                 doc_response = _rq.get(url, headers={"User-Agent": EDGAR_UA}, timeout=20)
                 doc_response.raise_for_status()
-                txns = _parse_form4_xml(doc_response.text)
-            except Exception:
-                txns = None
+            except Exception as e:
+                # A fetch failure is not an unparseable filing; conflating
+                # them hid SEC blocks inside a 24h-cached "unparsed" count.
+                logger.warning(f"form4 fetch failed for {symbol} {accession}: {type(e).__name__}")
+                fetch_failed += 1
+                continue
+            txns = _parse_form4_xml(doc_response.text)
             if txns is None:
                 unparsed += 1
                 continue
@@ -1226,6 +1301,7 @@ def insider_filings(symbol: str, window_days: int = 90) -> Sourced:
             "filings_url": f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4&dateb=&owner=include&count=20",
             "parsed": parsed,
             "unparsed": unparsed,
+            "fetch_failed": fetch_failed,
             "note": (f"direction from the {parsed} most recent parseable filings; "
                      "open-market P/S transactions only, grants and exercises excluded"),
         }
@@ -1608,6 +1684,97 @@ def _compute_technicals_from_closes(closes, volumes):
     }
 
 
+# How often the latest bar is refreshed during a session. This is ONE batched
+# chart request for the whole board -- the cheap, batch-friendly endpoint that
+# has never tripped the limiter (every observed trip was per-symbol
+# quoteSummary). Twelve tiny requests an hour is noise next to that history.
+PRICE_REFRESH_SECONDS = int(os.environ.get("MARKET_DATA_PRICE_REFRESH", 300))
+_last_price_refresh = [0.0]
+
+
+def refresh_last_bar(symbols: List[str]) -> int:
+    """Update just the latest daily bar for many symbols in one request.
+
+    The full five-year history and the indicators built from it genuinely
+    change on a thirty-minute clock, but the LAST bar -- the price the header
+    stamps and the day-move everything conditions on -- is worth keeping
+    minutes-fresh. One batched five-day download patches the tail of the
+    hist:/tech:/ohlcv: caches in place; alignment is keyed off the ohlcv
+    dates so a bar is replaced or appended, never duplicated.
+    """
+    symbols = [s.upper() for s in symbols if s]
+    if not symbols:
+        return 0
+    _throttle()
+    try:
+        frame = yf.download(symbols, period="5d", interval="1d",
+                            group_by="ticker", auto_adjust=True,
+                            progress=False, threads=False)
+    except Exception as e:
+        detail = f"{type(e).__name__}: {e}"
+        logger.warning(f"last-bar refresh failed for {len(symbols)} symbols: {detail}")
+        if _is_rate_limited(detail):
+            _warm_backoff_until[0] = time.time() + 180
+        return 0
+    if frame is None or frame.empty:
+        return 0
+
+    updated = 0
+    for symbol in symbols:
+        try:
+            sub = frame[symbol] if len(symbols) > 1 else frame
+            recent = sub.dropna(subset=["Close"])
+            if recent.empty:
+                continue
+            bar = recent.iloc[-1]
+            bar_date = recent.index[-1].isoformat()[:10]
+            last_close = float(bar["Close"])
+            if last_close <= 0:
+                continue
+        except Exception:
+            continue
+
+        ohlcv = _cache.get(f"ohlcv:{symbol}:1y")
+        hist = _cache.get(f"hist:{symbol}:5y")
+        if not (ohlcv and ohlcv.get("ok") and ohlcv.get("index")
+                and hist and hist.get("ok") and hist.get("closes")):
+            continue  # cold caches take the full batch_history path instead
+
+        same_day = ohlcv["index"][-1][:10] == bar_date
+        closes = list(hist["closes"])
+        for field, value in (("open", bar.get("Open")), ("high", bar.get("High")),
+                             ("low", bar.get("Low")), ("close", last_close),
+                             ("volume", bar.get("Volume"))):
+            series = list(ohlcv.get(field) or [])
+            if not series:
+                continue
+            cleaned = (None if value is None or value != value else float(value))
+            if same_day:
+                series[-1] = cleaned
+            else:
+                series.append(cleaned)
+                series = series[-260:]
+            ohlcv[field] = series
+        if not same_day:
+            ohlcv["index"] = (list(ohlcv["index"]) + [bar_date])[-260:]
+            closes.append(last_close)
+        else:
+            ohlcv["index"] = list(ohlcv["index"])
+            closes[-1] = last_close
+
+        volumes = [0 if v is None else v for v in (ohlcv.get("volume") or [0] * len(closes))]
+        ttl = _effective_ttl(TTL_TECHNICALS)
+        _cache.set(f"ohlcv:{symbol}:1y", ohlcv, ttl)
+        _cache.set(f"hist:{symbol}:5y", {"ok": True, "closes": closes}, ttl)
+        tech_payload = _compute_technicals_from_closes(closes[-130:], volumes[-130:])
+        _cache.set(f"tech:{symbol}", tech_payload,
+                   ttl if tech_payload.get("ok") else TTL_NEGATIVE_TRANSIENT)
+        updated += 1
+    if updated:
+        logger.info(f"last-bar refresh updated {updated}/{len(symbols)} symbols in one request")
+    return updated
+
+
 def batch_history(symbols: List[str], period: str = "5y") -> int:
     """Fetch price history for many symbols in a single request.
 
@@ -1638,25 +1805,35 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
         return 0
 
     if frame is None or frame.empty:
+        # An empty 200 is how blocking/limiting actually manifests --
+        # yf.download swallows per-ticker errors internally. Silence here
+        # meant the limiter was re-tripped every cycle with no trace.
+        logger.warning(f"batch history returned an empty frame for {len(pending)} symbols; "
+                       "treating as a suspected limit and backing off 90s")
+        _warm_backoff_until[0] = max(_warm_backoff_until[0], time.time() + 90)
         return 0
 
     populated = 0
+    skipped = []
     for symbol in pending:
         try:
             # yfinance returns a flat frame for one symbol and a MultiIndex for many.
             sub = frame[symbol] if len(pending) > 1 else frame
             closes = [float(c) for c in sub["Close"].dropna().tolist() if c and c > 0]
             volumes = [float(v) for v in sub["Volume"].fillna(0).tolist()]
-        except Exception:
+        except Exception as e:
+            skipped.append(f"{symbol}({type(e).__name__})")
             continue
         if len(closes) < 30:
+            skipped.append(f"{symbol}(only {len(closes)} bars)")
             continue
 
         _cache.set(f"hist:{symbol}:{period}", {"ok": True, "closes": closes},
                    _effective_ttl(TTL_TECHNICALS))
-        _cache.set(f"tech:{symbol}",
-                   _compute_technicals_from_closes(closes[-130:], volumes[-130:]),
-                   _effective_ttl(TTL_TECHNICALS))
+        tech_payload = _compute_technicals_from_closes(closes[-130:], volumes[-130:])
+        _cache.set(f"tech:{symbol}", tech_payload,
+                   _effective_ttl(TTL_TECHNICALS) if tech_payload.get("ok")
+                   else TTL_NEGATIVE_TRANSIENT)
         # The same response carries the highs; storing the last year in the
         # ohlcv shape gives intraday-touch odds to every board row without a
         # single extra request.
@@ -1675,6 +1852,10 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
             logger.debug(f"ohlcv store skipped for {symbol}: {type(e).__name__}")
         populated += 1
 
+    if skipped:
+        level = logger.warning if len(skipped) > len(pending) / 2 else logger.info
+        level(f"batch history skipped {len(skipped)}: {', '.join(skipped[:8])}"
+              + (" ..." if len(skipped) > 8 else ""))
     logger.info(f"batch history populated {populated}/{len(pending)} symbols in one request")
     return populated
 
@@ -1695,7 +1876,35 @@ def batch_history(symbols: List[str], period: str = "5y") -> int:
 
 WARM_INTERVAL_SECONDS = int(os.environ.get("MARKET_DATA_WARM_INTERVAL", 45))
 WARM_STARTUP_DELAY_SECONDS = int(os.environ.get("MARKET_DATA_WARM_DELAY", 10))
-WARM_LOCK_FILE = os.environ.get("MARKET_DATA_WARM_LOCK", "/tmp/market_data_warmer.lock")
+# One worker holds the provider-warming lease at a time (Redis SET NX with a
+# rolling expiry). Without Redis every process warms for itself, as before.
+WARM_LEASE_KEY = f"md:{CACHE_SCHEMA_VERSION}:warmer-lease"
+WARM_LEASE_SECONDS = 180
+
+
+def _holds_warm_lease() -> bool:
+    """True when this process should do provider warming this cycle.
+
+    With shared Redis, two gunicorn workers each running the lanes meant
+    every provider call happened twice for one cache. The lease costs one
+    Redis round-trip per cycle and halves provider load; renewal keeps it,
+    and a crashed holder's lease lapses within WARM_LEASE_SECONDS.
+    """
+    redis_client = _cache._redis
+    if redis_client is None:
+        return True
+    me = str(os.getpid())
+    try:
+        if redis_client.set(WARM_LEASE_KEY, me, nx=True, ex=WARM_LEASE_SECONDS):
+            return True
+        holder = redis_client.get(WARM_LEASE_KEY)
+        holder = holder.decode() if isinstance(holder, bytes) else holder
+        if holder == me:
+            redis_client.expire(WARM_LEASE_KEY, WARM_LEASE_SECONDS)
+            return True
+        return False
+    except Exception:
+        return True  # a broken Redis must not stop warming entirely
 
 # The warmer must be able to find work on its own. Queueing only happened from
 # the page render, but with a persistent page cache that render stops running --
@@ -1715,10 +1924,6 @@ _warm_queue: List[str] = []
 _warm_backoff_until = [0.0]
 _warm_queue_lock = threading.Lock()
 _warmer_started = False
-_inflight: Dict[str, bool] = {}
-_inflight_lock = threading.Lock()
-
-
 def request_warm(symbols: List[str]) -> None:
     """Queue symbols for background warming. Never blocks the caller."""
     with _warm_queue_lock:
@@ -1727,27 +1932,6 @@ def request_warm(symbols: List[str]) -> None:
             upper = symbol.upper()
             if upper not in known and _cache.get(f"info:{upper}") is None:
                 _warm_queue.append(upper)
-
-
-def _unused_claim_warmer_role() -> bool:
-    """Ensure only one worker warms, so two processes cannot double the load."""
-    try:
-        fd = os.open(WARM_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        try:
-            # A lock left behind by a killed process should not disable warming
-            # for the life of the container.
-            if time.time() - os.path.getmtime(WARM_LOCK_FILE) > 300:
-                os.remove(WARM_LOCK_FILE)
-                return _claim_warmer_role()
-        except OSError:
-            pass
-        return False
-    except OSError:
-        return True
-    os.write(fd, str(os.getpid()).encode())
-    os.close(fd)
-    return True
 
 
 def _symbols_missing_info(symbols):
@@ -1770,6 +1954,9 @@ def _info_loop():
         try:
             source = _symbol_source[0]
             universe = [s for s in (source() if source else []) if s and not s.startswith("^")]
+            if not _holds_warm_lease():
+                time.sleep(30)
+                continue
             missing = _symbols_missing_info(universe)
             # EDGAR going-concern context rides this lane too: separate
             # provider, own throttle, 24h cache. The board chip must read
@@ -1796,6 +1983,11 @@ def _warm_loop():
     # wait on the info lane.
     time.sleep(WARM_STARTUP_DELAY_SECONDS)
     while True:
+      # Whole-body guard, same as the info lane: an unexpected exception in
+      # any step (including persistence) must cost one cycle, never the
+      # thread -- a dead fast lane decays the entire board with only a
+      # stderr traceback to show for it.
+      try:
         with _warm_queue_lock:
             empty = not _warm_queue
         if empty and _symbol_source[0] is not None:
@@ -1803,6 +1995,17 @@ def _warm_loop():
                 request_warm(_symbol_source[0]())
             except Exception as e:
                 logger.warning(f"symbol source failed: {type(e).__name__}: {e}")
+
+        # The backoff written on a rate-limit refusal is honoured here --
+        # previously it was written, logged, and never read, so the loop
+        # re-tripped the limiter every cycle while claiming to back off.
+        if time.time() < _warm_backoff_until[0]:
+            time.sleep(min(30.0, _warm_backoff_until[0] - time.time()))
+            continue
+
+        if not _holds_warm_lease():
+            time.sleep(WARM_INTERVAL_SECONDS)
+            continue
 
         with _warm_queue_lock:
             batch = _warm_queue[:MAX_PROFILES_PER_WARM]
@@ -1834,10 +2037,22 @@ def _warm_loop():
                 # entries make it a no-op until their TTLs approach.
                 batch_history(universe)
                 finra_short_volume(universe[0])
+                # During any trading session, keep the LAST bar minutes-fresh:
+                # one tiny batched request on its own five-minute clock, so
+                # "prices as of" tracks the session instead of the 30-minute
+                # indicator TTL. Skipped while closed -- nothing moves.
+                if (market_phase()["phase"] != "closed"
+                        and time.time() - _last_price_refresh[0] >= PRICE_REFRESH_SECONDS):
+                    refresh_last_bar(universe + ["SPY", "^VIX"])
+                    _last_price_refresh[0] = time.time()
                 save_cache_to_disk()
         except Exception as e:
             logger.warning(f"fast-lane warm failed: {type(e).__name__}: {e}")
-        time.sleep(WARM_INTERVAL_SECONDS)
+      except Exception as e:
+        logger.warning(f"fast-lane cycle failed whole: {type(e).__name__}: {e}")
+        time.sleep(15)
+        continue
+      time.sleep(WARM_INTERVAL_SECONDS)
 
 
 def start_background_warmer():

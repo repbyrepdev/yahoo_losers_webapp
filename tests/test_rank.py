@@ -14,26 +14,38 @@ class TestCompositeRank:
     def test_full_composite_math(self):
         import app
         enhanced = {"Rebound Score": 80.0,
-                    "P Short": {"sort": 30.0, "ev": 4.0}}
+                    "P Short": {"sort": 30.0, "miss": -4.0}}
         composite = app._composite_rank(enhanced)
-        # 0.40*0.80 + 0.35*(14/20) + 0.25*0.30 = 0.64
-        assert composite["value"] == pytest.approx(64.0, abs=0.1)
+        # 0.40*0.80 + 0.35*0.30 + 0.25*((-4+10)/10) = 0.32+0.105+0.15 = 0.575
+        assert composite["value"] == pytest.approx(57.5, abs=0.1)
         assert composite["components"] == 3
         assert "ranking device" in composite["basis"]
 
-    def test_missing_ev_renormalizes(self):
+    def test_missing_component_imputes_neutral_not_renormalizes(self):
+        """Audit 2026-08-19: renormalizing let a row with NO probability
+        evidence outrank an identically-scored row with full evidence."""
         import app
-        enhanced = {"Rebound Score": 80.0, "P Short": {"sort": 30.0}}
-        composite = app._composite_rank(enhanced)
-        # (0.40*0.80 + 0.25*0.30) / 0.65
-        assert composite["value"] == pytest.approx(60.8, abs=0.1)
-        assert composite["components"] == 2
+        full = app._composite_rank({"Rebound Score": 60.0,
+                                    "P Short": {"sort": 30.0, "miss": -2.0}})
+        missing = app._composite_rank({"Rebound Score": 60.0})
+        # missing components count as neutral 0.5:
+        # 0.40*0.60 + 0.35*0.5 + 0.25*0.5 = 0.54
+        assert missing["value"] == pytest.approx(54.0, abs=0.1)
+        assert missing["components"] == 1
+        # and a fully-measured row with BETTER-than-neutral downside is not
+        # penalized below the evidence-free row purely for having evidence
+        strong = app._composite_rank({"Rebound Score": 60.0,
+                                      "P Short": {"sort": 55.0, "miss": -1.0}})
+        assert strong["value"] > missing["value"]
 
-    def test_ev_is_clipped(self):
+    def test_downside_is_clipped(self):
         import app
-        big = app._composite_rank({"P Short": {"sort": -1, "ev": 50.0}})
-        ten = app._composite_rank({"P Short": {"sort": -1, "ev": 10.0}})
-        assert big["value"] == ten["value"] == 100.0  # EV-only, both clip to 1.0
+        crash = app._composite_rank({"P Short": {"sort": -1, "miss": -50.0}})
+        floor = app._composite_rank({"P Short": {"sort": -1, "miss": -10.0}})
+        assert crash["value"] == floor["value"]  # clipped at -10
+        best = app._composite_rank({"P Short": {"sort": -1, "miss": 2.0}})
+        assert best["value"] == app._composite_rank(
+            {"P Short": {"sort": -1, "miss": 0.0}})["value"]  # capped at 0
 
     def test_nothing_measurable_is_none(self):
         import app
@@ -49,7 +61,7 @@ class TestCompositeRank:
         assert ordered[0] is strong
         assert ordered[-1] is unranked  # nothing measurable ranks last
 
-    def test_horizon_summaries_surface_ev(self):
+    def test_horizon_summaries_surface_ev_and_miss(self):
         import app
         pattern = [100.0]
         for _ in range(80):
@@ -59,8 +71,8 @@ class TestCompositeRank:
         market_data._cache.set("hist:ZZRK1:5y", {"ok": True, "closes": closes}, 60)
         market_data._cache.set("tech:ZZRK1", {"ok": True, "ma20": None}, 60)
         out = app._horizon_summaries("ZZRK1")
-        assert "ev" in out["short"]
-        assert isinstance(out["short"]["ev"], (int, float))
+        assert "ev" in out["short"] and "miss" in out["short"]
+        assert "upside" in out["short"] and out["short"]["bars"] == 7
 
 
 class TestRankTemplates:
@@ -98,7 +110,7 @@ class TestPickCompositeRecompute:
         stale = {"value": 1.0, "components": 1, "basis": "stale"}
         stock = {"Symbol": "ZZPK1", "Current Price": 10.0,
                  "Composite": stale,
-                 "P Short": {"sort": 30.0, "ev": 4.0}}
+                 "P Short": {"sort": 30.0, "miss": -4.0}}
         fresh = {"scored": True, "score": 80.0, "recommendation": "x",
                  "recommendation_color": "green", "confidence": "High",
                  "coverage": 1.0, "factors_used": 6, "factors_total": 6,
@@ -109,8 +121,8 @@ class TestPickCompositeRecompute:
         assert len(picks) == 1
         composite = picks[0]["Composite"]
         assert composite is not stale
-        # 0.40*0.80 + 0.35*(14/20) + 0.25*0.30 = 0.64
-        assert composite["value"] == 64.0
+        # 0.40*0.80 + 0.35*0.30 + 0.25*((-4+10)/10) = 0.575
+        assert composite["value"] == 57.5
 
     def test_sorters_keep_finite_zero(self):
         """CR outside-diff Minor: a rank of exactly 0.0 must stay sortable;

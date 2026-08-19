@@ -260,7 +260,7 @@ class TestModestRung:
                             lambda s, **kw: market_data.Sourced.unavailable("x", "none"))
         monkeypatch.setattr(market_data, "earnings_date",
                             lambda s: market_data.Sourced.unavailable("x", "none"))
-        monkeypatch.setattr(app, "_cohort_prior", lambda band, upside: None)
+        monkeypatch.setattr(app, "_cohort_prior", lambda band, upside, **kw: None)
         result = app._attach_empirical_probabilities(
             "ZZMR1", {"timeframe_predictions": {"short_term": {}}})
         short = result["timeframe_predictions"]["short_term"]
@@ -280,7 +280,7 @@ class TestModestRung:
                             lambda s, **kw: market_data.Sourced.unavailable("x", "none"))
         monkeypatch.setattr(market_data, "earnings_date",
                             lambda s: market_data.Sourced.unavailable("x", "none"))
-        monkeypatch.setattr(app, "_cohort_prior", lambda band, upside: None)
+        monkeypatch.setattr(app, "_cohort_prior", lambda band, upside, **kw: None)
         result = app._attach_empirical_probabilities(
             "ZZMR2", {"timeframe_predictions": {
                 "short_term": {"t1": {"upside_percent": 3.0, "target_price": 103.0}}}})

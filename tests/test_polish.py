@@ -95,8 +95,10 @@ class TestTrueTouchGrading:
         def lookup(s):
             return (["2026-01-07", "2026-01-08"], [103.0, 102.0])
         calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
+        # Partial high coverage decides NOTHING (audit 2026-08-19): the miss
+        # resolves through the snapshot closes, so it is close-graded.
         assert calib["n_resolved"] == 1
-        assert calib["n_graded_on_highs"] == 1
+        assert calib["n_graded_on_highs"] == 0
         bucket = next(b for b in calib["buckets"] if b["n"])
         assert bucket["realized_rate"] == 0.0
 
@@ -123,8 +125,9 @@ class TestTrueTouchGrading:
     def test_default_lookup_reads_ohlcv_cache(self):
         market_data._cache.set("ohlcv:ZZTT1:1y", {
             "ok": True, "index": ["2026-01-05T00:00:00"], "high": [42.0]}, 60)
-        dates, highs = tracking._default_highs_lookup("ZZTT1")
+        dates, highs, closes = tracking._default_highs_lookup("ZZTT1")
         assert dates == ["2026-01-05"] and highs == [42.0]
+        assert len(closes) == 1  # closes ride along for basis anchoring
         assert tracking._default_highs_lookup("ZZNONE") is None
 
 

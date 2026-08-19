@@ -95,6 +95,72 @@ def _current_universe():
 market_data.set_symbol_source(_current_universe)
 
 
+# The page cache is rebuilt proactively this long before it expires, so a
+# visitor almost never pays the lazy on-request rebuild.
+PAGE_PREBUILD_LOOKAHEAD_SECONDS = 120
+
+_prebuilders_started = [False]
+
+
+def _page_needs_prebuild(cache_data) -> bool:
+    """True when the next visitor would pay a rebuild: cache absent, expired,
+    or inside the lookahead window."""
+    if not cache_data:
+        return True
+    expires_at = cache_data.get('expires_at')
+    if expires_at is None:
+        return False  # legacy entry with no deadline; the request path decides
+    return (expires_at - time.time()) < PAGE_PREBUILD_LOOKAHEAD_SECONDS
+
+
+def _page_prebuild_loop():
+    """Rebuild the page cache in the background, just before it expires.
+
+    Uses an internal request through the normal route, so the build is
+    IDENTICAL to a visitor's -- and costs zero provider calls: the render
+    path reads caches only, and the universe scrape stays behind its own
+    ten-minute single-flight either way. Visitors then serve warm.
+    """
+    client = app.test_client()
+    time.sleep(45)
+    while True:
+        sleep_for = 60
+        try:
+            if market_data.market_phase()["phase"] == "closed":
+                sleep_for = 300
+            elif _page_needs_prebuild(load_cache()):
+                client.get('/')
+        except Exception as e:
+            logger.warning(f"page prebuild cycle failed: {type(e).__name__}: {e}")
+        time.sleep(sleep_for)
+
+
+def _stf_prewarm_loop():
+    """Precompute the Analysis payloads the board's symbols will need.
+
+    One symbol per pass through the same route the button hits, so the first
+    click per symbol stops paying the compute-and-fetch cost. Paced at one
+    per cycle -- a trickle the throttles already govern, nothing burst-shaped.
+    """
+    client = app.test_client()
+    time.sleep(90)
+    while True:
+        sleep_for = 120
+        try:
+            if market_data.market_phase()["phase"] == "closed":
+                sleep_for = 600
+            else:
+                symbols = _current_universe() or []
+                missing = [s for s in symbols
+                           if market_data._cache.get(f"stf:{s.upper()}") is None]
+                if missing:
+                    client.get(f"/api/sophisticated-timeframe/{missing[0]}")
+                    sleep_for = 45
+        except Exception as e:
+            logger.warning(f"stf prewarm cycle failed: {type(e).__name__}: {e}")
+        time.sleep(sleep_for)
+
+
 @app.before_request
 def _ensure_warmer_running():
     """Start the background warmer in this worker, once.
@@ -105,6 +171,12 @@ def _ensure_warmer_running():
     """
     if not market_data._warmer_started:
         market_data.start_background_warmer()
+    if not _prebuilders_started[0] and not os.environ.get("MARKET_DATA_DISABLE_WARMER"):
+        _prebuilders_started[0] = True
+        threading.Thread(target=_page_prebuild_loop, daemon=True,
+                         name="page-prebuilder").start()
+        threading.Thread(target=_stf_prewarm_loop, daemon=True,
+                         name="stf-prewarmer").start()
 
 # =============================================================================
 # PRODUCTION OPTIMIZATIONS SETUP
@@ -470,7 +542,10 @@ def load_cache():
                 
                 cache_data_formatted = {
                     'timestamp': cache_time,
-                    'data': cache_data['data']
+                    'data': cache_data['data'],
+                    # Redis's own TTL expires the entry; the deadline rides
+                    # along so the prebuilder can act BEFORE that happens.
+                    'expires_at': cache_data.get('expires_at'),
                 }
                 logger.info(f"Valid cache found from Redis from {cache_time} ({time_diff.total_seconds()/3600:.1f} hours ago)")
                 return cache_data_formatted
@@ -3267,7 +3342,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
-                                <th onclick="sortLoserTable(this, 1, 'num')" title="One stated ranking number for default ordering: 0.40 x setup score + 0.35 x short-horizon EV shape (clipped at plus/minus 10%) + 0.25 x 7-day bounce odds, renormalized over whichever components are measurable. A ranking device, not a probability. Click to sort.">Rank</th>
+                                <th onclick="sortLoserTable(this, 1, 'num')" title="One stated ranking number for default ordering: 0.40 x setup score + 0.35 x 7-day bounce odds + 0.25 x downside shape (median miss outcome; 0% best, -10% or worse worst). Missing components count as neutral 0.5, so a row can never outrank another by having less evidence. A ranking device, not a probability. Click to sort.">Rank</th>
                                 <th onclick="sortLoserTable(this, 2, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
                                 <th onclick="sortLoserTable(this, 3, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
                                 <th onclick="sortLoserTable(this, 4, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
@@ -3372,7 +3447,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
-                                <th onclick="sortLoserTable(this, 1, 'num')" title="One stated ranking number for default ordering: 0.40 x setup score + 0.35 x short-horizon EV shape (clipped at plus/minus 10%) + 0.25 x 7-day bounce odds, renormalized over whichever components are measurable. A ranking device, not a probability. Click to sort.">Rank</th>
+                                <th onclick="sortLoserTable(this, 1, 'num')" title="One stated ranking number for default ordering: 0.40 x setup score + 0.35 x 7-day bounce odds + 0.25 x downside shape (median miss outcome; 0% best, -10% or worse worst). Missing components count as neutral 0.5, so a row can never outrank another by having less evidence. A ranking device, not a probability. Click to sort.">Rank</th>
                                 <th onclick="sortLoserTable(this, 2, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
                                 <th onclick="sortLoserTable(this, 3, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
                                 <th onclick="sortLoserTable(this, 4, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
@@ -3535,10 +3610,19 @@ def _snapshot_predictions(sophisticated_result):
             prob, upside = target.get('probability'), target.get('upside_percent')
             if prob is None or upside is None or upside <= 0:
                 continue
+            band = {"short_term": "short", "medium_term": "medium",
+                    "long_term": "long"}.get(band_key, "medium")
             out[f"{band_key}:{name}"] = {
                 "probability": round(prob / 100.0, 4),
                 "target_pct": round(float(upside), 2),
+                # Absolute price too: the graded threshold should be the
+                # target the app displayed, not one re-derived from a
+                # possibly staler entry price (audit, 2026-08-19).
+                "target_price": target.get("target_price"),
                 "horizon_days": horizon,
+                # Trading bars, so grading walks trading days instead of a
+                # calendar window whose length swings ~14% by weekday.
+                "horizon_bars": timeframes.HORIZON_BARS.get(band),
             }
     return out
 
@@ -3717,6 +3801,25 @@ def api_snapshot():
         }
         sector = market_data.sector_context(symbol)
         row["sector"] = sector.value.get("sector") if sector.ok else None
+        # The three probabilities the BOARD itself displays are recorded too:
+        # the track-record page claims every published probability is graded,
+        # and these -- the ones most visitors actually see -- were the
+        # exception (audit, 2026-08-19).
+        try:
+            board = _horizon_summaries(symbol, (targets["mean"].value
+                                                if targets["mean"].ok else None))
+            for band_name, cell in board.items():
+                if cell.get("sort", -1) >= 0 and cell.get("upside") is not None:
+                    row.setdefault("predictions", {})
+                    row["predictions"][f"board:{band_name}"] = {
+                        "probability": round(cell["sort"] / 100.0, 4),
+                        "target_pct": cell["upside"],
+                        "horizon_days": {"short": 10, "medium": 30,
+                                         "long": 183}.get(band_name, 30),
+                        "horizon_bars": cell.get("bars"),
+                    }
+        except Exception as e:
+            logger.warning(f"board prediction record failed for {symbol}: {type(e).__name__}")
         # Market-implied move and filing-language context ride the record so
         # both can be graded against realized outcomes later.
         implied = market_data.implied_move(symbol)
@@ -4906,16 +5009,22 @@ def analyze_stock_news(symbol):
 
     return payload
 
-def _cohort_prior(band, upside_pct):
-    """Mean unconditional hit rate across today's losers for a similar target.
+COHORT_BUCKETS = (2, 3, 5, 8, 10, 15, 20, 25, 30, 40, 50)
 
-    The prior for shrinkage: what fraction of this cohort's history reached a
-    target of roughly this size within the band's horizon. Cache-only reads of
-    already-warmed histories; None (no shrinkage) when fewer than five symbols
-    have usable history, rather than a prior invented from two.
+
+def _cohort_prior(band, upside_pct, exclude_symbol=None):
+    """Mean hit rate across today's losers for a similar target.
+
+    The prior for shrinkage. Three audit fixes (2026-08-19): tiny targets no
+    longer get clamped to the +5% bucket (a +0.5% target was being shrunk
+    toward +5% odds -- a ~14pp downward pull on the most-published
+    predictions); the subject symbol is excluded from its own prior; and the
+    cohort is measured touch-basis when a symbol's highs are warm, matching
+    the estimand of the rates it shrinks. Cache-only reads; None below five
+    usable histories.
     """
-    bucket = int(min(50, max(5, round(upside_pct / 5.0) * 5)))
-    key = f"cohort:hit:{band}:{bucket}"
+    bucket = min(COHORT_BUCKETS, key=lambda b: abs(b - upside_pct))
+    key = f"cohort:hit2:{band}:{bucket}:{(exclude_symbol or '').upper()}"
     cached = market_data._cache.get(key)
     if cached is not None:
         return cached.get("p")
@@ -4924,12 +5033,24 @@ def _cohort_prior(band, upside_pct):
     try:
         source = market_data._symbol_source[0]
         for sym in (source() if source else [])[:30]:
+            if exclude_symbol and sym.upper() == exclude_symbol.upper():
+                continue
             hist = market_data.price_history(sym, allow_fetch=False)
-            if hist.ok:
-                measured = timeframes.hit_rate(
-                    np.array(hist.value, dtype=float), float(bucket), horizon)
-                if measured:
-                    rates.append(measured["probability"])
+            if not hist.ok:
+                continue
+            closes = np.array(hist.value, dtype=float)
+            highs = None
+            ohlcv = market_data._cache.get(f"ohlcv:{sym.upper()}:1y")
+            if ohlcv and ohlcv.get("ok"):
+                rows = [(c, h) for c, h in zip(ohlcv.get("close") or [],
+                                               ohlcv.get("high") or [])
+                        if c is not None and h is not None]
+                if len(rows) >= horizon + timeframes.MIN_WINDOWS:
+                    closes = np.array([c for c, _ in rows], dtype=float)
+                    highs = np.array([h for _, h in rows], dtype=float)
+            measured = timeframes.hit_rate(closes, float(bucket), horizon, highs=highs)
+            if measured:
+                rates.append(measured["probability"])
     except Exception as e:
         logger.warning(f"cohort prior failed for {band}/{bucket}: {type(e).__name__}")
     prior = round(sum(rates) / len(rates), 4) if len(rates) >= 5 else None
@@ -5029,7 +5150,8 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
             })
         annotated = timeframes.annotate_targets(
             closes, targets, band, bases=bases,
-            cohort_prior=lambda upside, _band=band: _cohort_prior(_band, upside))
+            cohort_prior=lambda upside, _band=band, _sym=symbol: _cohort_prior(
+                _band, upside, exclude_symbol=_sym))
         earnings_flag = _earnings_in_window(symbol, BAND_CALENDAR_DAYS.get(band_key, 30))
         for t in annotated.values():
             if not (isinstance(t, dict) and t.get('probability_available')):
@@ -5041,10 +5163,17 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
                 timeframes.HORIZON_BARS.get(band, 21), mask=oversold,
                 min_windows=timeframes.MIN_WINDOWS_CONDITIONAL)
             if from_oversold:
+                # Same reconciliation the headline gets: counts vs weighted
+                # rate, and the basis named -- a close-basis side-figure next
+                # to a touch-basis headline reads as pure regime effect.
+                raw_ov = from_oversold['hits'] / from_oversold['windows'] * 100
+                shown_ov = from_oversold['probability'] * 100
+                note = (f", recency-weighted from {raw_ov:.0f}%"
+                        if abs(shown_ov - raw_ov) >= 2 else "")
                 t['evidence'] = (t.get('evidence', '') +
-                                 f" · from oversold RSI<30: "
-                                 f"{from_oversold['probability'] * 100:.0f}% "
-                                 f"({from_oversold['hits']}/{from_oversold['windows']})")
+                                 f" · from oversold RSI<30: {shown_ov:.0f}% "
+                                 f"({from_oversold['hits']}/{from_oversold['windows']}, "
+                                 f"close-basis{note})")
             if earnings_flag:
                 t['earnings_in_window'] = earnings_flag
                 t['evidence'] = (t.get('evidence', '') +
@@ -5058,8 +5187,9 @@ def _attach_empirical_probabilities(symbol, sophisticated_result):
             if regime:
                 t['regime'] = regime
                 t['evidence'] = (t.get('evidence', '') +
-                                 f" · in today's {regime['bucket']} regime (past year): "
-                                 f"{regime['probability']*100:.0f}% ({regime['hits']}/{regime['windows']})")
+                                 f" · in today's {regime['bucket']} regime (past year, "
+                                 f"close-basis): {regime['probability']*100:.0f}% "
+                                 f"({regime['hits']}/{regime['windows']})")
         predictions[band_key] = annotated
         dist = timeframes.horizon_distribution(
             closes, timeframes.HORIZON_BARS.get(band, 21))
@@ -5157,7 +5287,8 @@ def predict_stock_recovery(symbol):
         # and reported with the sample size behind it. The signal multiplier is
         # deliberately not applied: multiplying a measured frequency by an
         # unfitted constant would destroy the one thing that makes it real.
-        sophisticated_result = _attach_empirical_probabilities(symbol, sophisticated_result)
+        if 'market_implied' not in (sophisticated_result or {}):
+            sophisticated_result = _attach_empirical_probabilities(symbol, sophisticated_result)
         
         # Convert sophisticated results back to format expected by existing app
         timeframe_predictions = sophisticated_result.get('timeframe_predictions', {})
@@ -5819,43 +5950,44 @@ def sentiment_for_score(score):
 THIN_LIQUIDITY_DOLLARS = 2_000_000
 
 
-COMPOSITE_WEIGHTS = {"setup": 0.40, "ev": 0.35, "bounce": 0.25}
-COMPOSITE_BASIS = ("0.40 × setup score + 0.35 × short-horizon EV shape "
-                   "(clipped ±10%) + 0.25 × 7-day bounce odds, renormalized "
-                   "over whichever components are measurable. A ranking "
-                   "device for ordering the board, not a probability.")
+COMPOSITE_WEIGHTS = {"setup": 0.40, "bounce": 0.35, "downside": 0.25}
+COMPOSITE_BASIS = ("0.40 × setup score + 0.35 × 7-day bounce odds + 0.25 × "
+                   "downside shape (median outcome when the bounce misses: "
+                   "0% → best, −10% or worse → worst). Missing components "
+                   "count as neutral 0.5, so a row can never outrank another "
+                   "by having LESS evidence. A ranking device for ordering "
+                   "the board, not a probability.")
 
 
 def _composite_rank(enhanced):
     """One stated number to order the board by, from the measurements it shows.
 
-    The five numbers on a row answer five different questions, so no single
-    one is the right default sort. This combines the three that bear on
-    "which row first": the backtested setup score (is the situation good),
-    the short-horizon expected value (is the trade well-shaped), and the
-    7-day bounce odds (does it move at all). Weights are stated, missing
-    components renormalize exactly like the score's own factors, and a row
-    with nothing measurable ranks below every row with something.
+    Three near-orthogonal components (audit, 2026-08-19: the old EV term was
+    affine in the same bounce probability, so p was double-counted with a
+    row-dependent loading): the backtested setup score, the 7-day bounce
+    odds, and the downside shape -- the median outcome of the windows that
+    MISSED, which is the half of EV the bounce odds don't already carry.
+    Missing components impute neutral 0.5 rather than renormalizing:
+    renormalization let a row with NO probability evidence outrank an
+    identically-scored row with complete evidence.
     """
-    parts = []
     score = enhanced.get('Rebound Score')
-    if isinstance(score, (int, float)):
-        parts.append((COMPOSITE_WEIGHTS["setup"], score / 100.0))
     short = enhanced.get('P Short') or {}
-    ev = short.get('ev')
-    if isinstance(ev, (int, float)):
-        # EV in percent, squashed to 0-1 with ±10% as the useful range: an
-        # EV past ±10% on a 7-day horizon is already an extreme reading.
-        parts.append((COMPOSITE_WEIGHTS["ev"],
-                      (max(-10.0, min(10.0, ev)) + 10.0) / 20.0))
     p7 = short.get('sort')
-    if isinstance(p7, (int, float)) and p7 >= 0:
-        parts.append((COMPOSITE_WEIGHTS["bounce"], p7 / 100.0))
-    if not parts:
+    miss = short.get('miss')
+    components = {
+        "setup": score / 100.0 if isinstance(score, (int, float)) else None,
+        "bounce": (p7 / 100.0 if isinstance(p7, (int, float)) and p7 >= 0
+                   else None),
+        "downside": ((max(-10.0, min(0.0, miss)) + 10.0) / 10.0
+                     if isinstance(miss, (int, float)) else None),
+    }
+    measured = sum(1 for v in components.values() if v is not None)
+    if measured == 0:
         return None
-    total_weight = sum(w for w, _ in parts)
-    value = sum(w * v for w, v in parts) / total_weight
-    return {"value": round(value * 100, 1), "components": len(parts),
+    value = sum(COMPOSITE_WEIGHTS[k] * (v if v is not None else 0.5)
+                for k, v in components.items())
+    return {"value": round(value * 100, 1), "components": measured,
             "basis": COMPOSITE_BASIS}
 
 
@@ -6028,15 +6160,24 @@ def _horizon_summaries(symbol, target_price=None):
             pct = measured["probability"] * 100
             basis = (", intraday-touch"
                      if measured.get("touch_basis") == "intraday-high" else "")
+            # When recency weighting moves the shown rate away from the raw
+            # fraction a reader can compute from the counts, the tooltip says
+            # so -- an unexplained 50%-shown-as-58% reads as a bug.
+            raw_pct = measured["hits"] / measured["windows"] * 100
+            weighted_note = (f", recency-weighted from {raw_pct:.0f}% raw"
+                             if abs(pct - raw_pct) >= 2 else "")
             out[key] = {
                 "display": f"{pct:.0f}%",
                 "detail": (f"{measured['hits']}/{measured['windows']} "
-                           f"{measured['conditioning']} windows{basis}, "
-                           f"+{upside:.1f}% needed"),
+                           f"{measured['conditioning']} windows{basis}"
+                           f"{weighted_note}, +{upside:.1f}% needed"),
                 "sort": round(pct, 1),
+                "upside": round(upside, 2),
+                "bars": timeframes.HORIZON_BARS.get(horizon_key, 21),
                 # Measured trade shape for the same target: feeds the
-                # composite rank, not just the drill-in.
+                # composite rank and the snapshot record, not just the modal.
                 "ev": measured.get("expected_value"),
+                "miss": measured.get("miss_median_return"),
             }
 
     measure("short", closes[-2], "short")

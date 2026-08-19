@@ -135,7 +135,7 @@ the highest-conviction setup is at the top:
 
 | Column | Meaning |
 | --- | --- |
-| **Rank** | The composite default ordering, with the measurable component count (0–3) shown under it: 0.40 × setup score + 0.35 × short-horizon EV shape + 0.25 × 7-day bounce odds, renormalised over what is measurable |
+| **Rank** | The composite default ordering, with the measurable component count (0–3) shown under it: 0.40 × setup score + 0.35 × 7-day bounce odds + 0.25 × downside shape; missing components count as neutral 0.5 |
 | **Score** | The backtested rebound score (0–100) with its confidence and how many of the six inputs were available |
 | **Upside** | Analyst consensus upside, with the analyst count |
 | **P(prev close, 7d)** | How often this stock has reached yesterday's close within 7 trading days, over its own history |
@@ -267,12 +267,14 @@ Rank correlation between score and realised return: **+0.032 (5d), +0.043 (20d),
 
 The board's five numbers answer five different questions, so none of them is
 the right default ordering on its own. The **Rank** column is one stated
-formula for "which row first": `0.40 × setup score + 0.35 × short-horizon EV
-shape (clipped ±10%) + 0.25 × 7-day bounce odds`, renormalised over whichever
-components are measurable, exactly the way the score renormalizes its own
-factors. It is a ranking device, not a probability, and it deliberately
-excludes raw analyst upside -- distance to a target is already priced inside
-the EV term, and counting it twice would reward lottery tickets.
+formula for "which row first": `0.40 × setup score + 0.35 × 7-day bounce odds
++ 0.25 × downside shape` (the median outcome of the windows that MISSED,
+clipped to 0…−10% — the half of expected value the bounce odds don't already
+carry, so no component is double-counted). Missing components impute a
+neutral 0.5 rather than renormalising: a row can never outrank another by
+having less evidence. It is a ranking device, not a probability, and it
+deliberately excludes raw analyst upside — lottery-distance targets are
+already punished through their own bounce odds.
 
 ### Reading this honestly
 
