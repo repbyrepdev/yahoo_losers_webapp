@@ -530,3 +530,31 @@ class TestFactorLaneDrain:
         market_data.analyst_recommendations("ZZLD4")
         recs, _ = market_data._symbols_missing_factor_keys(["ZZLD4"])
         assert recs == []
+
+    def test_dual_provider_failure_is_not_structural_absence(self, monkeypatch):
+        """CR PR60: rate-limited Yahoo + unavailable Finnhub must keep the
+        error identity -- 'no ratings published' would two-strike into a 6h
+        structural negative during a transient outage."""
+        class YahooDies:
+            @property
+            def recommendations(self):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.unavailable(
+                                "finnhub:recommendation-trends", "quota"))
+        result = market_data.analyst_recommendations("ZZLD5")
+        assert not result.ok
+        assert result.reason != "no ratings published"
+        assert "RuntimeError" in result.reason
+
+    def test_clean_empty_yahoo_and_empty_fallback_stays_structural(self, monkeypatch):
+        class NoCoverage:
+            recommendations = None
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoCoverage())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.unavailable(
+                                "finnhub:recommendation-trends", "no ratings published"))
+        result = market_data.analyst_recommendations("ZZLD6")
+        assert not result.ok
+        assert result.reason == "no ratings published"

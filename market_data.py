@@ -764,10 +764,12 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     source = "yfinance:recommendations"
 
     def produce():
+        yahoo_error = None
         try:
             frame = _ticker(symbol).recommendations
         except Exception as e:
             frame = None
+            yahoo_error = f"{type(e).__name__}: {e}"
             logger.info(f"yahoo ratings failed for {symbol}: {type(e).__name__}")
         if frame is None or frame.empty:
             # Backup: Finnhub's trends carry the same spread, so the score's
@@ -780,6 +782,12 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
                             "provider": "finnhub"}
             except Exception as e:
                 logger.info(f"ratings fallback failed for {symbol}: {type(e).__name__}")
+            if yahoo_error is not None:
+                # A provider failure is not "no coverage": keep the original
+                # detail so _cached classifies it transient or rate-limited,
+                # never a six-hour structural absence (CR, PR 60).
+                return {"ok": False, "reason": yahoo_error.split(":")[0],
+                        "detail": yahoo_error}
             return {"ok": False, "reason": "no ratings published"}
         row = frame.iloc[0].to_dict()
         spread = {k: int(row.get(k, 0) or 0) for k in
