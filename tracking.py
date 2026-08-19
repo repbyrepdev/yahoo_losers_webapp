@@ -226,16 +226,35 @@ MIN_CALIBRATION_RESOLVED = 20
 CALIBRATION_BUCKETS = ((0, 20), (20, 40), (40, 60), (60, 80), (80, 101))
 
 
-def compute_calibration(directory=None):
+def _default_highs_lookup(symbol):
+    """Cached intraday highs for grading, as (dates, highs) or None.
+
+    Reads the same OHLCV entries the warmer maintains. Import is local and
+    failure-tolerant so the tracking module stays usable standalone.
+    """
+    try:
+        import market_data
+        payload = market_data._cache.get(f"ohlcv:{symbol.upper()}:1y")
+    except Exception:
+        return None
+    if not (payload and payload.get("ok")):
+        return None
+    dates = [d[:10] for d in (payload.get("index") or [])]
+    highs = payload.get("high") or []
+    if len(dates) != len(highs) or not dates:
+        return None
+    return dates, highs
+
+
+def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
     """Were the published probabilities right? Predicted vs realized, plus Brier.
 
     Each snapshot row may carry `predictions`: the empirical hit-rate odds the
     app displayed that day ({name: {probability, target_pct, horizon_days}}).
-    A prediction resolves against later snapshots: hit if any snapshot inside
-    the horizon closed at or above entry * (1 + target); unresolved until the
-    window has essentially elapsed. Snapshots record one close per day, so
-    intraday touches between snapshots are invisible -- realized rates are
-    conservative, and the page says so.
+    A prediction resolves against later evidence: the predictions claim
+    touches, so grading consults cached intraday highs inside the window
+    first, then later snapshots' closes. Windows graded without high data are
+    close-graded and slightly conservative; both counts are reported.
     """
     snapshots = _load_snapshots(directory)
     by_date = {}
@@ -248,6 +267,25 @@ def compute_calibration(directory=None):
 
     pairs = []          # (predicted probability 0-1, hit 0/1)
     unresolved = 0
+    graded_on_highs = 0
+    highs_cache = {}
+
+    def window_high_touch(symbol, start_iso, end_iso, threshold):
+        """True/False from cached intraday highs inside the window, or None."""
+        if symbol not in highs_cache:
+            highs_cache[symbol] = highs_lookup(symbol) if highs_lookup else None
+        series = highs_cache[symbol]
+        if not series:
+            return None
+        dates, highs = series
+        seen = False
+        for d, h in zip(dates, highs):
+            if h is not None and start_iso < d <= end_iso:
+                seen = True
+                if h >= threshold:
+                    return True
+        return False if seen else None
+
     for snap_date in ordered_dates:
         for row in by_date[snap_date].get("universe", []):
             symbol, entry = row.get("symbol"), row.get("price")
@@ -278,6 +316,20 @@ def compute_calibration(directory=None):
                     # 80% of the window observed counts as resolved-enough.
                     if later.toordinal() >= snap_date.toordinal() + horizon * 0.8:
                         window_elapsed = True
+                # The prediction claimed a TOUCH, so intraday highs are the
+                # matching evidence; close-graded misses systematically
+                # under-credit the model. Highs can both confirm a touch the
+                # closes missed and stand in for missing snapshot prices.
+                if not hit:
+                    touched = window_high_touch(
+                        symbol, snap_date.isoformat(),
+                        date.fromordinal(end_ordinal).isoformat(), threshold)
+                    if touched is not None:
+                        graded_on_highs += 1
+                        if touched:
+                            hit = True
+                        else:
+                            price_observed = True
                 # A miss must be supported by at least one recorded in-window
                 # price. A symbol that vanished from every later snapshot has
                 # no observed outcome, and grading it would fabricate one.
@@ -289,12 +341,15 @@ def compute_calibration(directory=None):
     result = {
         "n_resolved": len(pairs),
         "n_unresolved": unresolved,
+        "n_graded_on_highs": graded_on_highs,
         "min_required": MIN_CALIBRATION_RESOLVED,
         "ready": len(pairs) >= MIN_CALIBRATION_RESOLVED,
         "buckets": [],
         "brier": None,
-        "note": ("evaluated on daily snapshot closes; intraday touches between "
-                 "snapshots are not visible, so realized rates are conservative"),
+        "note": ("predictions claim touches, so grading consults cached intraday "
+                 "highs inside each window first, then snapshot closes; windows "
+                 "graded without high data are close-graded and slightly "
+                 "conservative"),
     }
     if not pairs:
         return result

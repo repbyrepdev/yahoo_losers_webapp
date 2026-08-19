@@ -221,11 +221,22 @@ feed conditioning once the snapshot record is deep enough to validate them.
 ### Limitations
 
 - Assumes the past distribution of moves is informative about the next one. For
-  a company whose situation has fundamentally changed, it is not.
+  a company whose situation has fundamentally changed, it is not. Recency
+  weighting (a 252-bar half-life: last year's evidence counts double the year
+  before's) softens this but cannot remove it; the effective sample size the
+  weighting leaves is shown as `n_eff` beside the raw window count.
 - Windows overlap, so they are not independent; the sample size overstates how
   much evidence is present.
+- **Survivorship:** price history comes from Yahoo, which drops delisted
+  symbols. Stocks that fell and never came back are underrepresented in every
+  hit rate and in the cohort priors, so measured bounce rates skew slightly
+  optimistic. This is a property of the data source; no free feed fixes it.
 - Split-adjusted, ignores dividends.
 - A stock with too little history reports unavailable rather than guessing.
+- Calibration grades predictions against cached intraday highs where
+  available (predictions claim touches, so highs are the matching evidence);
+  windows graded only on daily closes are slightly conservative, and the
+  track-record page reports how many were graded each way.
 
 ## 📉 Backtest: does the score actually work?
 

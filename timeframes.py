@@ -140,10 +140,18 @@ def shrink_toward(hits: int, windows: int, prior_p: float,
     return (hits + prior_p * prior_weight) / (windows + prior_weight)
 
 
+# Recency half-life, in trading bars. A window from 2021 says less about the
+# company the stock is now than one from last month; a one-year half-life
+# means last year's evidence counts double the year before's. The raw counts
+# stay reported; weighting shapes the probability and the effective sample.
+RECENCY_HALF_LIFE_BARS = 252
+
+
 def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
              mask: Optional[np.ndarray] = None,
              highs: Optional[np.ndarray] = None,
-             min_windows: int = MIN_WINDOWS) -> Optional[dict]:
+             min_windows: int = MIN_WINDOWS,
+             half_life_bars: Optional[int] = RECENCY_HALF_LIFE_BARS) -> Optional[dict]:
     """How often this stock gained at least `target_pct` within `horizon_bars`.
 
     A window counts as a hit if the target was reached at any point inside it,
@@ -162,8 +170,12 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
     threshold = 1.0 + (target_pct / 100.0)
     hits = 0
     windows = 0
+    weight_sum = 0.0
+    weight_sq_sum = 0.0
+    weighted_hits = 0.0
     days_to_hit: List[int] = []
     miss_end_returns: List[float] = []
+    last_start = len(closes) - horizon_bars - 1
 
     # Vectorised over the window, looped over start points: clear to read and
     # fast enough for the few hundred windows involved.
@@ -174,12 +186,17 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
         if not entry or entry <= 0:
             continue
         windows += 1
+        weight = (0.5 ** ((last_start - start) / half_life_bars)
+                  if half_life_bars else 1.0)
+        weight_sum += weight
+        weight_sq_sum += weight * weight
         forward = closes[start + 1: start + 1 + horizon_bars]
         touch = (highs[start + 1: start + 1 + horizon_bars]
                  if highs is not None else forward)
         reached = np.nonzero(touch >= entry * threshold)[0]
         if reached.size:
             hits += 1
+            weighted_hits += weight
             days_to_hit.append(int(reached[0]) + 1)
         else:
             # What actually happened when the target was NOT reached: the
@@ -190,7 +207,10 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
     if windows < min_windows:
         return None
 
-    p = hits / windows
+    # Recency-weighted rate and Kish effective sample size. Raw counts stay
+    # reported beside them -- the denominator the display shows is real.
+    p = (weighted_hits / weight_sum) if weight_sum else hits / windows
+    n_eff = (weight_sum * weight_sum / weight_sq_sum) if weight_sq_sum else windows
     miss_median = float(np.median(miss_end_returns)) if miss_end_returns else None
 
     # Expected value of "buy now, take profit at the target or exit at the
@@ -207,12 +227,20 @@ def hit_rate(closes: np.ndarray, target_pct: float, horizon_bars: int,
         "probability": round(p, 4),
         "hits": hits,
         "windows": windows,
+        "n_eff": round(n_eff, 1),
+        "recency_half_life_bars": half_life_bars,
         "median_days_to_hit": int(np.median(days_to_hit)) if days_to_hit else None,
         "horizon_bars": horizon_bars,
         "miss_median_return": round(miss_median, 2) if miss_median is not None else None,
         "expected_value": round(expected_value, 2) if expected_value is not None else None,
         "touch_basis": "intraday-high" if highs is not None else "close",
     }
+
+
+def shrink_toward_rate(p: float, n_eff: float, prior_p: float,
+                       prior_weight: int = 20) -> float:
+    """shrink_toward generalised to a weighted rate and effective sample."""
+    return (p * n_eff + prior_p * prior_weight) / (n_eff + prior_weight)
 
 
 def best_hit_rate(bases: List[dict], target_pct: float,
@@ -342,8 +370,12 @@ def describe(measured: dict) -> str:
     conditioning = measured.get("conditioning")
     scope = f" {conditioning}" if conditioning and conditioning != "all windows" else " past"
     basis = (", intraday-touch" if measured.get("touch_basis") == "intraday-high" else "")
+    n_eff = measured.get("n_eff")
+    recency = ""
+    if measured.get("recency_half_life_bars") and n_eff and n_eff < measured["windows"] * 0.95:
+        recency = f" · recency-weighted (n_eff {n_eff:.0f})"
     return (f"{measured['hits']}/{measured['windows']}{scope} "
-            f"{measured['horizon_bars']}-day windows{basis}")
+            f"{measured['horizon_bars']}-day windows{basis}{recency}")
 
 
 def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
@@ -398,7 +430,11 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
                                       f"{'s' if median_days != 1 else ''} (median)")
                 entry["timeframe_source"] = "empirical:price-history"
 
-            ci_low, ci_high = wilson_interval(measured["hits"], measured["windows"])
+            # The interval reflects the evidence actually carrying the rate:
+            # the recency-weighted effective sample, not the raw window count.
+            n_eff = measured.get("n_eff") or measured["windows"]
+            ci_low, ci_high = wilson_interval(
+                int(round(measured["probability"] * n_eff)), max(1, int(round(n_eff))))
             probability = measured["probability"]
             evidence = describe(measured)
             expected_value = measured.get("expected_value")
@@ -406,8 +442,7 @@ def annotate_targets(closes: np.ndarray, targets: Dict[str, dict], band: str,
             # since the right prior depends on how far the target sits.
             prior_p = cohort_prior(upside) if callable(cohort_prior) else cohort_prior
             if prior_p is not None:
-                shrunk = shrink_toward(measured["hits"], measured["windows"],
-                                       prior_p)
+                shrunk = shrink_toward_rate(probability, n_eff, prior_p)
                 # Compare what the display will actually show: rates that
                 # round to different one-decimal percentages must both appear.
                 raw_pct = round(probability * 100, 1)
