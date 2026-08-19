@@ -275,3 +275,29 @@ class TestRevisionChipTemplate:
             os.path.abspath(__file__))), "app.py"), encoding="utf-8").read()
         assert source.count("stock['Analyst Revisions'].label") == 3  # 2 tables + card
         assert source.count("Analyst rating changes") == 1  # card tooltip
+
+
+class TestOptionsCooldown:
+    def test_refusal_pauses_and_short_circuits(self, monkeypatch):
+        """Live incident 2026-08-19: the prewarmer walked the universe and
+        tripped the per-symbol options endpoint. One refusal must pause ALL
+        options calls, and paused calls must not touch the provider."""
+        import time as _time
+        market_data._options_cooldown_until[0] = 0.0
+
+        class Refused:
+            @property
+            def options(self):
+                raise RuntimeError("Too Many Requests. Rate limited.")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: Refused())
+        result = market_data.implied_move("ZZOC1")
+        assert not result.ok
+        assert market_data._options_cooldown_until[0] > _time.time()
+
+        calls = []
+        monkeypatch.setattr(market_data, "_ticker",
+                            lambda s: calls.append(s) or None)
+        cooled = market_data.implied_move("ZZOC2")
+        assert not cooled.ok and "cooling down" in cooled.reason
+        assert calls == []  # provider untouched during the cooldown
+        market_data._options_cooldown_until[0] = 0.0
