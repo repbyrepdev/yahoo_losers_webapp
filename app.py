@@ -424,19 +424,47 @@ DEGRADED_SCORE_RATIO = float(os.environ.get('DEGRADED_SCORE_RATIO', 0.6))
 DEGRADED_CACHE_SECONDS = int(os.environ.get('DEGRADED_CACHE_SECONDS', 90))
 
 
+SYSTEMIC_MISSING_RATIO = 0.8
+
+
 def degraded_state(all_analysis):
-    """(is_degraded, banner_text) for a scored universe."""
+    """(is_degraded, banner_text) for a scored universe.
+
+    Two distinct degradations, both said out loud: too few rows scored at
+    all, and -- subtler -- the SAME factor missing across the board. The
+    second silently reshapes every score (live incident 2026-08-19: the
+    options limiter took the put/call factor from all 25 rows, scores
+    peaked at 67.9 instead of the morning's 86.7, and the page offered no
+    explanation for the empty recommendations).
+    """
     total = len(all_analysis or [])
     if not total:
         return True, "No universe could be loaded; retrying shortly."
-    scored = sum(1 for row in all_analysis if row.get('Rebound Score') is not None)
-    if scored / total >= DEGRADED_SCORE_RATIO:
-        return False, None
-    return True, (f"\u26a0\ufe0f Data still warming ({scored} of {total} stocks scored). "
-                  "This happens for a few minutes after the losers list rolls over "
-                  "or while the data provider throttles. This page re-renders "
-                  "automatically within two minutes -- unscored rows show dashes "
-                  "rather than invented numbers.")
+    scored_rows = [row for row in all_analysis if row.get('Rebound Score') is not None]
+    scored = len(scored_rows)
+    if scored / total < DEGRADED_SCORE_RATIO:
+        return True, (f"\u26a0\ufe0f Data still warming ({scored} of {total} stocks scored). "
+                      "This happens for a few minutes after the losers list rolls over "
+                      "or while the data provider throttles. This page re-renders "
+                      "automatically within two minutes -- unscored rows show dashes "
+                      "rather than invented numbers.")
+    if scored_rows:
+        from collections import Counter
+        missing_counts = Counter(
+            label for row in scored_rows
+            for label in row.get('Missing Factor Labels') or [])
+        # Against the FULL board, not just scored rows: a thin scored subset
+        # sharing a gap must not read as a board-wide provider event (CR).
+        systemic = [label for label, count in missing_counts.items()
+                    if count / total >= SYSTEMIC_MISSING_RATIO]
+        if systemic:
+            names = ", ".join(sorted(systemic))
+            return True, (f"\u26a0\ufe0f The {names} input is unavailable across the "
+                          f"board (provider limiting), so every score is computed "
+                          f"from fewer factors than usual and reads lower. "
+                          f"Recommendations may be absent until it recovers; "
+                          f"nothing is substituted in its place.")
+    return False, None
 
 
 def page_cache_policy():
@@ -6329,6 +6357,7 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         if result and result.get('scored'):
             enhanced['AI Sentiment'] = sentiment_for_score(result['score'])
             enhanced['Rebound Score'] = result['score']
+            enhanced['Missing Factor Labels'] = [m['label'] for m in result.get('missing', [])]
             enhanced['Confidence'] = result['confidence']
             enhanced['Coverage'] = result['coverage']
             enhanced['Factors Used'] = result['factors_used']
