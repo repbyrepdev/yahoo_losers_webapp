@@ -14,6 +14,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Before any app import: page-GET tests would otherwise spawn the daemon
+# warmer/prebuilder threads, which outlive their test and write real cache
+# entries (universe:v1) into later tests' clean state -- the PR #58 flake.
+os.environ.setdefault("MARKET_DATA_DISABLE_WARMER", "1")
+
 import market_data  # noqa: E402
 
 

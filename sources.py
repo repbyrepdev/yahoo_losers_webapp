@@ -575,16 +575,30 @@ def options_putcall(symbol: str) -> Sourced:
     def produce():
         import re as _re
         until = (date.today() + timedelta(days=45)).isoformat()
-        try:
-            payload, err = _alpaca_get(
-                ALPACA_DATA_BASE, f"/v1beta1/options/snapshots/{symbol.upper()}",
-                {"feed": "indicative", "limit": 500,
-                 "expiration_date_lte": until})
-            if err:
-                return {"ok": False, "reason": err}
-        except Exception as e:
-            return {"ok": False, "reason": f"alpaca options failed ({type(e).__name__})"}
-        snapshots = payload.get("snapshots") or {}
+        # The endpoint paginates (max 1000/page). Contracts sort C-before-P
+        # within each expiry, so a truncated chain would overweight calls --
+        # merge every page or refuse.
+        snapshots = {}
+        token = None
+        for _page in range(5):
+            params = {"feed": "indicative", "limit": 1000,
+                      "expiration_date_lte": until}
+            if token:
+                params["page_token"] = token
+            try:
+                payload, err = _alpaca_get(
+                    ALPACA_DATA_BASE,
+                    f"/v1beta1/options/snapshots/{symbol.upper()}", params)
+                if err:
+                    return {"ok": False, "reason": err}
+            except Exception as e:
+                return {"ok": False, "reason": f"alpaca options failed ({type(e).__name__})"}
+            snapshots.update(payload.get("snapshots") or {})
+            token = payload.get("next_page_token")
+            if not token:
+                break
+        else:
+            return {"ok": False, "reason": "options chain exceeds page budget"}
         if not snapshots:
             return {"ok": False, "reason": "no listed options"}
         # OCC symbology is fixed from the right (8-digit strike, C/P,

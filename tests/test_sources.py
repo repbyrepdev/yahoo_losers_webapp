@@ -107,6 +107,7 @@ class TestLosersFailover:
                                 [{"Symbol": "ZZF1", "Name": "F", "Change": "-1",
                                   "Percent Change": "-10.00%", "Volume": "n/a",
                                   "Market Cap": "n/a"}], "fmp:biggest-losers"))
+        market_data._cache._local.pop("universe:v1", None)
         losers, status = app.stable_universe()
         assert status["success"] and status["data_source"] == "fmp-failover"
         assert losers[0]["Symbol"] == "ZZF1"
@@ -394,3 +395,36 @@ class TestFactorBackups:
         assert result.ok
         assert result.value["total"] == 9
         assert result.source == "finnhub:recommendation-trends"
+
+    def test_putcall_merges_all_pages(self, monkeypatch):
+        """CR PR58: a truncated chain overweights calls (C sorts before P),
+        so every page must merge before the ratio computes."""
+        pages = [
+            {"snapshots": {"ZZPG1260918C00010000": {"dailyBar": {"v": 300}}},
+             "next_page_token": "page-2"},
+            {"snapshots": {"ZZPG1260918P00010000": {"dailyBar": {"v": 600}}}},
+        ]
+        seen_tokens = []
+
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            assert "/v1beta1/options/snapshots/ZZPG1" in url
+            seen_tokens.append((params or {}).get("page_token"))
+            return FakeResponse(pages[len(seen_tokens) - 1])
+
+        monkeypatch.setattr(sources.requests, "get", fake)
+        result = sources.options_putcall("ZZPG1")
+        assert result.ok
+        assert seen_tokens == [None, "page-2"]
+        assert result.value["call_volume"] == 300
+        assert result.value["put_volume"] == 600
+        assert result.value["put_call_ratio"] == 2.0
+        assert result.value["contracts"] == 2
+
+    def test_putcall_refuses_past_page_budget(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "/v1beta1/options/snapshots/ZZPG2": {
+                "snapshots": {"ZZPG2260918C00010000": {"dailyBar": {"v": 1}}},
+                "next_page_token": "never-ends"}}))
+        result = sources.options_putcall("ZZPG2")
+        assert not result.ok
+        assert "page budget" in result.reason
