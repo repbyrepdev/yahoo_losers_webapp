@@ -79,7 +79,8 @@ class TestTrueTouchGrading:
         # Snapshot closes never reach 105 -- but the intraday high did.
         _snap(tmp_path, "2026-01-09", [{"symbol": "SPIKE", "price": 101.0}])
         _snap(tmp_path, "2026-01-20", [{"symbol": "SPIKE", "price": 99.0}])
-        lookup = lambda s: (["2026-01-07"], [106.0])
+        def lookup(s):
+            return (["2026-01-07"], [106.0])
         calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
         assert calib["n_resolved"] == 1
         assert calib["n_graded_on_highs"] == 1
@@ -91,7 +92,8 @@ class TestTrueTouchGrading:
               [{"symbol": "FLAT", "price": 100.0, "predictions": dict(self.PRED)}])
         _snap(tmp_path, "2026-01-09", [{"symbol": "FLAT", "price": 101.0}])
         _snap(tmp_path, "2026-01-20", [{"symbol": "FLAT", "price": 99.0}])
-        lookup = lambda s: (["2026-01-07", "2026-01-08"], [103.0, 102.0])
+        def lookup(s):
+            return (["2026-01-07", "2026-01-08"], [103.0, 102.0])
         calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
         assert calib["n_resolved"] == 1
         assert calib["n_graded_on_highs"] == 1
@@ -102,7 +104,9 @@ class TestTrueTouchGrading:
         _snap(tmp_path, "2026-01-05",
               [{"symbol": "NOHI", "price": 100.0, "predictions": dict(self.PRED)}])
         _snap(tmp_path, "2026-01-09", [{"symbol": "NOHI", "price": 106.0}])
-        calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lambda s: None)
+        def lookup(s):
+            return None
+        calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
         assert calib["n_resolved"] == 1
         assert calib["n_graded_on_highs"] == 0
 
@@ -111,7 +115,8 @@ class TestTrueTouchGrading:
               [{"symbol": "LATE", "price": 100.0, "predictions": dict(self.PRED)}])
         # No later snapshot prices at all; the only high is past the window.
         _snap(tmp_path, "2026-01-20", [{"symbol": "OTHER", "price": 1.0}])
-        lookup = lambda s: (["2026-01-19"], [110.0])
+        def lookup(s):
+            return (["2026-01-19"], [110.0])
         calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
         assert calib["n_resolved"] == 0 and calib["n_unresolved"] == 1
 
@@ -166,3 +171,38 @@ class TestMethodologyDisclosures:
         assert "Survivorship" in readme
         assert "n_eff" in readme
         assert "intraday highs" in readme
+
+
+    def test_close_hit_after_partial_highs_counts_as_close_graded(self, tmp_path):
+        """CR finding: the counter must reflect which evidence DECIDED the
+        grade. Partial highs that missed, then a snapshot close that hit ->
+        resolved as a hit, graded on closes."""
+        _snap(tmp_path, "2026-01-05",
+              [{"symbol": "MIX", "price": 100.0, "predictions": {
+                  "short_term:t1": {"probability": 0.5, "target_pct": 5.0,
+                                    "horizon_days": 7}}}])
+        _snap(tmp_path, "2026-01-09", [{"symbol": "MIX", "price": 106.0}])
+
+        def lookup(s):
+            return (["2026-01-06"], [101.0])  # partial: series stops early
+        calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
+        assert calib["n_resolved"] == 1
+        assert calib["n_graded_on_highs"] == 0
+
+    def test_full_window_highs_miss_is_final_despite_no_snapshots(self, tmp_path):
+        """A complete high series that never touched resolves the miss even
+        when no later snapshot priced the symbol at all."""
+        _snap(tmp_path, "2026-01-05",
+              [{"symbol": "DONE", "price": 100.0, "predictions": {
+                  "short_term:t1": {"probability": 0.5, "target_pct": 5.0,
+                                    "horizon_days": 7}}}])
+        _snap(tmp_path, "2026-01-20", [{"symbol": "OTHER", "price": 1.0}])
+
+        def lookup(s):
+            dates = [f"2026-01-{d:02d}" for d in range(6, 15)]
+            return (dates, [102.0] * len(dates))
+        calib = tracking.compute_calibration(str(tmp_path), highs_lookup=lookup)
+        assert calib["n_resolved"] == 1
+        assert calib["n_graded_on_highs"] == 1
+        bucket = next(b for b in calib["buckets"] if b["n"])
+        assert bucket["realized_rate"] == 0.0

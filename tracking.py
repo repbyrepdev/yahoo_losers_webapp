@@ -270,21 +270,33 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
     graded_on_highs = 0
     highs_cache = {}
 
-    def window_high_touch(symbol, start_iso, end_iso, threshold):
-        """True/False from cached intraday highs inside the window, or None."""
+    def window_high_verdict(symbol, start_iso, end_iso, threshold):
+        """Grade one window from cached intraday highs.
+
+        "hit": a high inside the window reached the threshold. "miss": highs
+        were observed across the whole window (the series extends past its
+        end) and none reached it -- highs bound closes, so this is final.
+        "partial": some in-window highs seen, none touched, but the series
+        stops before the window ends. None: no in-window high data at all.
+        """
         if symbol not in highs_cache:
             highs_cache[symbol] = highs_lookup(symbol) if highs_lookup else None
         series = highs_cache[symbol]
         if not series:
             return None
         dates, highs = series
-        seen = False
+        seen = extends_past_end = False
         for d, h in zip(dates, highs):
+            if d > end_iso:
+                extends_past_end = True
+                continue
             if h is not None and start_iso < d <= end_iso:
                 seen = True
                 if h >= threshold:
-                    return True
-        return False if seen else None
+                    return "hit"
+        if not seen:
+            return None
+        return "miss" if extends_past_end else "partial"
 
     for snap_date in ordered_dates:
         for row in by_date[snap_date].get("universe", []):
@@ -300,41 +312,46 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
                     continue
                 threshold = entry * (1 + target / 100.0)
                 end_ordinal = snap_date.toordinal() + horizon
-                hit = window_elapsed = price_observed = False
-                for later in ordered_dates:
-                    if later <= snap_date:
-                        continue
-                    if later.toordinal() > end_ordinal:
-                        window_elapsed = True   # a snapshot exists past the window
-                        break
-                    price = _price_on(by_date[later], symbol)
-                    if price is not None:
-                        price_observed = True
-                        if price >= threshold:
-                            hit = True
+                hit = window_elapsed = price_observed = high_graded = False
+
+                # Highs first: the prediction claimed a TOUCH, and intraday
+                # highs are the matching evidence -- they credit touches the
+                # daily closes missed, and a full-window high series that
+                # never touched is a final miss (highs bound closes). Snapshot
+                # closes are the fallback, not the primary.
+                verdict = window_high_verdict(
+                    symbol, snap_date.isoformat(),
+                    date.fromordinal(end_ordinal).isoformat(), threshold)
+                if verdict == "hit":
+                    hit = high_graded = True
+                elif verdict == "miss":
+                    price_observed = window_elapsed = high_graded = True
+                else:
+                    if verdict == "partial":
+                        price_observed = high_graded = True
+                    for later in ordered_dates:
+                        if later <= snap_date:
+                            continue
+                        if later.toordinal() > end_ordinal:
+                            window_elapsed = True   # a snapshot exists past the window
                             break
-                    # 80% of the window observed counts as resolved-enough.
-                    if later.toordinal() >= snap_date.toordinal() + horizon * 0.8:
-                        window_elapsed = True
-                # The prediction claimed a TOUCH, so intraday highs are the
-                # matching evidence; close-graded misses systematically
-                # under-credit the model. Highs can both confirm a touch the
-                # closes missed and stand in for missing snapshot prices.
-                if not hit:
-                    touched = window_high_touch(
-                        symbol, snap_date.isoformat(),
-                        date.fromordinal(end_ordinal).isoformat(), threshold)
-                    if touched is not None:
-                        graded_on_highs += 1
-                        if touched:
-                            hit = True
-                        else:
+                        price = _price_on(by_date[later], symbol)
+                        if price is not None:
                             price_observed = True
+                            if price >= threshold:
+                                hit = True
+                                high_graded = False  # the close, not a high, decided it
+                                break
+                        # 80% of the window observed counts as resolved-enough.
+                        if later.toordinal() >= snap_date.toordinal() + horizon * 0.8:
+                            window_elapsed = True
                 # A miss must be supported by at least one recorded in-window
                 # price. A symbol that vanished from every later snapshot has
                 # no observed outcome, and grading it would fabricate one.
                 if hit or (window_elapsed and price_observed):
                     pairs.append((float(prob), 1 if hit else 0))
+                    if high_graded:
+                        graded_on_highs += 1  # counted only when resolved
                 else:
                     unresolved += 1
 
