@@ -3250,6 +3250,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         {% if status.data_source == 'cached' %}📁 Cached
                         {% elif status.data_source == 'live' %}✅ Live
                         {% elif status.data_source == 'sample' %}⚠️ Sample
+                        {% elif status.data_source == 'fmp-failover' %}🟠 FMP failover
                         {% elif status.data_source == 'error' %}❌ Error
                         {% endif %}
                     </span>
@@ -3361,7 +3362,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
                         <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
                         <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
-                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}{% if stock.get('Analyst Revisions') %}<span class="chip" style="border-color: #17a2b8; color: #7fd8e8;" title="Analyst rating changes, past 30 days.">📣 {{ stock['Analyst Revisions'].upgrades }}⬆ {{ stock['Analyst Revisions'].downgrades }}⬇</span>{% endif %}
+                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}{% if stock.get('Analyst Revisions') %}<span class="chip" style="border-color: #17a2b8; color: #7fd8e8;" title="Analyst rating changes, past 30 days.">📣 {{ stock['Analyst Revisions'].label }}</span>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -3406,7 +3407,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].upgrades }}⬆ {{ stock['Analyst Revisions'].downgrades }}⬇ analysts 30d</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].label }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
                                     {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
@@ -3511,7 +3512,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].upgrades }}⬆ {{ stock['Analyst Revisions'].downgrades }}⬇ analysts 30d</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].label }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
                                     {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
@@ -3910,11 +3911,11 @@ def api_snapshot():
     # snapshots become the measured-slippage track record.
     try:
         import sources
-        scored = sorted((r for r in universe
-                         if isinstance(r.get("score"), (int, float))),
-                        key=lambda r: r["score"], reverse=True)
-        top = [r["symbol"] for r in scored[:sources.PAPER_MAX_PICKS]
-               if r.get("score", 0) >= 70]
+        qualifying = sorted((r for r in universe
+                             if isinstance(r.get("score"), (int, float))
+                             and r["score"] >= MIN_REBOUND_SCORE),
+                            key=lambda r: r["score"], reverse=True)
+        top = [r["symbol"] for r in qualifying[:sources.PAPER_MAX_PICKS]]
         if top:
             orders = sources.paper_execute_picks(top)
             snapshot["paper_orders"] = (orders.value if orders.ok
@@ -6357,15 +6358,27 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
 
         # Analyst revisions since the drop window, warmed by the info lane.
         # Cache-only read; the chip renders when there are recent events.
-        grades = market_data._cache.get(f"src:grades:{symbol.upper()}")
-        if grades and grades.get("ok") and (grades.get("upgrades") or grades.get("downgrades")):
-            enhanced['Analyst Revisions'] = {
-                "upgrades": grades.get("upgrades", 0),
-                "downgrades": grades.get("downgrades", 0),
-                "events": grades.get("events") or [],
-            }
-        else:
-            enhanced['Analyst Revisions'] = None
+        grades = market_data._cache.get(
+            f"src:grades:{symbol.upper()}:{_sources.GRADES_WINDOW_DAYS}")
+        enhanced['Analyst Revisions'] = None
+        if grades and grades.get("ok"):
+            ups = grades.get("upgrades") or 0
+            downs = grades.get("downgrades") or 0
+            trend = grades.get("monthly_trend")
+            if ups or downs:
+                enhanced['Analyst Revisions'] = {
+                    "upgrades": ups, "downgrades": downs,
+                    "label": f"{ups}⬆ {downs}⬇ analysts 30d",
+                    "events": grades.get("events") or [],
+                }
+            elif trend:
+                # Finnhub fallback carries a monthly trend, not events; the
+                # chip must still render (CR, PR 55).
+                enhanced['Analyst Revisions'] = {
+                    "upgrades": ups, "downgrades": downs,
+                    "label": f"analyst trend {trend:+d} vs last month",
+                    "events": [],
+                }
 
         # Going-concern language in recent filings, warmed by the info lane.
         # Only a flagged finding renders; a clear or unchecked state shows

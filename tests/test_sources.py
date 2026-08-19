@@ -53,6 +53,7 @@ class TestPaperGuard:
         assert sources._alpaca_trading_base() == sources.ALPACA_PAPER_BASE
 
     def test_paper_orders_are_opg_market_notional(self, monkeypatch):
+        monkeypatch.setenv("ALPACA_PAPER_BASE", "https://paper-api.alpaca.markets")
         submitted = []
 
         def fake_post(url, headers=None, json=None, timeout=None, **kw):
@@ -153,6 +154,22 @@ class TestEarnings:
         assert result.source.startswith("fmp")
 
 
+    def test_finnhub_earnings_fallback(self, monkeypatch):
+        soon = (date.today() + timedelta(days=8)).isoformat()
+
+        def router(url, params=None, headers=None, timeout=None, **kw):
+            if "/stable/earnings-calendar" in url:
+                return FakeResponse({}, status=403)
+            if "calendar/earnings" in url:
+                return FakeResponse({"earningsCalendar": [
+                    {"symbol": "ZZE2", "date": soon}]})
+            raise AssertionError(url)
+        monkeypatch.setattr(sources.requests, "get", router)
+        result = sources.earnings_confirmed("ZZE2")
+        assert result.ok and result.value["date"] == soon
+        assert result.source.startswith("finnhub")
+
+
 class TestSplits:
     def test_alpaca_ratio(self, monkeypatch):
         monkeypatch.setenv("ALPACA_PAPER_BASE", "https://paper-api.alpaca.markets")
@@ -204,16 +221,22 @@ class TestCalendar:
         market_data._cache.set("src:trading-days", {"days": ["2026-01-02"]}, 60)
         result = sources.trading_days_set(cache_only=True)
         assert result == {"2026-01-02"}
-        assert sources.trading_days_set.__defaults__  # signature guard
+        import inspect
+        params = inspect.signature(sources.trading_days_set).parameters
+        assert params["cache_only"].default is False  # hot path must opt in
 
 
 class TestPriceFailover:
     def test_patch_path_updates_same_day_close(self, monkeypatch):
+        # The last cached bar must be TODAY's: the failover only patches a
+        # same-session bar and skips stale ones (it must never overwrite
+        # yesterday's close with a live price).
+        today = market_data._eastern_now().date().isoformat()
         market_data._cache.set("hist:ZZPF1:5y",
                                {"ok": True, "closes": [10.0, 9.0],
                                 "full_fetched_at": 123.0}, 60)
         market_data._cache.set("ohlcv:ZZPF1:1y", {
-            "ok": True, "index": ["2026-01-02", "2026-01-03"],
+            "ok": True, "index": ["2026-01-02", today],
             "close": [10.0, 9.0], "high": [10.1, 9.1]}, 60)
         market_data.set_price_failover(lambda symbols: {"ZZPF1": 9.5})
         monkeypatch.setattr(market_data.yf, "download", lambda *a, **k: None)
@@ -228,10 +251,27 @@ class TestPriceFailover:
         ohlcv = market_data._cache.get("ohlcv:ZZPF1:1y")
         assert ohlcv["high"][-1] == 9.5 or ohlcv["high"][-1] == 9.1
 
+    def test_stale_last_bar_is_never_overwritten(self, monkeypatch):
+        """CR Critical, PR 55: an empty Yahoo frame on a new session must not
+        let the failover destroy yesterday's close."""
+        market_data._cache.set("hist:ZZPF2:5y",
+                               {"ok": True, "closes": [10.0, 9.0]}, 60)
+        market_data._cache.set("ohlcv:ZZPF2:1y", {
+            "ok": True, "index": ["2026-01-02", "2026-01-03"],
+            "close": [10.0, 9.0], "high": [10.1, 9.1]}, 60)
+        market_data.set_price_failover(lambda symbols: {"ZZPF2": 5.0})
+        monkeypatch.setattr(market_data.yf, "download", lambda *a, **k: None)
+        try:
+            patched = market_data.refresh_last_bar(["ZZPF2"])
+        finally:
+            market_data._price_failover_source[0] = None
+        assert patched == 0
+        assert market_data._cache.get("hist:ZZPF2:5y")["closes"][-1] == 9.0
+
 
 class TestRevisionChipTemplate:
     def test_chips_present_in_tables_and_card(self):
         source = open(os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "app.py"), encoding="utf-8").read()
-        assert source.count("analysts 30d") == 2       # both tables
-        assert source.count("Analyst rating changes") == 1  # card
+        assert source.count("stock['Analyst Revisions'].label") == 3  # 2 tables + card
+        assert source.count("Analyst rating changes") == 1  # card tooltip

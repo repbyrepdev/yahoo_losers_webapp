@@ -70,10 +70,26 @@ def _alpaca_trading_base() -> str:
 
 
 def _fmp_budget_ok() -> bool:
-    """In-code daily budget: read-increment a per-day counter, refuse at cap."""
+    """In-code daily budget, atomic where it can be.
+
+    Shared Redis gets a true INCR (both workers count against one budget);
+    without Redis each process keeps its own counter, so the cap is halved
+    per worker -- two isolated counters must still sum under the plan limit
+    (CR, PR 55).
+    """
     day_key = f"fmpbudget:{date.today().isoformat()}"
+    redis_client = market_data._cache._redis
+    if redis_client is not None:
+        try:
+            used = redis_client.incr(f"md:{market_data.CACHE_SCHEMA_VERSION}:{day_key}")
+            if used == 1:
+                redis_client.expire(f"md:{market_data.CACHE_SCHEMA_VERSION}:{day_key}",
+                                    24 * 60 * 60)
+            return used <= FMP_DAILY_BUDGET
+        except Exception:
+            pass
     used = market_data._cache.get(day_key) or 0
-    if used >= FMP_DAILY_BUDGET:
+    if used >= FMP_DAILY_BUDGET // 2:
         return False
     market_data._cache.set(day_key, used + 1, 24 * 60 * 60)
     return True
@@ -176,9 +192,13 @@ def add_trading_days(start: date, bars: int) -> date:
 # --- Corporate actions -------------------------------------------------------
 
 def splits_for(symbol: str, since_days: int = 400) -> Sourced:
-    """Split events: Alpaca announcements first, FMP as the fallback."""
+    """Split events: Alpaca announcements first, FMP as the fallback.
+
+    The lookback rides in the cache key: a 400-day answer must not serve a
+    caller who asked about an older interval (CR, PR 55).
+    """
     symbol = symbol.upper()
-    key = f"src:splits:{symbol}"
+    key = f"src:splits:{symbol}:{since_days}"
 
     def produce():
         since = (date.today() - timedelta(days=since_days)).isoformat()
@@ -249,14 +269,14 @@ def quote_failover(symbol: str) -> Sourced:
         if not err and payload.get("c"):
             return Sourced.live({"price": payload["c"], "at": payload.get("t")},
                                 "finnhub:quote")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.info(f"finnhub quote failed for {symbol}: {type(e).__name__}")
     try:
         payload, err = _fmp_get("quote", {"symbol": symbol.upper()})
         if not err and payload and payload[0].get("price"):
             return Sourced.live({"price": payload[0]["price"], "at": None}, "fmp:quote")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.info(f"fmp quote failed for {symbol}: {type(e).__name__}")
     return Sourced.unavailable("alpaca+finnhub+fmp:quote", "every price provider failed")
 
 
@@ -275,12 +295,16 @@ def fmp_losers() -> Sourced:
             payload, err = _fmp_get("biggest-losers", {})
             if err:
                 return {"ok": False, "reason": err}
-            rows = [{"Symbol": r.get("symbol"),
-                     "Name": r.get("name"),
-                     "Change": str(r.get("change")),
-                     "Percent Change": f"{r.get('changesPercentage', 0):.2f}%",
-                     "Volume": "n/a", "Market Cap": "n/a"}
-                    for r in payload if r.get("symbol")]
+            rows = []
+            for r in payload:
+                pct = r.get("changesPercentage")
+                if not r.get("symbol") or not isinstance(pct, (int, float)):
+                    continue  # one malformed row must not sink the last-resort source
+                rows.append({"Symbol": r.get("symbol"),
+                             "Name": r.get("name"),
+                             "Change": str(r.get("change")),
+                             "Percent Change": f"{pct:.2f}%",
+                             "Volume": "n/a", "Market Cap": "n/a"})
             if not rows:
                 return {"ok": False, "reason": "empty losers list"}
             return {"ok": True, "rows": rows[:25]}
@@ -295,7 +319,10 @@ def fmp_losers() -> Sourced:
 
 # --- Analyst revisions -------------------------------------------------------
 
-def analyst_grades(symbol: str, days: int = 30) -> Sourced:
+GRADES_WINDOW_DAYS = 30
+
+
+def analyst_grades(symbol: str, days: int = GRADES_WINDOW_DAYS) -> Sourced:
     """Per-firm upgrade/downgrade events since the window opened.
 
     THE post-drop signal: whether analysts cut or defended after the fall.
@@ -303,7 +330,9 @@ def analyst_grades(symbol: str, days: int = 30) -> Sourced:
     the coarser fallback.
     """
     symbol = symbol.upper()
-    key = f"src:grades:{symbol}"
+    # The window rides in the key: a 30-day answer must not serve a caller
+    # who asked about a different span (CR, PR 55).
+    key = f"src:grades:{symbol}:{days}"
 
     def produce():
         cutoff = (date.today() - timedelta(days=days)).isoformat()
@@ -335,7 +364,10 @@ def analyst_grades(symbol: str, days: int = 30) -> Sourced:
                 now_bull = latest.get("strongBuy", 0) + latest.get("buy", 0)
                 was_bull = prior.get("strongBuy", 0) + prior.get("buy", 0)
                 trend = now_bull - was_bull
+            up = max(0, trend) if trend is not None else 0
+            down = max(0, -trend) if trend is not None else 0
             return {"ok": True, "provider": "finnhub", "events": [],
+                    "upgrades": up, "downgrades": down,
                     "monthly_trend": trend, "latest_period": latest.get("period"),
                     "window_days": days}
         except Exception as e:
@@ -443,12 +475,21 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
         return Sourced.unavailable(source, "Alpaca keys not configured")
     submitted, failed = [], []
     for symbol in [s.upper() for s in symbols][:PAPER_MAX_PICKS]:
+        client_order_id = f"snap-{date.today().isoformat()}-{symbol}"
         try:
             market_data._throttle()
             response = requests.post(
                 f"{base}/v2/orders", headers=headers, timeout=20,
                 json={"symbol": symbol, "notional": PAPER_NOTIONAL_PER_PICK,
-                      "side": "buy", "type": "market", "time_in_force": "opg"})
+                      "side": "buy", "type": "market", "time_in_force": "opg",
+                      # Deterministic per (day, symbol): a snapshot retry
+                      # cannot double-submit -- Alpaca rejects the duplicate
+                      # id, which we treat as already-submitted.
+                      "client_order_id": client_order_id})
+            if response.status_code == 422 and "client_order_id" in response.text:
+                submitted.append({"symbol": symbol, "order_id": client_order_id,
+                                  "status": "already-submitted"})
+                continue
             response.raise_for_status()
             order = response.json()
             submitted.append({"symbol": symbol, "order_id": order.get("id"),

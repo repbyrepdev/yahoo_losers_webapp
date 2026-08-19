@@ -187,11 +187,11 @@ def market_phase() -> dict:
             days = source()
             if days is not None and now.date().isoformat() not in days:
                 from datetime import timedelta as _td
-                nxt = now
+                nxt = now + _td(days=1)
                 for _ in range(10):
-                    nxt = nxt + _td(days=1)
-                    if nxt.date().isoformat() in days or nxt.weekday() < 5 and days is None:
+                    if nxt.date().isoformat() in days:
                         break
+                    nxt = nxt + _td(days=1)
                 changes = nxt.replace(hour=PHASE_BOUNDS["pre_market"][0] // 60,
                                       minute=PHASE_BOUNDS["pre_market"][0] % 60,
                                       second=0, microsecond=0)
@@ -1774,11 +1774,18 @@ def refresh_last_bar(symbols: List[str]) -> int:
         except Exception as e:
             logger.warning(f"price failover failed: {type(e).__name__}")
             return 0
+        today_iso = _eastern_now().date().isoformat()
         patched = 0
         for symbol, price in prices.items():
             ohlcv = _cache.get(f"ohlcv:{symbol}:1y")
             hist = _cache.get(f"hist:{symbol}:5y")
             if not (ohlcv and ohlcv.get("ok") and hist and hist.get("ok")):
+                continue
+            # Same-session bars only: on a fresh session with an empty Yahoo
+            # frame, overwriting yesterday's close with today's live price
+            # would destroy the prior bar (CR Critical, PR 55). Appending
+            # without provider OHLC would be worse; skip until Yahoo returns.
+            if (ohlcv.get("index") or [""])[-1][:10] != today_iso:
                 continue
             closes = list(hist["closes"])
             closes[-1] = float(price)
@@ -2063,7 +2070,15 @@ def _info_loop():
             # provider, own throttle, 24h cache. The board chip must read
             # warm rather than fetch on a render.
             gc_missing = [s for s in universe if _cache.get(f"gc:{s.upper()}") is None]
-            if not missing and not gc_missing:
+            import sources as _src
+            grades_missing = [s for s in universe
+                              if _cache.get(f"src:grades:{s.upper()}:"
+                                            f"{_src.GRADES_WINDOW_DAYS}") is None]
+            earnings_missing = [s for s in universe
+                                if _cache.get(f"src:earnings:{s.upper()}") is None]
+            calendar_cold = _cache.get("src:trading-days") is None
+            if (not missing and not gc_missing and not grades_missing
+                    and not earnings_missing and not calendar_cold):
                 time.sleep(20)
                 continue
             for symbol in missing[:5]:
@@ -2074,15 +2089,15 @@ def _info_loop():
                 except Exception as e:
                     logger.warning(f"gc warm skipped for {symbol}: {type(e).__name__}")
             # Analyst revisions + confirmed earnings ride the same slow lane:
-            # 24h-cached per symbol, FMP budget enforced inside sources.
+            # 24h-cached per symbol, FMP budget enforced inside sources. The
+            # missing-lists were computed BEFORE the idle guard, so steady
+            # state cannot starve this block (CR, PR 55).
             try:
-                import sources as _src
-                _src.trading_days_set()  # daily calendar warm, 24h-cached
-                for symbol in [s for s in universe
-                               if _cache.get(f"src:grades:{s.upper()}") is None][:3]:
+                if calendar_cold:
+                    _src.trading_days_set()
+                for symbol in grades_missing[:3]:
                     _src.analyst_grades(symbol)
-                for symbol in [s for s in universe
-                               if _cache.get(f"src:earnings:{s.upper()}") is None][:3]:
+                for symbol in earnings_missing[:3]:
                     _src.earnings_confirmed(symbol)
             except Exception as e:
                 logger.warning(f"sources warm skipped: {type(e).__name__}")

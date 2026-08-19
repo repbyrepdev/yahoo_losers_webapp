@@ -129,8 +129,13 @@ def _split_factor_between(symbol, start, end):
     import is local and failure-tolerant so tracking stays standalone.
     """
     try:
+        import math
         import sources
-        events = sources.splits_for(symbol)
+        # Cover the whole graded interval: the default 400-day lookback would
+        # miss splits before older snapshots and leave their rows stuck as
+        # basis_suspect forever (CR, PR 55).
+        since_days = max(400, (date.today() - start).days + 30)
+        events = sources.splits_for(symbol, since_days=since_days)
         if not events.ok:
             return None
         factor = 1.0
@@ -140,10 +145,12 @@ def _split_factor_between(symbol, start, end):
             except (TypeError, ValueError):
                 continue
             ratio = event.get("ratio")
-            if ratio and start < when <= end:
+            if (isinstance(ratio, (int, float)) and math.isfinite(ratio)
+                    and ratio > 0 and start < when <= end):
                 factor *= ratio
-        return factor
-    except Exception:
+        return factor if math.isfinite(factor) and factor > 0 else None
+    except Exception as e:
+        logger.warning(f"split lookup failed for {symbol}: {type(e).__name__}")
         return None
 
 
