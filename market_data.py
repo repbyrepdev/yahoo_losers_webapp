@@ -782,7 +782,7 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
         spread["total"] = total
         return {"ok": True, "spread": spread}
 
-    payload = _cached(f"recs:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
+    payload = _cached(f"recs:v2:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     actual = ("finnhub:recommendation-trends" if payload.get("provider") == "finnhub"
@@ -820,31 +820,13 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
             logger.info(f"options fallback failed for {symbol}: {type(e).__name__}")
         return None
 
-    def produce():
-        if _options_cooldown_active():
-            fallback = _alpaca_fallback()
-            if fallback:
-                return fallback
-            return {"ok": False, "reason": "options endpoint cooling down"}
-        try:
-            ticker = _ticker(symbol)
-            expiries = ticker.options
-        except Exception as e:
-            if _is_rate_limited(f"{type(e).__name__}: {e}"):
-                _options_refused()
-                fallback = _alpaca_fallback()
-                if fallback:
-                    return fallback
-            raise
+    def _yahoo_flow():
+        ticker = _ticker(symbol)
+        expiries = ticker.options
         if not expiries:
             return {"ok": False, "reason": "no listed options"}
         expiry = expiries[0]
-        try:
-            chain = ticker.option_chain(expiry)
-        except Exception as e:
-            if _is_rate_limited(f"{type(e).__name__}: {e}"):
-                _options_refused()
-            raise
+        chain = ticker.option_chain(expiry)
         calls, puts = chain.calls, chain.puts
         if calls.empty and puts.empty:
             return {"ok": False, "reason": "empty chain"}
@@ -876,7 +858,28 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
             "contracts": int(len(calls) + len(puts)),
         }
 
-    payload = _cached(f"options:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
+    def produce():
+        if _options_cooldown_active():
+            return _alpaca_fallback() or {
+                "ok": False, "reason": "options endpoint cooling down"}
+        # Any Yahoo failure -- refusal dict or exception, at any stage -- gets
+        # one shot at the independent feed before the refusal caches. The
+        # first version only covered two of the four exits, so a chain-stage
+        # limiter refusal cached with no fallback attempt (live 2026-08-19).
+        try:
+            result = _yahoo_flow()
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            fallback = _alpaca_fallback()
+            if fallback:
+                return fallback
+            raise
+        if not result.get("ok"):
+            return _alpaca_fallback() or result
+        return result
+
+    payload = _cached(f"options:v2:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     actual = ("alpaca:options-indicative" if payload.get("provider") == "alpaca"
