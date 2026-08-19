@@ -453,8 +453,10 @@ def degraded_state(all_analysis):
         missing_counts = Counter(
             label for row in scored_rows
             for label in row.get('Missing Factor Labels') or [])
+        # Against the FULL board, not just scored rows: a thin scored subset
+        # sharing a gap must not read as a board-wide provider event (CR).
         systemic = [label for label, count in missing_counts.items()
-                    if count / scored >= SYSTEMIC_MISSING_RATIO]
+                    if count / total >= SYSTEMIC_MISSING_RATIO]
         if systemic:
             names = ", ".join(sorted(systemic))
             return True, (f"\u26a0\ufe0f The {names} input is unavailable across the "

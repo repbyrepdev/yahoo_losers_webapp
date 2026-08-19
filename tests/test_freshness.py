@@ -200,3 +200,19 @@ class TestSystemicMissingFactorBanner:
         import app
         rows = [self._row(75, []) for _ in range(20)]
         assert app.degraded_state(rows) == (False, None)
+
+    def test_threshold_is_against_the_full_board(self):
+        """CR, PR 57: 100% of a thin scored subset must not read as a
+        board-wide event when it is only 60% of the whole board."""
+        import app
+        rows = ([self._row(60, ["Options positioning"])] * 12
+                + [{"Rebound Score": None}] * 8)  # 12/20 = 60% of the board
+        degraded, note = app.degraded_state(rows)
+        assert note is None or "unavailable across the board" not in (note or "")
+
+    def test_exact_threshold_triggers(self):
+        import app
+        rows = ([self._row(60, ["Options positioning"])] * 16
+                + [self._row(60, [])] * 4)  # exactly 80% of the board
+        degraded, note = app.degraded_state(rows)
+        assert degraded is True and "Options positioning" in note
