@@ -159,16 +159,45 @@ def _eastern_now():
         return datetime.now()
 
 
+_trading_days_source = [None]
+
+
+def set_trading_days_source(fn):
+    """Register a callable returning a set of trading-day ISO dates (or None).
+
+    Lets the app inject a real exchange calendar without a circular import;
+    with none registered, weekday logic applies as before.
+    """
+    _trading_days_source[0] = fn
+
+
 def market_phase() -> dict:
     """Current session phase and when it next changes, on the Eastern clock.
 
-    Returns one of open / pre_market / after_hours / closed (overnight and
-    weekends). Holidays are deliberately not modelled: on a holiday the page
-    refreshes on the weekday cadence and renders the holiday status, which
-    wastes a little cache lifetime and misleads nobody.
+    Returns one of open / pre_market / after_hours / closed. With a trading
+    calendar registered, holidays read as closed instead of rendering an
+    open-market cadence on Labor Day.
     """
     now = _eastern_now()
     minutes = now.hour * 60 + now.minute
+
+    source = _trading_days_source[0]
+    if source is not None and now.weekday() < 5:
+        try:
+            days = source()
+            if days is not None and now.date().isoformat() not in days:
+                from datetime import timedelta as _td
+                nxt = now + _td(days=1)
+                for _ in range(10):
+                    if nxt.date().isoformat() in days:
+                        break
+                    nxt = nxt + _td(days=1)
+                changes = nxt.replace(hour=PHASE_BOUNDS["pre_market"][0] // 60,
+                                      minute=PHASE_BOUNDS["pre_market"][0] % 60,
+                                      second=0, microsecond=0)
+                return {"phase": "closed", "changes_at": changes}
+        except Exception as e:
+            logger.debug(f"trading-days source failed: {type(e).__name__}")
 
     def at(day, minute):
         from datetime import timedelta as _td
@@ -1701,6 +1730,14 @@ def _compute_technicals_from_closes(closes, volumes):
 PRICE_REFRESH_SECONDS = int(os.environ.get("MARKET_DATA_PRICE_REFRESH", 300))
 _last_price_refresh = [0.0]
 
+# App-injected failover: {symbol: price} for the current moment, from a
+# non-Yahoo provider, used when the batched chart refresh returns nothing.
+_price_failover_source = [None]
+
+
+def set_price_failover(fn):
+    _price_failover_source[0] = fn
+
 
 def refresh_last_bar(symbols: List[str]) -> int:
     """Update just the latest daily bar for many symbols in one request.
@@ -1727,7 +1764,48 @@ def refresh_last_bar(symbols: List[str]) -> int:
             _warm_backoff_until[0] = time.time() + 180
         return 0
     if frame is None or frame.empty:
-        return 0
+        # Yahoo gave nothing: patch same-day closes from the failover
+        # provider so the board's prices stay live through the outage.
+        failover = _price_failover_source[0]
+        if failover is None:
+            return 0
+        try:
+            prices = failover(symbols) or {}
+        except Exception as e:
+            logger.warning(f"price failover failed: {type(e).__name__}")
+            return 0
+        today_iso = _eastern_now().date().isoformat()
+        patched = 0
+        for symbol, price in prices.items():
+            ohlcv = _cache.get(f"ohlcv:{symbol}:1y")
+            hist = _cache.get(f"hist:{symbol}:5y")
+            if not (ohlcv and ohlcv.get("ok") and hist and hist.get("ok")):
+                continue
+            # Same-session bars only: on a fresh session with an empty Yahoo
+            # frame, overwriting yesterday's close with today's live price
+            # would destroy the prior bar (CR Critical, PR 55). Appending
+            # without provider OHLC would be worse; skip until Yahoo returns.
+            if (ohlcv.get("index") or [""])[-1][:10] != today_iso:
+                continue
+            closes = list(hist["closes"])
+            closes[-1] = float(price)
+            series = list(ohlcv.get("close") or [])
+            if series:
+                series[-1] = float(price)
+                ohlcv["close"] = series
+            highs = list(ohlcv.get("high") or [])
+            if highs and highs[-1] is not None:
+                highs[-1] = max(highs[-1], float(price))
+                ohlcv["high"] = highs
+            ttl = _effective_ttl(TTL_TECHNICALS)
+            _cache.set(f"ohlcv:{symbol}:1y", ohlcv, ttl)
+            _cache.set(f"hist:{symbol}:5y",
+                       {"ok": True, "closes": closes,
+                        "full_fetched_at": hist.get("full_fetched_at")}, ttl)
+            patched += 1
+        if patched:
+            logger.info(f"price failover patched {patched} symbols")
+        return patched
 
     updated = 0
     for symbol in symbols:
@@ -1992,7 +2070,15 @@ def _info_loop():
             # provider, own throttle, 24h cache. The board chip must read
             # warm rather than fetch on a render.
             gc_missing = [s for s in universe if _cache.get(f"gc:{s.upper()}") is None]
-            if not missing and not gc_missing:
+            import sources as _src
+            grades_missing = [s for s in universe
+                              if _cache.get(f"src:grades:{s.upper()}:"
+                                            f"{_src.GRADES_WINDOW_DAYS}") is None]
+            earnings_missing = [s for s in universe
+                                if _cache.get(f"src:earnings:{s.upper()}") is None]
+            calendar_cold = _cache.get("src:trading-days") is None
+            if (not missing and not gc_missing and not grades_missing
+                    and not earnings_missing and not calendar_cold):
                 time.sleep(20)
                 continue
             for symbol in missing[:5]:
@@ -2001,7 +2087,20 @@ def _info_loop():
                 try:
                     going_concern(symbol)
                 except Exception as e:
-                    logger.debug(f"gc warm skipped for {symbol}: {type(e).__name__}")
+                    logger.warning(f"gc warm skipped for {symbol}: {type(e).__name__}")
+            # Analyst revisions + confirmed earnings ride the same slow lane:
+            # 24h-cached per symbol, FMP budget enforced inside sources. The
+            # missing-lists were computed BEFORE the idle guard, so steady
+            # state cannot starve this block (CR, PR 55).
+            try:
+                if calendar_cold:
+                    _src.trading_days_set()
+                for symbol in grades_missing[:3]:
+                    _src.analyst_grades(symbol)
+                for symbol in earnings_missing[:3]:
+                    _src.earnings_confirmed(symbol)
+            except Exception as e:
+                logger.warning(f"sources warm skipped: {type(e).__name__}")
             save_cache_to_disk()
         except Exception as e:
             logger.warning(f"info lane cycle failed: {type(e).__name__}: {e}")
