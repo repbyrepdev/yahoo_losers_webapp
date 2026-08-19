@@ -172,3 +172,31 @@ class TestTrackingLookback:
         import inspect
         default = inspect.signature(tracking.tracked_symbols).parameters["lookback_days"].default
         assert default >= 183 + 14  # longest prediction horizon plus slack
+
+
+class TestSystemicMissingFactorBanner:
+    def _row(self, score, missing):
+        return {"Rebound Score": score, "Missing Factor Labels": missing}
+
+    def test_board_wide_missing_factor_is_announced(self):
+        """Live incident 2026-08-19: the options limiter removed the put/call
+        factor from every row, scores dropped below the pick gate, and the
+        page gave no explanation for the empty recommendations."""
+        import app
+        rows = [self._row(60 + i, ["Options positioning"]) for i in range(20)]
+        degraded, note = app.degraded_state(rows)
+        assert degraded is True
+        assert "Options positioning" in note
+        assert "unavailable across the board" in note
+
+    def test_scattered_missing_factors_stay_quiet(self):
+        import app
+        rows = ([self._row(60, ["Options positioning"])] * 3
+                + [self._row(60, [])] * 17)
+        degraded, note = app.degraded_state(rows)
+        assert degraded is False and note is None
+
+    def test_fully_covered_board_stays_quiet(self):
+        import app
+        rows = [self._row(75, []) for _ in range(20)]
+        assert app.degraded_state(rows) == (False, None)
