@@ -275,3 +275,62 @@ class TestRevisionChipTemplate:
             os.path.abspath(__file__))), "app.py"), encoding="utf-8").read()
         assert source.count("stock['Analyst Revisions'].label") == 3  # 2 tables + card
         assert source.count("Analyst rating changes") == 1  # card tooltip
+
+
+class TestOptionsCooldown:
+    @pytest.fixture(autouse=True)
+    def _restore_cooldown(self):
+        prior = market_data._options_cooldown_until[0]
+        market_data._options_cooldown_until[0] = 0.0
+        yield
+        market_data._options_cooldown_until[0] = prior
+
+    def test_refusal_pauses_and_short_circuits(self, monkeypatch):
+        """Live incident 2026-08-19: the prewarmer walked the universe and
+        tripped the per-symbol options endpoint. One refusal must pause ALL
+        options calls, and paused calls must not touch the provider."""
+        import time as _time
+
+        class Refused:
+            @property
+            def options(self):
+                raise RuntimeError("Too Many Requests. Rate limited.")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: Refused())
+        result = market_data.implied_move("ZZOC1")
+        assert not result.ok
+        assert market_data._options_cooldown_until[0] > _time.time()
+
+        calls = []
+        monkeypatch.setattr(market_data, "_ticker",
+                            lambda s: calls.append(s) or None)
+        cooled = market_data.implied_move("ZZOC2")
+        assert not cooled.ok and "cooling down" in cooled.reason
+        assert calls == []  # provider untouched during the cooldown
+
+    def test_chain_refusal_also_engages_cooldown(self, monkeypatch):
+        """CR, PR 56: .options can succeed while .option_chain() is the call
+        the limiter refuses -- that path must engage the cooldown too."""
+        import time as _time
+        from datetime import date, timedelta
+        expiry = (date.today() + timedelta(days=10)).isoformat()
+
+        class ChainRefused:
+            options = (expiry,)
+            def option_chain(self, e):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: ChainRefused())
+        market_data._cache.set("tech:ZZOC3", {"ok": True, "close": 100.0}, 60)
+        result = market_data.implied_move("ZZOC3")
+        assert not result.ok
+        assert market_data._options_cooldown_until[0] > _time.time()
+
+    def test_options_flow_respects_cooldown(self, monkeypatch):
+        """The other options producer must short-circuit identically."""
+        import time as _time
+        market_data._options_cooldown_until[0] = _time.time() + 60
+        calls = []
+        monkeypatch.setattr(market_data, "_ticker",
+                            lambda s: calls.append(s) or None)
+        result = market_data.options_flow("ZZOC4")
+        assert not result.ok and "cooling down" in result.reason
+        assert calls == []

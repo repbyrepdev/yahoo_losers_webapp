@@ -68,6 +68,22 @@ _last_call_at = [0.0]
 # is the endpoint behind every morning limiter trip in the logs. It gets its
 # own slower pacing, and one shared cooldown when it is refused -- individual
 # symbols are not poisoned for fifteen minutes each.
+# The options endpoint (chains behind options_flow and implied_move) is
+# per-symbol and as limiter-hostile as quoteSummary. One shared cooldown:
+# a refusal pauses ALL options calls, so a prewarmer walking the universe
+# cannot hammer the endpoint symbol after symbol.
+_options_cooldown_until = [0.0]
+
+
+def _options_cooldown_active() -> bool:
+    return time.time() < _options_cooldown_until[0]
+
+
+def _options_refused():
+    _options_cooldown_until[0] = time.time() + 15 * 60
+    logger.warning("options endpoint refused; all option calls paused 15 min")
+
+
 INFO_CALL_INTERVAL_SECONDS = float(os.environ.get("MARKET_DATA_INFO_INTERVAL", 4.0))
 INFO_INTERVAL_MAX_SECONDS = max(
     float(os.environ.get("MARKET_DATA_INFO_INTERVAL", 4.0)),
@@ -768,12 +784,24 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
     source = "yfinance:option_chain"
 
     def produce():
-        ticker = _ticker(symbol)
-        expiries = ticker.options
+        if _options_cooldown_active():
+            return {"ok": False, "reason": "options endpoint cooling down"}
+        try:
+            ticker = _ticker(symbol)
+            expiries = ticker.options
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            raise
         if not expiries:
             return {"ok": False, "reason": "no listed options"}
         expiry = expiries[0]
-        chain = ticker.option_chain(expiry)
+        try:
+            chain = ticker.option_chain(expiry)
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            raise
         calls, puts = chain.calls, chain.puts
         if calls.empty and puts.empty:
             return {"ok": False, "reason": "empty chain"}
@@ -824,8 +852,15 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
     source = "yfinance:option-chain-atm-straddle"
 
     def produce():
-        ticker = _ticker(symbol)
-        expiries = ticker.options
+        if _options_cooldown_active():
+            return {"ok": False, "reason": "options endpoint cooling down"}
+        try:
+            ticker = _ticker(symbol)
+            expiries = ticker.options
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            raise
         if not expiries:
             return {"ok": False, "reason": "no listed options"}
         from datetime import date as _date
@@ -842,7 +877,12 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
         if not expiry:
             return {"ok": False, "reason": "no expiry at least 5 days out"}
 
-        chain = ticker.option_chain(expiry)
+        try:
+            chain = ticker.option_chain(expiry)
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            raise
         calls, puts = chain.calls, chain.puts
         if calls.empty or puts.empty:
             return {"ok": False, "reason": "one-sided chain"}

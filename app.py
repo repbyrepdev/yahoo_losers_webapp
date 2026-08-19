@@ -193,7 +193,10 @@ def _stf_prewarm_loop():
                            if market_data._cache.get(f"stf:{s.upper()}") is None]
                 if missing and market_data._holds_warm_lease():
                     client.get(f"/api/sophisticated-timeframe/{missing[0]}")
-                    sleep_for = 45
+                    # 180s, not 45: each prewarm touches the per-symbol
+                    # options endpoint, and walking the universe at 45s
+                    # tripped its limiter (live incident, 2026-08-19).
+                    sleep_for = 180
         except Exception as e:
             logger.warning(f"stf prewarm cycle failed: {type(e).__name__}: {e}")
         time.sleep(sleep_for)
