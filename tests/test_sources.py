@@ -482,3 +482,26 @@ class TestFactorBackups:
         result = market_data.options_flow("ZZFB5")
         assert not result.ok
         assert result.reason == "no listed options"
+
+    def test_unavailable_fallback_called_once_when_rate_limited(self, monkeypatch):
+        """CR PR59: re-raising after a failed fallback let _cached's quick
+        retry re-enter under the armed cooldown -- a second Alpaca request
+        per symbol per cycle. The refusal must return, classified, instead."""
+        calls = []
+
+        class ExpiryDies:
+            @property
+            def options(self):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: ExpiryDies())
+
+        def counting_unavailable(sym):
+            calls.append(sym)
+            return market_data.Sourced.unavailable(
+                "alpaca:options-indicative", "budget exhausted")
+        monkeypatch.setattr(sources, "options_putcall", counting_unavailable)
+        result = market_data.options_flow("ZZFB4")
+        assert not result.ok
+        assert len(calls) == 1
+        assert "429" in result.reason or "429" in (result.value or {}).get("detail", "") \
+            or result.reason == "RuntimeError"

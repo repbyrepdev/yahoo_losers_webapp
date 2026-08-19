@@ -869,11 +869,19 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
         try:
             result = _yahoo_flow()
         except Exception as e:
-            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+            detail = f"{type(e).__name__}: {e}"
+            rate_limited = _is_rate_limited(detail)
+            if rate_limited:
                 _options_refused()
             fallback = _alpaca_fallback()
             if fallback:
                 return fallback
+            if rate_limited:
+                # Return, don't raise: _cached's quick retry would re-enter
+                # under the just-armed cooldown and call Alpaca a second
+                # time per symbol per cycle (CR, PR 59).
+                return {"ok": False, "reason": type(e).__name__,
+                        "detail": detail}
             raise
         if not result.get("ok"):
             return _alpaca_fallback() or result
