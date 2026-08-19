@@ -3205,6 +3205,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 <div class="stock-card" role="button" tabindex="0"
                      aria-label="Open full analysis for {{ stock.Symbol }}"
                      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"
+                     data-rank="{{ stock['Composite'].value if stock.get('Composite') else -1 }}"
                      data-score="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}"
                      data-upside="{{ stock['Potential Return %'] if stock['Potential Return %'] != '\u2014' else -999 }}"
                      data-p7="{{ stock['P Short']['sort'] }}"
@@ -3249,7 +3250,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 {% if recommendations %}
                     <div class="card-sorter" data-target="cards-recs">
                         <span>Sort:</span>
-                        <button class="sort-chip active" aria-pressed="true" onclick="sortCards('cards-recs', 'score', this)">Score</button>
+                        <button class="sort-chip active" aria-pressed="true" onclick="sortCards('cards-recs', 'rank', this)">Rank</button>
+                        <button class="sort-chip" onclick="sortCards('cards-recs', 'score', this)">Score</button>
                         <button class="sort-chip" onclick="sortCards('cards-recs', 'upside', this)">Upside</button>
                         <button class="sort-chip" onclick="sortCards('cards-recs', 'p7', this)">7d odds</button>
                     </div>
@@ -3258,13 +3260,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
-                                <th onclick="sortLoserTable(this, 1, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
-                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
-                                <th onclick="sortLoserTable(this, 3, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
-                                <th onclick="sortLoserTable(this, 4, 'num')" title="How often it reached its 20-day average within a month. Click to sort.">Recovery odds<br><span style="font-weight:400; font-size:10px;">1 month</span></th>
-                                <th onclick="sortLoserTable(this, 5, 'num')" title="How often it achieved the analyst-consensus gain within ~6 months. Click to sort.">Target odds<br><span style="font-weight:400; font-size:10px;">6 months</span></th>
-                                <th onclick="sortLoserTable(this, 6, 'num')">Price</th>
-                                <th onclick="sortLoserTable(this, 7, 'num')">Today</th>
+                                <th onclick="sortLoserTable(this, 1, 'num')" title="One stated ranking number for default ordering: 0.40 x setup score + 0.35 x short-horizon EV shape (clipped at plus/minus 10%) + 0.25 x 7-day bounce odds, renormalized over whichever components are measurable. A ranking device, not a probability. Click to sort.">Rank</th>
+                                <th onclick="sortLoserTable(this, 2, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
+                                <th onclick="sortLoserTable(this, 3, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
+                                <th onclick="sortLoserTable(this, 4, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
+                                <th onclick="sortLoserTable(this, 5, 'num')" title="How often it reached its 20-day average within a month. Click to sort.">Recovery odds<br><span style="font-weight:400; font-size:10px;">1 month</span></th>
+                                <th onclick="sortLoserTable(this, 6, 'num')" title="How often it achieved the analyst-consensus gain within ~6 months. Click to sort.">Target odds<br><span style="font-weight:400; font-size:10px;">6 months</span></th>
+                                <th onclick="sortLoserTable(this, 7, 'num')">Price</th>
+                                <th onclick="sortLoserTable(this, 8, 'num')">Today</th>
                                 <th>Analysis</th>
                             </tr>
                         </thead>
@@ -3274,6 +3277,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                     {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}
+                                </td>
+                                <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
+                                    {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3349,7 +3355,8 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 {% if all_analysis %}
                     <div class="card-sorter" data-target="cards-all">
                         <span>Sort:</span>
-                        <button class="sort-chip active" aria-pressed="true" onclick="sortCards('cards-all', 'score', this)">Score</button>
+                        <button class="sort-chip active" aria-pressed="true" onclick="sortCards('cards-all', 'rank', this)">Rank</button>
+                        <button class="sort-chip" onclick="sortCards('cards-all', 'score', this)">Score</button>
                         <button class="sort-chip" onclick="sortCards('cards-all', 'upside', this)">Upside</button>
                         <button class="sort-chip" onclick="sortCards('cards-all', 'p7', this)">7d odds</button>
                     </div>
@@ -3358,13 +3365,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <thead>
                             <tr>
                                 <th onclick="sortLoserTable(this, 0, 'text')">Symbol</th>
-                                <th onclick="sortLoserTable(this, 1, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
-                                <th onclick="sortLoserTable(this, 2, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
-                                <th onclick="sortLoserTable(this, 3, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
-                                <th onclick="sortLoserTable(this, 4, 'num')" title="How often it reached its 20-day average within a month. Click to sort.">Recovery odds<br><span style="font-weight:400; font-size:10px;">1 month</span></th>
-                                <th onclick="sortLoserTable(this, 5, 'num')" title="How often it achieved the analyst-consensus gain within ~6 months. Click to sort.">Target odds<br><span style="font-weight:400; font-size:10px;">6 months</span></th>
-                                <th onclick="sortLoserTable(this, 6, 'num')">Price</th>
-                                <th onclick="sortLoserTable(this, 7, 'num')">Today</th>
+                                <th onclick="sortLoserTable(this, 1, 'num')" title="One stated ranking number for default ordering: 0.40 x setup score + 0.35 x short-horizon EV shape (clipped at plus/minus 10%) + 0.25 x 7-day bounce odds, renormalized over whichever components are measurable. A ranking device, not a probability. Click to sort.">Rank</th>
+                                <th onclick="sortLoserTable(this, 2, 'num')" title="Backtested rebound score, 0-100, with confidence from input coverage. Click to sort.">Score</th>
+                                <th onclick="sortLoserTable(this, 3, 'num')" title="Analyst consensus upside and how many analysts stand behind it. Click to sort.">Analyst upside</th>
+                                <th onclick="sortLoserTable(this, 4, 'num')" title="How often this stock recovered yesterday's close within 7 trading days, over its own history. Click to sort.">Bounce odds<br><span style="font-weight:400; font-size:10px;">7 days</span></th>
+                                <th onclick="sortLoserTable(this, 5, 'num')" title="How often it reached its 20-day average within a month. Click to sort.">Recovery odds<br><span style="font-weight:400; font-size:10px;">1 month</span></th>
+                                <th onclick="sortLoserTable(this, 6, 'num')" title="How often it achieved the analyst-consensus gain within ~6 months. Click to sort.">Target odds<br><span style="font-weight:400; font-size:10px;">6 months</span></th>
+                                <th onclick="sortLoserTable(this, 7, 'num')">Price</th>
+                                <th onclick="sortLoserTable(this, 8, 'num')">Today</th>
                                 <th>Analysis</th>
                             </tr>
                         </thead>
@@ -3374,6 +3382,9 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
                                     {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}
+                                </td>
+                                <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
+                                    {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -5801,6 +5812,56 @@ def sentiment_for_score(score):
 THIN_LIQUIDITY_DOLLARS = 2_000_000
 
 
+COMPOSITE_WEIGHTS = {"setup": 0.40, "ev": 0.35, "bounce": 0.25}
+COMPOSITE_BASIS = ("0.40 × setup score + 0.35 × short-horizon EV shape "
+                   "(clipped ±10%) + 0.25 × 7-day bounce odds, renormalized "
+                   "over whichever components are measurable. A ranking "
+                   "device for ordering the board, not a probability.")
+
+
+def _composite_rank(enhanced):
+    """One stated number to order the board by, from the measurements it shows.
+
+    The five numbers on a row answer five different questions, so no single
+    one is the right default sort. This combines the three that bear on
+    "which row first": the backtested setup score (is the situation good),
+    the short-horizon expected value (is the trade well-shaped), and the
+    7-day bounce odds (does it move at all). Weights are stated, missing
+    components renormalize exactly like the score's own factors, and a row
+    with nothing measurable ranks below every row with something.
+    """
+    parts = []
+    score = enhanced.get('Rebound Score')
+    if isinstance(score, (int, float)):
+        parts.append((COMPOSITE_WEIGHTS["setup"], score / 100.0))
+    short = enhanced.get('P Short') or {}
+    ev = short.get('ev')
+    if isinstance(ev, (int, float)):
+        # EV in percent, squashed to 0-1 with ±10% as the useful range: an
+        # EV past ±10% on a 7-day horizon is already an extreme reading.
+        parts.append((COMPOSITE_WEIGHTS["ev"],
+                      (max(-10.0, min(10.0, ev)) + 10.0) / 20.0))
+    p7 = short.get('sort')
+    if isinstance(p7, (int, float)) and p7 >= 0:
+        parts.append((COMPOSITE_WEIGHTS["bounce"], p7 / 100.0))
+    if not parts:
+        return None
+    total_weight = sum(w for w, _ in parts)
+    value = sum(w * v for w, v in parts) / total_weight
+    return {"value": round(value * 100, 1), "components": len(parts),
+            "basis": COMPOSITE_BASIS}
+
+
+def _board_sort_key(enhanced):
+    """Default board order: composite rank first, the old ordering as ties."""
+    composite = enhanced.get('Composite')
+    return (composite is not None,
+            composite['value'] if composite else -1,
+            enhanced.get('Rebound Score') is not None,
+            enhanced.get('Rebound Score') or -1,
+            enhanced.get('Coverage') or 0)
+
+
 def _liquidity(symbol):
     """20-day average dollar volume from cached OHLCV, or None when cold."""
     ohlcv = market_data._cache.get(f"ohlcv:{symbol.upper()}:1y")
@@ -5966,6 +6027,9 @@ def _horizon_summaries(symbol, target_price=None):
                            f"{measured['conditioning']} windows{basis}, "
                            f"+{upside:.1f}% needed"),
                 "sort": round(pct, 1),
+                # Measured trade shape for the same target: feeds the
+                # composite rank, not just the drill-in.
+                "ev": measured.get("expected_value"),
             }
 
     measure("short", closes[-2], "short")
@@ -6059,16 +6123,15 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         # share of any predicted bounce. From cached OHLCV, no requests.
         enhanced['Liquidity'] = _liquidity(symbol)
 
+        enhanced['Composite'] = _composite_rank(enhanced)
+
         enhanced_analysis.append(enhanced)
 
-    # Highest conviction first: scored stocks above unscored, then by the
-    # backtested rebound score, coverage as the tiebreak. This is the "value
-    # prop" ordering the table renders with; column headers re-sort client-side.
-    enhanced_analysis.sort(
-        key=lambda e: (e.get('Rebound Score') is not None,
-                       e.get('Rebound Score') or -1,
-                       e.get('Coverage') or 0),
-        reverse=True)
+    # Best-first for an investor: the composite rank (setup score, short-
+    # horizon EV shape, bounce odds -- weights stated in its tooltip), with
+    # the old score ordering as the tiebreak. This is the default order the
+    # tables AND the mobile cards render in; headers/chips re-sort client-side.
+    enhanced_analysis.sort(key=_board_sort_key, reverse=True)
     return enhanced_analysis
 
 def score_stock(symbol, current_price=None, full=False):
@@ -6149,9 +6212,9 @@ def filter_ai_recovery_potential(enhanced_analysis):
             'Missing Inputs': [m['label'] for m in result['missing']],
         })
 
-    # Rank by score, then by how much of the model was observable, so a
-    # well-covered 72 outranks a thinly-covered 74.
-    picks.sort(key=lambda p: (p['Rebound Score'], p['Coverage']), reverse=True)
+    # Same default order as the main board: composite rank first, score and
+    # coverage as the ties -- one ordering philosophy everywhere.
+    picks.sort(key=_board_sort_key, reverse=True)
     return picks
 
 @app.route('/api/tasks/start/<symbol>')
