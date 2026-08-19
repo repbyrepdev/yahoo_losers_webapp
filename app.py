@@ -3230,7 +3230,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
                         <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
                         <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
-                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}
+                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -3273,7 +3273,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3373,7 +3373,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock.get('Rebound Score') if stock.get('Rebound Score') is not none else -1 }}">
                                     {% if stock.get('Rebound Score') is not none %}
@@ -3747,7 +3747,8 @@ def _calibration_section():
                  f"<td>{bucket['realized_rate']}%</td><td>{bucket['n']}</td></tr>")
     return (f"{header}<p>Brier score <strong>{calib['brier']}</strong> "
             f"(0 is clairvoyant, 0.25 is coin-flip guessing) over {calib['n_resolved']} "
-            f"resolved predictions.</p>"
+            f"resolved predictions ({calib.get('n_graded_on_highs', 0)} graded on "
+            f"intraday highs, the rest on daily closes).</p>"
             f"<table><thead><tr><th>Predicted</th><th>Bucket mean</th>"
             f"<th>Realized</th><th>n</th></tr></thead><tbody>{rows}</tbody></table>"
             f"<p class=\"sub\">{calib['note']}.</p>")
@@ -5795,6 +5796,29 @@ def sentiment_for_score(score):
 
 
 
+# Below this 20-day average dollar volume, spreads on these small caps are
+# routinely wide enough to matter against the size of the predicted bounce.
+THIN_LIQUIDITY_DOLLARS = 2_000_000
+
+
+def _liquidity(symbol):
+    """20-day average dollar volume from cached OHLCV, or None when cold."""
+    ohlcv = market_data._cache.get(f"ohlcv:{symbol.upper()}:1y")
+    if not (ohlcv and ohlcv.get("ok")):
+        return None
+    pairs = [(c, v) for c, v in zip(ohlcv.get("close") or [],
+                                    ohlcv.get("volume") or []) if c and v]
+    if len(pairs) < 20:
+        return None
+    dollars = sum(c * v for c, v in pairs[-20:]) / 20
+    return {
+        "dollar_volume_20d": round(dollars),
+        "display": (f"${dollars / 1e6:.1f}M/day" if dollars >= 1e6
+                    else f"${dollars / 1e3:.0f}K/day"),
+        "thin": dollars < THIN_LIQUIDITY_DOLLARS,
+    }
+
+
 def _evidence_bases(symbol, closes):
     """The evidence ladder both the board and the drill-in measure against.
 
@@ -6030,6 +6054,10 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         concern = market_data.going_concern(symbol, allow_fetch=False)
         enhanced['Going Concern'] = (concern.value if concern.ok and
                                      concern.value.get('flagged') else None)
+
+        # Tradability context: on a thin tape the spread can consume a large
+        # share of any predicted bounce. From cached OHLCV, no requests.
+        enhanced['Liquidity'] = _liquidity(symbol)
 
         enhanced_analysis.append(enhanced)
 
