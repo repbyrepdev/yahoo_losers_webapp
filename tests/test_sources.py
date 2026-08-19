@@ -656,3 +656,91 @@ class TestTargetFallback:
                             lambda *a, **k: (_ for _ in ()).throw(AssertionError("second HTTP")))
         second = sources.price_targets("ZZTF11")
         assert not second.ok and "already spent today" in second.reason
+
+
+class TestShortFloatBackup:
+    def test_composes_finra_short_over_fmp_float(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, json=None, **kw):
+            if "partitions" in url:
+                return FakeResponse({"availablePartitions": [
+                    {"partitions": ["2026-07-31"]}, {"partitions": ["2026-07-15"]}]})
+            if "consolidatedShortInterest" in url:
+                assert json["compareFilters"][1]["fieldValue"] == "2026-07-31"
+                return FakeResponse([{"currentShortPositionQuantity": 141606163,
+                                      "settlementDate": "2026-07-31"}])
+            if "shares-float" in url:
+                return FakeResponse([{"floatShares": 14669554809,
+                                      "date": "2026-08-19 04:02:30"}])
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        monkeypatch.setattr(sources.requests, "post", fake)
+        result = sources.short_percent_float("AAPL")
+        assert result.ok
+        assert result.value == 0.0097
+        assert "settlement 2026-07-31" in result.source
+
+    def test_refuses_implausible_ratio(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, json=None, **kw):
+            if "partitions" in url:
+                return FakeResponse({"availablePartitions": [{"partitions": ["2026-07-31"]}]})
+            if "consolidatedShortInterest" in url:
+                return FakeResponse([{"currentShortPositionQuantity": 900}])
+            if "shares-float" in url:
+                return FakeResponse([{"floatShares": 100, "date": "2026-08-19"}])
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        monkeypatch.setattr(sources.requests, "post", fake)
+        result = sources.short_percent_float("ZZSF2")
+        assert not result.ok
+        assert "implausible" in result.reason
+
+    def test_profile_fills_short_float_when_yahoo_blocked(self, monkeypatch):
+        monkeypatch.setattr(market_data, "_info",
+                            lambda sym, allow_fetch=True: {"ok": False, "reason": "401"})
+        monkeypatch.setattr(sources, "short_percent_float",
+                            lambda sym, allow_fetch=True: market_data.Sourced.live(
+                                0.0913, "finra:consolidated-short-interest (settlement 2026-07-31) / fmp:shares-float"))
+        prof = market_data.profile("ZZSF3")
+        assert prof["short_pct_float"].ok
+        assert prof["short_pct_float"].value == 0.0913
+        assert not prof["sector"].ok  # only the backed-up field recovers
+
+    def test_profile_healthy_yahoo_never_calls_finra(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(market_data, "_info",
+                            lambda sym, allow_fetch=True: {
+                                "ok": True, "name": "X", "sector": "Tech",
+                                "industry": "Chips", "short_pct_float": 0.05,
+                                "held_pct_institutions": 0.6, "avg_volume": 1e6})
+        monkeypatch.setattr(sources, "short_percent_float",
+                            lambda sym, allow_fetch=True: calls.append(sym))
+        prof = market_data.profile("ZZSF4")
+        assert prof["short_pct_float"].value == 0.05
+        assert prof["short_pct_float"].source == "yfinance:info"
+        assert calls == []
+
+    def test_lane_scan_short_only_failed_profiles(self):
+        market_data._cache.set("info:ZZSF5", {"ok": False, "reason": "401"}, 60)
+        market_data._cache.set("info:ZZSF6", {"ok": True, "short_pct_float": 0.02}, 60)
+        market_data._cache.set("info:ZZSF7", {"ok": True, "short_pct_float": None}, 60)
+        market_data._cache.set("info:ZZSF8", {"ok": False, "reason": "401"}, 60)
+        market_data._cache.set("src:shortfloat:ZZSF8", {"ok": True}, 60)
+        need = market_data._symbols_needing_short_fallback(
+            ["ZZSF5", "ZZSF6", "ZZSF7", "ZZSF8", "ZZSF9", "^VIX"])
+        assert need == ["ZZSF5", "ZZSF7"]
+
+    def test_one_finra_spend_per_symbol_per_day(self, monkeypatch):
+        hits = []
+        def fake(url, params=None, headers=None, timeout=None, json=None, **kw):
+            hits.append(url)
+            if "partitions" in url:
+                return FakeResponse({"availablePartitions": [{"partitions": ["2026-07-31"]}]})
+            return FakeResponse([])
+        monkeypatch.setattr(sources.requests, "get", fake)
+        monkeypatch.setattr(sources.requests, "post", fake)
+        first = sources.short_percent_float("ZZSF10")
+        assert not first.ok and "no short interest" in first.reason
+        market_data._cache._local.pop("src:shortfloat:ZZSF10", None)
+        second = sources.short_percent_float("ZZSF10")
+        assert not second.ok and "already spent today" in second.reason
+        assert len([h for h in hits if "data/group" in h]) == 1

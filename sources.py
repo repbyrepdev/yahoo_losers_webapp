@@ -676,3 +676,114 @@ def price_targets(symbol: str, allow_fetch: bool = True) -> Sourced:
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({"mean": payload["mean"], "count": payload["count"],
                          "window": payload["window"]}, source)
+
+
+def _finra_latest_settlement() -> Optional[str]:
+    """Newest consolidated-short-interest settlement date. One request per
+    day, shared by every symbol -- the dataset is partitioned by date and
+    only sortable within a named partition."""
+    key = "src:finra:si-settlement"
+
+    def produce():
+        try:
+            resp = requests.get(
+                "https://api.finra.org/partitions/group/otcMarket"
+                "/name/consolidatedShortInterest",
+                headers={"Accept": "application/json"}, timeout=20)
+            resp.raise_for_status()
+            parts = [p["partitions"][0]
+                     for p in (resp.json().get("availablePartitions") or [])
+                     if p.get("partitions")]
+            if not parts:
+                return {"ok": False, "reason": "no partitions listed"}
+            return {"ok": True, "settlement": max(parts)}
+        except Exception as e:
+            return {"ok": False, "reason": f"finra partitions failed ({type(e).__name__})"}
+
+    payload = market_data._cached(key, 24 * 60 * 60, produce)
+    return payload.get("settlement") if payload.get("ok") else None
+
+
+def shares_float(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Free-float share count from FMP (free tier, verified 2026-08-19).
+
+    Float moves slowly: cached a week, and a day stamp caps HTTP at one
+    request per symbol per day whatever the response cache does."""
+    source = "fmp:shares-float"
+    key = f"src:float:{symbol.upper()}"
+
+    def produce():
+        stamp_key = f"src:float:asked:{symbol.upper()}:{date.today().isoformat()}"
+        if market_data._cache.get(stamp_key) is not None:
+            return {"ok": False, "reason": "fmp float request already spent today"}
+        market_data._cache.set(stamp_key, {"asked": True}, 24 * 60 * 60)
+        try:
+            payload, err = _fmp_get("shares-float", {"symbol": symbol.upper()})
+            if err:
+                return {"ok": False, "reason": err}
+            if not payload or not payload[0].get("floatShares"):
+                return {"ok": False, "reason": "float not reported"}
+            shares = float(payload[0]["floatShares"])
+            if shares <= 0:
+                return {"ok": False, "reason": "float not reported"}
+            return {"ok": True, "floatShares": shares,
+                    "as_of": (payload[0].get("date") or "")[:10]}
+        except Exception as e:
+            return {"ok": False, "reason": f"fmp float failed ({type(e).__name__})"}
+
+    payload = market_data._cached(key, 7 * 24 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+def short_percent_float(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Short interest as a fraction of float: FINRA's consolidated short
+    interest (the same twice-monthly settlement data Yahoo repackages) over
+    FMP's float. Backup for the score's short-interest factor -- the last
+    input that was Yahoo-only. Labeled with its settlement date."""
+    source = "finra:consolidated-short-interest"
+    key = f"src:shortfloat:{symbol.upper()}"
+
+    def produce():
+        stamp_key = f"src:shortfloat:asked:{symbol.upper()}:{date.today().isoformat()}"
+        if market_data._cache.get(stamp_key) is not None:
+            return {"ok": False, "reason": "short-interest request already spent today"}
+        market_data._cache.set(stamp_key, {"asked": True}, 24 * 60 * 60)
+        settlement = _finra_latest_settlement()
+        if not settlement:
+            return {"ok": False, "reason": "finra settlement calendar unavailable"}
+        try:
+            resp = requests.post(
+                "https://api.finra.org/data/group/otcMarket"
+                "/name/consolidatedShortInterest",
+                headers={"Accept": "application/json",
+                         "Content-Type": "application/json"},
+                json={"limit": 1, "compareFilters": [
+                    {"compareType": "EQUAL", "fieldName": "symbolCode",
+                     "fieldValue": symbol.upper()},
+                    {"compareType": "EQUAL", "fieldName": "settlementDate",
+                     "fieldValue": settlement}]},
+                timeout=20)
+            resp.raise_for_status()
+            rows = resp.json()
+        except Exception as e:
+            return {"ok": False, "reason": f"finra short interest failed ({type(e).__name__})"}
+        if not rows or not int(rows[0].get("currentShortPositionQuantity") or 0):
+            return {"ok": False, "reason": "no short interest reported"}
+        shares_short = int(rows[0]["currentShortPositionQuantity"])
+        flt = shares_float(symbol, allow_fetch=True)
+        if not flt.ok:
+            return {"ok": False, "reason": f"float unavailable ({flt.reason})"}
+        pct = shares_short / flt.value["floatShares"]
+        if not 0 < pct < 1.5:
+            return {"ok": False,
+                    "reason": f"implausible short/float ratio {pct:.2f}"}
+        return {"ok": True, "pct": round(pct, 4), "shares_short": shares_short,
+                "as_of": settlement}
+
+    payload = market_data._cached(key, 3 * 24 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["pct"],
+                        f"{source} (settlement {payload['as_of']}) / fmp:shares-float")
