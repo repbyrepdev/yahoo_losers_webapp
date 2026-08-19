@@ -25,7 +25,7 @@ RIDGE_LAMBDA = 1.0       # small L2 so a collinear factor cannot explode
 
 
 def _training_rows(directory=None):
-    """(day, factor-score vector dict, forward return pct) per scored symbol.
+    """One dict per scored symbol: day, factor scores, forward return, resolved_on.
 
     Only rows whose 7-day forward return is resolvable from later snapshots
     qualify; unresolved rows are simply not training data yet.
@@ -55,14 +55,18 @@ def _training_rows(directory=None):
                 if gap <= max(2, int(FIT_HORIZON * 0.4)):
                     price = tracking.price_on(by_date[later], symbol)
                     if price and (best is None or gap < best[0]):
-                        best = (gap, price)
+                        best = (gap, price, later)
             if best is None:
                 continue
             fwd_return = (best[1] - entry) / entry * 100.0
             scores = {key: value.get("score") for key, value in factors.items()
                       if isinstance(value, dict) and isinstance(value.get("score"), (int, float))}
             if scores:
-                rows.append((snap_date, scores, fwd_return))
+                # resolved_on rides along so the fit can honour the strict
+                # out-of-sample boundary: a return is only usable as training
+                # data once the snapshot that RESOLVED it exists.
+                rows.append({"day": snap_date, "scores": scores,
+                             "fwd_return": fwd_return, "resolved_on": best[2]})
     return rows
 
 
@@ -83,7 +87,7 @@ def walk_forward(directory=None):
     change would have to win before anyone should believe in it.
     """
     rows = _training_rows(directory)
-    days = sorted({r[0] for r in rows})
+    days = sorted({r["day"] for r in rows})
     result = {
         "fit_days_available": len(days),
         "min_days_required": MIN_FIT_DAYS,
@@ -95,30 +99,46 @@ def walk_forward(directory=None):
                             "with resolved forward returns")
         return result
 
-    factor_keys = sorted({key for _, scores, _ in rows for key in scores})
+    factor_keys = sorted({key for r in rows for key in r["scores"]})
 
     def vectorize(scores):
+        # 50.0 stands in for an absent factor; the imputation share is
+        # counted and published so a fit built mostly on filler says so.
         return [scores.get(key, 50.0) / 100.0 for key in factor_keys]
+
+    imputed = sum(1 for r in rows for key in factor_keys if key not in r["scores"])
+    total_cells = max(1, len(rows) * len(factor_keys))
 
     fitted_daily, equal_daily = [], []
     weights = None
-    for test_day in days[MIN_FIT_DAYS // 2:]:
-        train = [r for r in rows if r[0] < test_day]
-        test = [r for r in rows if r[0] == test_day]
-        if len({r[0] for r in train}) < MIN_FIT_DAYS // 2 or not test:
+    # Strict out-of-sample, both ways the leak can happen: testing starts
+    # only after MIN_FIT_DAYS full days exist, and a training row qualifies
+    # only when the snapshot that RESOLVED its forward return predates the
+    # test day -- otherwise future prices leak into the fitted weights.
+    for test_day in days[MIN_FIT_DAYS:]:
+        train = [r for r in rows
+                 if r["day"] < test_day and r["resolved_on"] < test_day]
+        test = [r for r in rows if r["day"] == test_day]
+        if len({r["day"] for r in train}) < MIN_FIT_DAYS or not test:
             continue
-        matrix = np.array([vectorize(scores) for _, scores, _ in train])
-        returns = np.array([ret for _, _, ret in train])
-        weights = _fit_ridge(matrix, returns)
-        by_fitted = sorted(test, key=lambda r: float(np.dot(vectorize(r[1]), weights)),
-                           reverse=True)[:3]
+        matrix = np.array([vectorize(r["scores"]) for r in train])
+        returns = np.array([r["fwd_return"] for r in train])
+        # Centered fit: the intercept (mean return) is absorbed before the
+        # ridge solve, so factor weights measure deviation from the average
+        # day instead of also carrying the market's base drift.
+        return_mean = returns.mean()
+        matrix_means = matrix.mean(axis=0)
+        weights = _fit_ridge(matrix - matrix_means, returns - return_mean)
+        by_fitted = sorted(test, key=lambda r: float(
+            np.dot(np.array(vectorize(r["scores"])) - matrix_means, weights)),
+            reverse=True)[:3]
         # Equal-weight mean, and labelled as such: reproducing the live
         # scorer's renormalized weights over historical factor rows would
         # claim a fidelity the snapshot data cannot verify.
-        by_equal = sorted(test, key=lambda r: sum(r[1].values()) / len(r[1]),
+        by_equal = sorted(test, key=lambda r: sum(r["scores"].values()) / len(r["scores"]),
                           reverse=True)[:3]
-        fitted_daily.append(sum(r[2] for r in by_fitted) / len(by_fitted))
-        equal_daily.append(sum(r[2] for r in by_equal) / len(by_equal))
+        fitted_daily.append(sum(r["fwd_return"] for r in by_fitted) / len(by_fitted))
+        equal_daily.append(sum(r["fwd_return"] for r in by_equal) / len(by_equal))
 
     if not fitted_daily:
         result["ready"] = False
@@ -131,6 +151,7 @@ def walk_forward(directory=None):
         "equal_weight_top3_mean_return": round(float(np.mean(equal_daily)), 2),
         "latest_weights": {key: round(float(w), 4)
                            for key, w in zip(factor_keys, weights)},
+        "imputed_factor_share": round(imputed / total_cells, 3),
         "status": "report-only: live scoring still uses the hand-chosen weights",
     })
     return result
