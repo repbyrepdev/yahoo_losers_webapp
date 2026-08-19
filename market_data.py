@@ -751,6 +751,14 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
     return Sourced.live(payload["items"], source)
 
 
+def _recs_key(symbol: str) -> str:
+    return f"recs:v2:{symbol.upper()}"
+
+
+def _options_key(symbol: str) -> str:
+    return f"options:v2:{symbol.upper()}"
+
+
 def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     """Current analyst rating spread (strongBuy/buy/hold/sell/strongSell)."""
     source = "yfinance:recommendations"
@@ -782,7 +790,7 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
         spread["total"] = total
         return {"ok": True, "spread": spread}
 
-    payload = _cached(f"recs:v2:{symbol.upper()}", TTL_TARGETS, produce, allow_fetch)
+    payload = _cached(_recs_key(symbol), TTL_TARGETS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     actual = ("finnhub:recommendation-trends" if payload.get("provider") == "finnhub"
@@ -887,7 +895,7 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
             return _alpaca_fallback() or result
         return result
 
-    payload = _cached(f"options:v2:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
+    payload = _cached(_options_key(symbol), TTL_OPTIONS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     actual = ("alpaca:options-indicative" if payload.get("provider") == "alpaca"
@@ -1761,7 +1769,6 @@ def institutional_holders(symbol: str, limit: int = 5) -> Sourced:
 
 # Concurrency for cache warming. The work is network-bound, so threads help
 # even on a fractional CPU, but the provider will throttle an aggressive fan-out.
-WARM_WORKERS = int(os.environ.get("MARKET_DATA_WARM_WORKERS", 3))
 
 # Per-cycle ceiling on uncached profile fetches. This was 12 when fetching
 # still happened inside page renders, where 25 rapid calls from one datacenter
@@ -2138,6 +2145,19 @@ def request_warm(symbols: List[str]) -> None:
                 _warm_queue.append(upper)
 
 
+def _symbols_missing_factor_keys(symbols):
+    """Universe subsets whose ratings/options factor caches are cold.
+
+    These factors previously warmed only as a side effect of profile expiry
+    in the dead pre-lane warm(): with profiles kept warm by this lane, a
+    fresh key family or an outage-cleared cache left the whole board at 4/6
+    inputs indefinitely (live 2026-08-19)."""
+    live = [s for s in symbols if not s.startswith("^")]
+    recs = [s for s in live if _cache.get(_recs_key(s)) is None]
+    options = [s for s in live if _cache.get(_options_key(s)) is None]
+    return recs, options
+
+
 def _symbols_missing_info(symbols):
     """The subset whose profile is absent from cache -- the info lane's queue."""
     return [s for s in symbols
@@ -2172,9 +2192,11 @@ def _info_loop():
                                             f"{_src.GRADES_WINDOW_DAYS}") is None]
             earnings_missing = [s for s in universe
                                 if _cache.get(f"src:earnings:{s.upper()}") is None]
+            recs_missing, options_missing = _symbols_missing_factor_keys(universe)
             calendar_cold = _cache.get("src:trading-days") is None
             if (not missing and not gc_missing and not grades_missing
-                    and not earnings_missing and not calendar_cold):
+                    and not earnings_missing and not recs_missing
+                    and not options_missing and not calendar_cold):
                 time.sleep(20)
                 continue
             for symbol in missing[:5]:
@@ -2197,6 +2219,19 @@ def _info_loop():
                     _src.earnings_confirmed(symbol)
             except Exception as e:
                 logger.warning(f"sources warm skipped: {type(e).__name__}")
+            # The two score factors with independent backups drain here too.
+            # produce() owns cooldown and failover, so a limited Yahoo costs
+            # one fallback call per symbol, never a blocked lane.
+            for symbol in recs_missing[:3]:
+                try:
+                    analyst_recommendations(symbol)
+                except Exception as e:
+                    logger.warning(f"recs warm skipped for {symbol}: {type(e).__name__}")
+            for symbol in options_missing[:3]:
+                try:
+                    options_flow(symbol)
+                except Exception as e:
+                    logger.warning(f"options warm skipped for {symbol}: {type(e).__name__}")
             save_cache_to_disk()
         except Exception as e:
             logger.warning(f"info lane cycle failed: {type(e).__name__}: {e}")
@@ -2291,61 +2326,3 @@ def start_background_warmer():
     logger.info("background warmer started (fast lane + info lane)")
     return True
 
-
-def warm(symbols: List[str], include_options: bool = False) -> dict:
-    """Populate the cache for a batch of symbols, concurrently.
-
-    Rendering the loser list needs roughly four provider calls per symbol. Done
-    sequentially for 25 symbols that took ~45s, which is far too slow for a page
-    load. These calls are almost entirely spent waiting on the network, so they
-    parallelise well even on a 0.5 CPU instance.
-
-    Every task is individually guarded: one symbol failing must not abort the
-    warm for the rest, and anything still missing simply resolves unavailable
-    later rather than blocking the render.
-    """
-    from concurrent.futures import ThreadPoolExecutor
-
-    # One request covers every symbol's history; only the profile remains
-    # per-symbol, which takes a cold refresh from ~50 requests down to ~26.
-    try:
-        batch_history(symbols)
-    except Exception as e:
-        logger.warning(f"batch history unavailable: {type(e).__name__}: {e}")
-
-    # Only symbols whose profile is not already cached count against the cap.
-    uncached = [s for s in symbols if _cache.get(f"info:{s.upper()}") is None]
-    budgeted = uncached[:MAX_PROFILES_PER_WARM]
-    if len(uncached) > len(budgeted):
-        logger.info(f"profile fetch capped at {len(budgeted)} of {len(uncached)} "
-                    f"uncached symbols; the rest fill in on the next refresh")
-
-    tasks = []
-    for symbol in budgeted:
-        tasks.append((symbol, _info))
-        if include_options:
-            tasks.append((symbol, analyst_recommendations))
-            tasks.append((symbol, options_flow))
-
-    started = time.time()
-    failures = 0
-
-    def run(job):
-        symbol, fn = job
-        try:
-            fn(symbol)
-            return True
-        except Exception as e:
-            logger.warning(f"warm {fn.__name__} failed for {symbol}: {type(e).__name__}")
-            return False
-
-    with ThreadPoolExecutor(max_workers=WARM_WORKERS) as pool:
-        for succeeded in pool.map(run, tasks):
-            if not succeeded:
-                failures += 1
-
-    elapsed = time.time() - started
-    save_cache_to_disk()
-    logger.info(f"warmed {len(symbols)} symbols in {elapsed:.1f}s ({failures} task failures)")
-    return {"symbols": len(symbols), "tasks": len(tasks), "failures": failures,
-            "seconds": round(elapsed, 1)}
