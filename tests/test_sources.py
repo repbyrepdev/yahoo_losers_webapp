@@ -624,3 +624,35 @@ class TestTargetFallback:
         need = market_data._symbols_needing_target_fallback(
             ["ZZTF6", "ZZTF7", "ZZTF8", "ZZTF9", "^GSPC"])
         assert need == ["ZZTF6"]
+
+    def test_one_fmp_request_per_symbol_per_day(self, monkeypatch):
+        """CR PR62: response-cache TTLs (5-min structural first strike,
+        off-market shortening) must not translate into repeat FMP spends.
+        The day stamp caps HTTP at one, whatever the response cache does."""
+        hits = []
+
+        def counting(url, params=None, headers=None, timeout=None, **kw):
+            hits.append(url)
+            return FakeResponse([])  # structural: no coverage published
+
+        monkeypatch.setattr(sources.requests, "get", counting)
+        first = sources.price_targets("ZZTF10")
+        assert not first.ok and "no analyst coverage" in first.reason
+        # simulate the 5-minute first-strike expiry: response cache gone
+        market_data._cache._local.pop("src:targets:ZZTF10", None)
+        second = sources.price_targets("ZZTF10")
+        assert not second.ok
+        assert "already spent today" in second.reason
+        assert len(hits) == 1
+
+    def test_day_stamp_set_even_on_transport_failure(self, monkeypatch):
+        def dying(url, params=None, headers=None, timeout=None, **kw):
+            raise RuntimeError("connection reset")
+        monkeypatch.setattr(sources.requests, "get", dying)
+        first = sources.price_targets("ZZTF11")
+        assert not first.ok
+        market_data._cache._local.pop("src:targets:ZZTF11", None)
+        monkeypatch.setattr(sources.requests, "get",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("second HTTP")))
+        second = sources.price_targets("ZZTF11")
+        assert not second.ok and "already spent today" in second.reason

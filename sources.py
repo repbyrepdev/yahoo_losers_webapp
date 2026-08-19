@@ -638,6 +638,17 @@ def price_targets(symbol: str, allow_fetch: bool = True) -> Sourced:
     key = f"src:targets:{symbol.upper()}"
 
     def produce():
+        # The response cache alone cannot hold the one-request-per-symbol-per-
+        # day contract: structural first-strikes live 5 minutes and successes
+        # can expire early off-market. A day-keyed stamp, set before the
+        # request and regardless of outcome, makes the contract literal (CR,
+        # PR 62). The lane is lease-gated, so a cross-worker race costs at
+        # worst one duplicate request.
+        stamp_key = f"src:targets:asked:{symbol.upper()}:{date.today().isoformat()}"
+        if market_data._cache.get(stamp_key) is not None:
+            return {"ok": False,
+                    "reason": "fmp target request already spent today"}
+        market_data._cache.set(stamp_key, {"asked": True}, 24 * 60 * 60)
         try:
             payload, err = _fmp_get("price-target-summary",
                                     {"symbol": symbol.upper()})
