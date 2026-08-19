@@ -796,7 +796,12 @@ def options_flow(symbol: str, allow_fetch: bool = True) -> Sourced:
         if not expiries:
             return {"ok": False, "reason": "no listed options"}
         expiry = expiries[0]
-        chain = ticker.option_chain(expiry)
+        try:
+            chain = ticker.option_chain(expiry)
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            raise
         calls, puts = chain.calls, chain.puts
         if calls.empty and puts.empty:
             return {"ok": False, "reason": "empty chain"}
@@ -872,7 +877,12 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
         if not expiry:
             return {"ok": False, "reason": "no expiry at least 5 days out"}
 
-        chain = ticker.option_chain(expiry)
+        try:
+            chain = ticker.option_chain(expiry)
+        except Exception as e:
+            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+                _options_refused()
+            raise
         calls, puts = chain.calls, chain.puts
         if calls.empty or puts.empty:
             return {"ok": False, "reason": "one-sided chain"}
