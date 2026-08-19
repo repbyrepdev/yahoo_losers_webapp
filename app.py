@@ -1420,9 +1420,14 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             chip.closest('.card-sorter').querySelectorAll('.sort-chip')
                 .forEach(c => c.classList.remove('active'));
             chip.classList.add('active');
+            // Number.isFinite, not ||: a legitimate rank of exactly 0.0 must
+            // sort as zero, not be treated as unranked.
+            const numeric = (el) => {
+                const parsed = parseFloat(el.dataset[key]);
+                return Number.isFinite(parsed) ? parsed : -Infinity;
+            };
             [...box.querySelectorAll('.stock-card')]
-                .sort((a, b) => (parseFloat(b.dataset[key]) || -Infinity) -
-                                (parseFloat(a.dataset[key]) || -Infinity))
+                .sort((a, b) => numeric(b) - numeric(a))
                 .forEach(card => box.appendChild(card));
         }
 
@@ -1463,8 +1468,10 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 const ca = a.cells[col], cb = b.cells[col];
                 let va, vb;
                 if (kind === 'num') {
-                    va = parseFloat(ca?.dataset.val ?? ca?.innerText) || -Infinity;
-                    vb = parseFloat(cb?.dataset.val ?? cb?.innerText) || -Infinity;
+                    const pa = parseFloat(ca?.dataset.val ?? ca?.innerText);
+                    const pb = parseFloat(cb?.dataset.val ?? cb?.innerText);
+                    va = Number.isFinite(pa) ? pa : -Infinity;
+                    vb = Number.isFinite(pb) ? pb : -Infinity;
                 } else {
                     va = (ca?.innerText || '').trim(); vb = (cb?.innerText || '').trim();
                     return dir === 'desc' ? vb.localeCompare(va) : va.localeCompare(vb);
@@ -6197,7 +6204,7 @@ def filter_ai_recovery_potential(enhanced_analysis):
         if result['score'] < MIN_REBOUND_SCORE:
             continue
 
-        picks.append({
+        pick = {
             **stock,
             'Rebound Score': result['score'],
             'Recommendation': result['recommendation'],
@@ -6210,7 +6217,12 @@ def filter_ai_recovery_potential(enhanced_analysis):
                 f"{f['label']}: {f['detail']}" for f in result['factors'][:3]
             ],
             'Missing Inputs': [m['label'] for m in result['missing']],
-        })
+        }
+        # This pass re-scores, so the composite carried over from the main
+        # board could pair a fresh score with a stale rank. Recompute from
+        # the same fields this row will actually display.
+        pick['Composite'] = _composite_rank(pick)
+        picks.append(pick)
 
     # Same default order as the main board: composite rank first, score and
     # coverage as the ties -- one ordering philosophy everywhere.
