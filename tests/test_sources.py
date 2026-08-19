@@ -505,3 +505,56 @@ class TestFactorBackups:
         assert len(calls) == 1
         assert "429" in result.reason or "429" in (result.value or {}).get("detail", "") \
             or result.reason == "RuntimeError"
+
+
+class TestFactorLaneDrain:
+    def test_missing_factor_keys_reports_cold_symbols(self):
+        market_data._cache.set(market_data._recs_key("ZZLD1"), {"ok": True}, 60)
+        market_data._cache.set(market_data._options_key("ZZLD2"), {"ok": True}, 60)
+        recs, options = market_data._symbols_missing_factor_keys(
+            ["ZZLD1", "ZZLD2", "ZZLD3", "^GSPC"])
+        assert recs == ["ZZLD2", "ZZLD3"]
+        assert options == ["ZZLD1", "ZZLD3"]
+
+    def test_producers_write_the_keys_the_lane_scans(self, monkeypatch):
+        """The lane and the producers must agree on key names, or the drain
+        refetches forever (the v2 bump would have recreated 2026-08-19)."""
+        class NoRecs:
+            recommendations = None
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoRecs())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.live(
+                                {"strongBuy": 1, "buy": 1, "hold": 1,
+                                 "sell": 0, "strongSell": 0, "total": 3},
+                                "finnhub:recommendation-trends"))
+        market_data.analyst_recommendations("ZZLD4")
+        recs, _ = market_data._symbols_missing_factor_keys(["ZZLD4"])
+        assert recs == []
+
+    def test_dual_provider_failure_is_not_structural_absence(self, monkeypatch):
+        """CR PR60: rate-limited Yahoo + unavailable Finnhub must keep the
+        error identity -- 'no ratings published' would two-strike into a 6h
+        structural negative during a transient outage."""
+        class YahooDies:
+            @property
+            def recommendations(self):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.unavailable(
+                                "finnhub:recommendation-trends", "quota"))
+        result = market_data.analyst_recommendations("ZZLD5")
+        assert not result.ok
+        assert result.reason != "no ratings published"
+        assert "RuntimeError" in result.reason
+
+    def test_clean_empty_yahoo_and_empty_fallback_stays_structural(self, monkeypatch):
+        class NoCoverage:
+            recommendations = None
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoCoverage())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.unavailable(
+                                "finnhub:recommendation-trends", "no ratings published"))
+        result = market_data.analyst_recommendations("ZZLD6")
+        assert not result.ok
+        assert result.reason == "no ratings published"
