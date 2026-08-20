@@ -1,0 +1,33 @@
+# CodeRabbit configuration — server reviews and the local CLI both read this.
+# Canonical build doctrine lives in CLAUDE.md; this file adapts it for review.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        House rules this codebase enforces; flag violations as findings:
+        - Every displayed value must carry provenance (Sourced, provider
+          named); refusal over fabrication -- substitutes and guesses are
+          defects.
+        - Provider failures must preserve error identity (reason = exception
+          name, detail = full text). A transient failure that can cache as a
+          structural absence ("no X published") is a Major.
+        - No silent failures: skipped rows/actions must be counted and
+          logged with reasons.
+        - Fallbacks must run at EVERY failure exit of a producer.
+        - Scarce API budgets (FMP 200/day) need atomic day-claims; flag any
+          path that can spend a budget twice for one question.
+        - Nothing may fetch on a render path.
+        - Every bug fix needs a regression test pinning it.
+    - path: "tests/**"
+      instructions: |
+        Tests must not depend on wall-clock state (market phase, trading
+        calendar, today's date) -- flag unpinned time dependencies.
+    - path: ".github/workflows/**"
+      instructions: |
+        Cron times are UTC; flag DST assumptions and date-labeling that
+        breaks across midnight UTC.
