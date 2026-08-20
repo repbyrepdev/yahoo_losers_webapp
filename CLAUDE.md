@@ -41,8 +41,12 @@ same doctrine is mirrored for reviewers in `.coderabbit.yaml` and
    for the audit trail.
 5. PR with a clear body. Merges into `main` are MECHANICALLY gated by a
    repo ruleset: the `pytest` check must be green and every review thread
-   resolved (ruleset "Merge gate", id 21115000 — if the CI job is ever
-   renamed, update the ruleset's required check or every merge blocks).
+   resolved (ruleset "Merge gate", id 21115000 — if a CI job is ever
+   renamed, update the ruleset's required checks or every merge blocks).
+   Required checks: `pytest` and `gitleaks` (full-history secret scan;
+   the runtime analogue is `provenance.redact_secrets` at provider
+   boundaries — gitleaks covers what reaches git, redaction covers what
+   reaches pages and logs).
    **The server gate**: CI green AND at least one
    server-side review (CodeRabbit primary; request Copilot
    `copilot-pull-request-reviewer[bot]` when CR is rate-limited or silent

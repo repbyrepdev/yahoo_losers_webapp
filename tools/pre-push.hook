@@ -12,6 +12,16 @@ if ! "$PY" -m pytest tests/ -q >/tmp/prepush_pytest.out 2>&1; then
   exit 1
 fi
 tail -1 /tmp/prepush_pytest.out
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-push] gitleaks history scan..."
+  if ! gitleaks git . --no-banner --redact >/tmp/prepush_gitleaks.out 2>&1; then
+    tail -5 /tmp/prepush_gitleaks.out
+    echo "[pre-push] BLOCKED: gitleaks found a secret in history."
+    exit 1
+  fi
+else
+  echo "[pre-push] gitleaks not installed (brew install gitleaks) -- CI still scans."
+fi
 CHANGED=$(git diff --stat @{push}.. 2>/dev/null | tail -1 || true)
 echo "[pre-push] ${CHANGED:-new branch}"
 echo "[pre-push] reminder: 'coderabbit review --committed --base main -c CLAUDE.md' before big pushes."
