@@ -556,6 +556,7 @@ PAPER_STOP_PCT = 8.0                  # close-basis stop below ref (no wick-outs
 PAPER_MAX_SESSIONS = 7                # thesis expiry: the measured window
 PAPER_REENTRY_COOLDOWN_SESSIONS = 5   # no revenge-buying a stopped name
 PAPER_DAILY_LOSS_HALT_PCT = 2.0       # equity down 2% on the day: no new entries
+PAPER_CATASTROPHE_STOP_PCT = 15.0     # broker-resident intraday floor (OCO leg)
 
 
 def _eastern_today() -> date:
@@ -785,7 +786,19 @@ def paper_manage_positions() -> Sourced:
     for pos in positions:
         symbol = pos.get("symbol")
         qty = int(float(pos.get("qty") or 0))
-        if not symbol or qty <= 0:
+        if not symbol:
+            continue
+        if qty < 0:
+            # A short position should be impossible under these rails (OCO
+            # legs are one-cancels-other), but a broker race or manual action
+            # could create one -- and silently skipping it would leave an
+            # unmanaged short invisible forever (CR CLI, local review).
+            actions.append({"symbol": symbol, "action": "unexpected-short",
+                            "qty": qty,
+                            "reason": "short position outside the rails; "
+                                      "needs manual attention -- not auto-managed"})
+            continue
+        if qty == 0:
             continue
         entry = entries_by_symbol.get(symbol)
         ref = _entry_ref_price(entry) if entry else None
@@ -814,7 +827,9 @@ def paper_manage_positions() -> Sourced:
                 try:
                     resp = requests.delete(f"{base}/v2/orders/{o['id']}",
                                            headers=headers, timeout=20)
-                    if resp.status_code not in (200, 204):
+                    # 404/410: already gone (an OCO sibling cancel removes
+                    # both legs) -- that IS a successful cancel.
+                    if resp.status_code not in (200, 204, 404, 410):
                         cancel_blocked = True
                 except Exception:
                     cancel_blocked = True
@@ -844,24 +859,33 @@ def paper_manage_positions() -> Sourced:
                                 "reason": f"{type(e).__name__}: {body[:120]}"})
             continue
         if not open_sells.get(symbol):
+            # OCO pair, broker-resident and continuous: the take-profit at the
+            # claim's level and an intraday catastrophe floor; one cancels the
+            # other, so the double-fill short CR flagged is structurally
+            # impossible. The tighter close-basis stop above remains the
+            # decision rule; this leg only catches intraday disasters.
             tp_price = round(ref * (1 + PAPER_TP_PCT / 100.0), 2)
+            cat_price = round(ref * (1 - PAPER_CATASTROPHE_STOP_PCT / 100.0), 2)
             cid = f"snap-tp-{entry_date}-{symbol}"
             try:
                 market_data._throttle()
                 resp = requests.post(f"{base}/v2/orders", headers=headers, timeout=20,
                                      json={"symbol": symbol, "qty": str(qty),
                                            "side": "sell", "type": "limit",
-                                           "limit_price": str(tp_price),
+                                           "order_class": "oco",
+                                           "take_profit": {"limit_price": str(tp_price)},
+                                           "stop_loss": {"stop_price": str(cat_price)},
                                            "time_in_force": "gtc",
                                            "client_order_id": cid})
                 if resp.status_code == 422 and "client_order_id" in resp.text:
-                    actions.append({"symbol": symbol, "action": "take-profit",
-                                    "status": "already-placed", "tp": tp_price})
+                    actions.append({"symbol": symbol, "action": "protective-pair",
+                                    "status": "already-placed", "tp": tp_price,
+                                    "catastrophe_stop": cat_price})
                 else:
                     resp.raise_for_status()
-                    actions.append({"symbol": symbol, "action": "take-profit",
+                    actions.append({"symbol": symbol, "action": "protective-pair",
                                     "status": resp.json().get("status"),
-                                    "tp": tp_price})
+                                    "tp": tp_price, "catastrophe_stop": cat_price})
             except Exception as e:
                 body = getattr(getattr(e, "response", None), "text", "") or str(e)
                 actions.append({"symbol": symbol, "action": "tp-failed",
@@ -914,6 +938,7 @@ def paper_account_overview() -> Sourced:
         equity = float(account.get("equity") or 0)
         last_equity = float(account.get("last_equity") or 0)
         rows = []
+        skipped = 0
         for p in positions:
             try:
                 # Broker-reported quantity verbatim: int() would floor a
@@ -928,7 +953,10 @@ def paper_account_overview() -> Sourced:
                              "upl_pct": round(float(p.get("unrealized_plpc") or 0) * 100, 2),
                              "market_value": round(float(p.get("market_value") or 0), 2)})
             except (TypeError, ValueError):
+                skipped += 1
                 continue
+        if skipped:
+            logger.info(f"paper overview skipped {skipped} malformed position row(s)")
         working = [{"symbol": o.get("symbol"), "side": o.get("side"),
                     "type": o.get("type"), "limit_price": o.get("limit_price"),
                     "client_order_id": o.get("client_order_id")}
