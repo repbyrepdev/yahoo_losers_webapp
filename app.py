@@ -3946,7 +3946,8 @@ def api_snapshot():
                              if isinstance(r.get("score"), (int, float))
                              and r["score"] >= MIN_REBOUND_SCORE),
                             key=lambda r: r["score"], reverse=True)
-        top = [r["symbol"] for r in qualifying[:sources.PAPER_MAX_PICKS]]
+        top = [{"symbol": r["symbol"], "price": r.get("price")}
+               for r in qualifying[:sources.PAPER_MAX_PICKS]]
         if top:
             orders = sources.paper_execute_picks(top)
             snapshot["paper_orders"] = (orders.value if orders.ok
