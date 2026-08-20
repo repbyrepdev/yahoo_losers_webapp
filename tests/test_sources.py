@@ -5,6 +5,8 @@ import os
 import sys
 from datetime import date, timedelta
 
+import time
+
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -817,3 +819,44 @@ class TestCacheContracts:
         key = "test:claim:zz1"
         results = [market_data._cache.claim_once(key, 60) for _ in range(3)]
         assert results == [True, False, False]
+
+
+    def test_effective_ttl_jitter_never_dips_below_base(self, monkeypatch):
+        monkeypatch.setattr(market_data, "market_phase", lambda: {"phase": "closed"})
+        day = 24 * 60 * 60
+        assert all(market_data._effective_ttl(day) >= day for _ in range(60))
+
+    def test_nonfinite_float_shares_refused(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, json=None, **kw):
+            if "shares-float" in url:
+                return FakeResponse([{"floatShares": float("nan"), "date": "2026-08-19"}])
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        result = sources.shares_float("ZZNF1")
+        assert not result.ok
+        assert result.reason == "float not reported"
+
+    def test_claim_loser_waits_for_winner_answer(self, monkeypatch):
+        """CR PR66 follow-up: a concurrent-miss loser must return the
+        winner's answer, not cache a day-scoped failure."""
+        import threading
+
+        def fake(url, params=None, headers=None, timeout=None, json=None, **kw):
+            if "price-target-summary" in url:
+                time.sleep(1.0)  # winner in flight while the loser races
+                return FakeResponse([{"lastQuarterCount": 6,
+                                      "lastQuarterAvgPriceTarget": 42.0}])
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        results = {}
+
+        def call(tag):
+            results[tag] = sources.price_targets("ZZIF1")
+        first = threading.Thread(target=call, args=("winner",))
+        first.start()
+        time.sleep(0.2)  # let the winner claim
+        market_data._cache._local.pop("src:targets:ZZIF1", None)
+        call("loser")
+        first.join()
+        assert results["winner"].ok and results["winner"].value["mean"] == 42.0
+        assert results["loser"].ok and results["loser"].value["mean"] == 42.0

@@ -259,7 +259,10 @@ def _effective_ttl(base_ttl: int, spread: float = 0.1) -> int:
     # 12h off-market and re-spends provider budget (CR, PR 66).
     ttl = (base_ttl if stretch == 1
            else min(base_ttl * stretch, max(base_ttl, 12 * 60 * 60)))
-    return max(30, int(ttl * random.uniform(1.0 - spread, 1.0 + spread)))
+    # Jitter spreads expiries to avoid stampedes; upward-only, because a
+    # downward roll would re-shorten the daily+ TTLs the line above just
+    # protected (CR, PR 66 follow-up).
+    return max(30, int(ttl * random.uniform(1.0, 1.0 + spread)))
 
 # An analyst "consensus" drawn from one or two estimates is noise, not consensus.
 MIN_ANALYSTS_FOR_CONSENSUS = 3

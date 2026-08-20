@@ -20,6 +20,7 @@ accident can never exhaust the account.
 """
 
 import logging
+import math
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -658,11 +659,16 @@ def price_targets(symbol: str, allow_fetch: bool = True) -> Sourced:
         answer_key = f"src:targets:answer:{symbol.upper()}:{day}"
         if not market_data._cache.claim_once(
                 f"src:targets:{symbol.upper()}:{day}", 24 * 60 * 60):
-            replay = market_data._cache.get(answer_key)
-            if replay is not None:
-                return replay
+            # The claim loser is racing an in-flight winner: wait briefly for
+            # the day's answer, and refuse transiently (never day-scoped) if
+            # it has not landed yet (CR, PR 66 follow-up).
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
             return {"ok": False,
-                    "reason": "fmp target request already spent today"}
+                    "reason": "fmp target request in flight"}
         def _remember(result):
             market_data._cache.set(answer_key, result, 24 * 60 * 60)
             return result
@@ -734,10 +740,15 @@ def shares_float(symbol: str, allow_fetch: bool = True) -> Sourced:
         answer_key = f"src:float:answer:{symbol.upper()}:{day}"
         if not market_data._cache.claim_once(
                 f"src:float:{symbol.upper()}:{day}", 24 * 60 * 60):
-            replay = market_data._cache.get(answer_key)
-            if replay is not None:
-                return replay
-            return {"ok": False, "reason": "fmp float request already spent today"}
+            # The claim loser is racing an in-flight winner: wait briefly for
+            # the day's answer, and refuse transiently (never day-scoped) if
+            # it has not landed yet (CR, PR 66 follow-up).
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
+            return {"ok": False, "reason": "fmp float request in flight"}
         def _remember(result):
             market_data._cache.set(answer_key, result, 24 * 60 * 60)
             return result
@@ -748,7 +759,9 @@ def shares_float(symbol: str, allow_fetch: bool = True) -> Sourced:
             if not payload or not payload[0].get("floatShares"):
                 return _remember({"ok": False, "reason": "float not reported"})
             shares = float(payload[0]["floatShares"])
-            if shares <= 0:
+            # json.loads accepts NaN/Infinity literals, and NaN <= 0 is
+            # False -- an explicit finiteness check or garbage caches as truth.
+            if not math.isfinite(shares) or shares <= 0:
                 return _remember({"ok": False, "reason": "float not reported"})
             return _remember({"ok": True, "floatShares": shares,
                               "as_of": (payload[0].get("date") or "")[:10]})
@@ -774,10 +787,15 @@ def short_percent_float(symbol: str, allow_fetch: bool = True) -> Sourced:
         answer_key = f"src:shortfloat:answer:{symbol.upper()}:{day}"
         if not market_data._cache.claim_once(
                 f"src:shortfloat:{symbol.upper()}:{day}", 24 * 60 * 60):
-            replay = market_data._cache.get(answer_key)
-            if replay is not None:
-                return replay
-            return {"ok": False, "reason": "short-interest request already spent today"}
+            # The claim loser is racing an in-flight winner: wait briefly for
+            # the day's answer, and refuse transiently (never day-scoped) if
+            # it has not landed yet (CR, PR 66 follow-up).
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
+            return {"ok": False, "reason": "short-interest request in flight"}
         def _remember(result):
             market_data._cache.set(answer_key, result, 24 * 60 * 60)
             return result
