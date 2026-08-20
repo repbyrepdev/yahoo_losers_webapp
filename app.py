@@ -3981,6 +3981,11 @@ def api_snapshot():
         # after PAPER_MAX_PICKS valid orders, so a bad price cannot burn a slot.
         top = [{"symbol": r["symbol"], "price": r.get("price")}
                for r in qualifying]
+        # Lifecycle first: exits and take-profits for existing positions are
+        # managed before any new risk goes on.
+        lifecycle = sources.paper_manage_positions()
+        snapshot["paper_lifecycle"] = (lifecycle.value if lifecycle.ok
+                                       else {"unavailable": lifecycle.reason})
         if top:
             orders = sources.paper_execute_picks(top)
             snapshot["paper_orders"] = (orders.value if orders.ok
