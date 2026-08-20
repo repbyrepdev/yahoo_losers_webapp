@@ -186,11 +186,23 @@ against; positions exit at the next open when the thesis **expires**
 close-basis so intraday wicks cannot shake positions out). Every action
 is idempotent and recorded with its reason in the snapshot.
 
-**Graduation path**: the calibration and slippage record accumulates in
-`data/snapshots/`. If predicted odds resolve near their stated rates and
-fill slippage stays tolerable for several weeks, the same code — same
-rails, same constants — points at live keys by deliberate manual arming.
-Nothing flips automatically.
+**Graduation path — now code, not judgment**: `tracking.live_readiness()`
+computes whether the record has EARNED real money (at least 100 resolved
+predictions, Brier at or under 0.20, at least 20 graded fills, and a
+28-day continuous snapshot streak — gaps over 4 calendar days break it).
+The live trading path refuses to arm unless it passes, AND live keys are
+configured, AND a human has set `LIVE_TRADING_ARMED` to an exact phrase
+no code path sets. The track-record page shows the scoreboard. When
+armed, the design is paper-alongside-live: the paper book continues as
+the control group, and paper-vs-live fill divergence becomes a monitored
+execution-quality metric.
+
+**Position inspector**: `/inspect/SYMBOL?basis=YOUR_PRICE` shows the
+recorded entry-day claims for any symbol (source: the committed
+snapshot), sessions elapsed against the windows, the cached close with
+its provider label, and what the exit rules would say tonight for your
+basis — recorded history and cached state only, nothing fetched, nothing
+advised.
 
 ### Earnings chips
 

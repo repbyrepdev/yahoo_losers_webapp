@@ -1587,3 +1587,162 @@ class TestTechnicalsFailover:
         act = result.value["actions"][0]
         assert act["action"] == "unexpected-short" and act["qty"] == -5
         assert "manual attention" in act["reason"]
+
+
+class TestHistoryThirdString:
+    def test_fmp_eod_serves_when_alpaca_dead(self, monkeypatch):
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable(
+                                "alpaca:bars(iex)", "down"))
+        import datetime as _dt
+        rows = []
+        d, px = _dt.date(2026, 2, 2), 50.0
+        while len(rows) < 60:
+            if d.weekday() < 5:
+                rows.append({"t": d.isoformat(), "c": px, "v": 90000})
+                px *= 1.004 if len(rows) % 2 else 0.998
+            d += _dt.timedelta(days=1)
+        monkeypatch.setattr(sources, "fmp_eod_bars",
+                            lambda sym, days=180: market_data.Sourced.live(
+                                rows, "fmp:eod-history"))
+        market_data._cache._local.pop("tech:ZZE3", None)
+        result = market_data.technicals("ZZE3")
+        assert result.ok
+        assert result.source == "fmp:eod-history"
+        assert 0 <= result.value["rsi14"] <= 100
+
+    def test_fmp_eod_shapes_light_rows(self, monkeypatch):
+        monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "test-key")
+        payload = [{"symbol": "ZZE4", "date": f"2026-0{m}-{d:02d}", "price": 10 + d * 0.1,
+                    "volume": 1000} for m in (3, 4, 5) for d in range(1, 25)]
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "historical-price-eod/light": payload}))
+        result = sources.fmp_eod_bars("ZZE4")
+        assert result.ok
+        assert len(result.value) >= 30
+        assert result.value[0]["t"] < result.value[-1]["t"]
+
+
+    def test_fmp_runs_when_alpaca_raises(self, monkeypatch):
+        """Local review: the third string must run after an alpaca EXCEPTION,
+        not only after a clean refusal."""
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: (_ for _ in ()).throw(RuntimeError("boom")))
+        import datetime as _dt
+        rows = []
+        d, px = _dt.date(2026, 2, 2), 50.0
+        while len(rows) < 60:
+            if d.weekday() < 5:
+                rows.append({"t": d.isoformat(), "c": px, "v": 90000})
+                px *= 1.004 if len(rows) % 2 else 0.998
+            d += _dt.timedelta(days=1)
+        monkeypatch.setattr(sources, "fmp_eod_bars",
+                            lambda sym, days=180: market_data.Sourced.live(rows, "fmp:eod-history"))
+        market_data._cache._local.pop("tech:ZZE5", None)
+        result = market_data.technicals("ZZE5")
+        assert result.ok and result.source == "fmp:eod-history"
+
+    def test_all_providers_down_reports_the_chain(self, monkeypatch):
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable("alpaca:bars(iex)", "a-down"))
+        monkeypatch.setattr(sources, "fmp_eod_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable("fmp:eod-history", "f-down"))
+        market_data._cache._local.pop("tech:ZZE6", None)
+        result = market_data.technicals("ZZE6")
+        assert not result.ok
+        assert "RuntimeError" in result.reason
+        # The cached payload's detail must name every provider's real reason
+        # (verification review: chain must survive into what _cached classifies).
+        payload = market_data._cache.get("tech:ZZE6")
+        assert "429 Too Many Requests" in payload["detail"]
+        assert "alpaca: a-down" in payload["detail"]
+        assert "fmp: f-down" in payload["detail"]
+
+    def test_fallback_exception_text_survives_for_ttl_classification(self, monkeypatch):
+        """Verification review (Major): a rate-limit exception from a fallback
+        must keep its text so _cached classifies it TTL_RATE_LIMITED."""
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("host unreachable")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: (_ for _ in ()).throw(
+                                RuntimeError("429 Too Many Requests")))
+        monkeypatch.setattr(sources, "fmp_eod_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable(
+                                "fmp:eod-history", "f-down"))
+        market_data._cache._local.pop("tech:ZZE7", None)
+        result = market_data.technicals("ZZE7")
+        assert not result.ok
+        payload = market_data._cache.get("tech:ZZE7")
+        assert "Too Many Requests" in payload["detail"]
+        assert market_data._is_rate_limited(payload["detail"])
+
+
+class TestFmpEodHygiene:
+    def test_malformed_rows_skip_individually_not_fatally(self, monkeypatch):
+        """Verification review: one garbage value must cost one row, never
+        the whole provider response."""
+        monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "test-key")
+        good = [{"date": f"2026-0{m}-{d:02d}", "price": 10 + d * 0.1, "volume": 1000}
+                for m in (3, 4, 5) for d in range(1, 25)]
+        junk = [{"date": "2026-06-01", "price": "not-a-number", "volume": 5},
+                {"date": "2026-06-02", "price": None, "volume": 5},
+                {"date": "2026-06-03", "price": float("inf"), "volume": 5},
+                {"date": "2026-06-04", "price": 12.0, "volume": "n/a"}]
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "historical-price-eod/light": good + junk}))
+        result = sources.fmp_eod_bars("ZZJ1")
+        assert result.ok
+        assert len(result.value) == len(good)
+
+    def test_insufficient_after_skips_names_the_reasons(self, monkeypatch):
+        monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "test-key")
+        rows = ([{"date": f"2026-03-{d:02d}", "price": 10.0, "volume": 1}
+                 for d in range(1, 11)]
+                + [{"date": f"2026-04-{d:02d}", "price": "junk", "volume": 1}
+                   for d in range(1, 26)])
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "historical-price-eod/light": rows}))
+        result = sources.fmp_eod_bars("ZZJ2")
+        assert not result.ok
+        assert "non-numeric" in result.reason
+
+    def test_losing_claimant_waits_for_the_winners_answer(self, monkeypatch):
+        """Verification review: a lost day-claim must poll for the winner's
+        stored answer (like every other FMP producer), not cache unavailable."""
+        answer = {"ok": True, "skipped_rows": 0,
+                  "bars": [{"t": "2026-01-02", "c": 10.0, "v": 1.0}]}
+        class StubCache:
+            def __init__(self):
+                self.answer_polls = 0
+            def get(self, key):
+                if key.startswith("src:eod:answer:"):
+                    self.answer_polls += 1
+                    return answer if self.answer_polls >= 3 else None
+                return None
+            def set(self, key, value, ttl):
+                pass
+            def claim_once(self, key, ttl):
+                return False
+        stub = StubCache()
+        naps = []
+        monkeypatch.setattr(market_data, "_cache", stub)
+        monkeypatch.setattr(sources.time, "sleep", lambda s: naps.append(s))
+        result = sources.fmp_eod_bars("ZZJ3")
+        assert result.ok
+        assert result.value == answer["bars"]
+        assert stub.answer_polls == 3
+        assert len(naps) == 2

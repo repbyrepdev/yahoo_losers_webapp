@@ -1,6 +1,7 @@
 from flask import Flask, render_template_string, render_template, request, jsonify, g, make_response
 from flask_compress import Compress
 from flask_cors import CORS
+import re
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -4047,6 +4048,35 @@ def api_snapshot():
     return jsonify(snapshot)
 
 
+def _graduation_section():
+    """Has the record earned real money? Computed by tracking.live_readiness --
+    the same function the live-arming code consults, so the page can never
+    disagree with the refusal."""
+    try:
+        r = tracking.live_readiness()
+    except Exception as e:
+        logger.warning(f"live_readiness failed: {type(e).__name__}: {e}")
+        from html import escape as _esc
+        return (f"<p>Graduation status unavailable "
+                f"({_esc(f'{type(e).__name__}: {e}')}).</p>")
+    rows = ""
+    for c in r["criteria"]:
+        mark = "✅" if c["met"] else "⏳"
+        rows += (f"<tr><td>{mark} {c['name']}</td><td>{c['actual']}</td>"
+                 f"<td>{c['required']}</td></tr>")
+    verdict = ("<strong style='color:#2ecc71;'>READY</strong>" if r["ready"]
+               else "<strong>not yet earned</strong>")
+    return (f"<h2>Graduation to live money: {verdict}</h2>"
+            f"<p>The live trading path refuses to arm until every criterion is met "
+            f"— these thresholds are code (tracking.live_readiness), not judgment. "
+            f"Arming additionally requires live keys and an explicit human-set flag.</p>"
+            f"<table><thead><tr><th>Criterion</th><th>Actual</th><th>Required</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table>"
+            f"<p style='color:#8b949e;font-size:13px;'>Sources: resolved predictions and "
+            f"Brier from the calibration record (committed snapshots scored against realized "
+            f"closes); graded fills and continuity from the snapshot files in data/snapshots/.</p>")
+
+
 def _calibration_section():
     """Predicted-vs-realized table, or the honest collecting state."""
     calib = tracking.compute_calibration()
@@ -4098,6 +4128,82 @@ def _walkforward_section():
 # walk-forward refit grows with history. Ten minutes of cache keeps the page
 # honest and O(1) for everyone after the first visitor.
 TRACK_RECORD_CACHE_SECONDS = 600
+
+
+@app.route('/inspect/<symbol>')
+@rate_limit(MAX_REQUESTS_PER_MINUTE)
+def inspect_position(symbol):
+    """The pick-investigation viewport: recorded claims for a symbol, the
+    windows still open, current cached state, and what the rules would do
+    for a given basis. Everything shown is recorded or cached -- this page
+    fetches nothing and recommends nothing."""
+    import sources as _src
+    from html import escape as _hesc
+    # Path segment goes into raw HTML below -- constrain to ticker
+    # characters so no markup can ride in on the URL.
+    symbol = re.sub(r"[^A-Z0-9.\-]", "", symbol.upper())[:6]
+    try:
+        basis = float(request.args.get("basis", 0) or 0)
+    except ValueError:
+        basis = 0.0
+    snaps = tracking._load_snapshots()
+    entry_day, recorded = None, None
+    for snap in reversed(snaps):
+        for row in snap.get("universe", []):
+            if row.get("symbol") == symbol and row.get("predictions"):
+                entry_day, recorded = snap.get("date"), row
+                break
+        if recorded:
+            break
+    tech = market_data.technicals(symbol, allow_fetch=False)
+    close = tech.value.get("close") if tech.ok else None
+    sessions = (_src._sessions_between(entry_day, tracking.trading_date_today())
+                if entry_day else 0)
+    claims_html = ""
+    if recorded:
+        for name, p in sorted((recorded.get("predictions") or {}).items()):
+            if not isinstance(p, dict):
+                continue
+            claims_html += (f"<tr><td>{name}</td><td>{p.get('probability')}%</td>"
+                            f"<td>{p.get('target_pct')}%</td><td>{p.get('horizon_days')}d</td></tr>")
+    rails_html = ""
+    if basis > 0:
+        tp = round(basis * (1 + _src.PAPER_TP_PCT / 100), 2)
+        stop = round(basis * (1 - _src.PAPER_STOP_PCT / 100), 2)
+        cat = round(basis * (1 - _src.PAPER_CATASTROPHE_STOP_PCT / 100), 2)
+        state = "unknown (no cached close)"
+        if close:
+            if close >= tp:
+                state = f"take-profit level reached (close {close} ≥ {tp})"
+            elif close <= cat:
+                state = (f"catastrophe floor breached (close {close} ≤ {cat}) — "
+                         f"the broker-resident GTC stop would already have fired intraday")
+            elif close <= stop:
+                state = f"close-basis stop breached (close {close} ≤ {stop}) — rules would exit at next open"
+            elif sessions >= _src.PAPER_MAX_SESSIONS:
+                state = f"window expired ({sessions} sessions ≥ {_src.PAPER_MAX_SESSIONS}) — rules would exit at next open"
+            else:
+                state = f"inside the window (session {sessions}/{_src.PAPER_MAX_SESSIONS}, close {close})"
+        rails_html = (f"<h2>Your basis: ${basis:.2f}</h2>"
+                      f"<p>Rules view: take-profit ${tp} · close-basis stop ${stop} · "
+                      f"catastrophe floor ${cat} · window {_src.PAPER_MAX_SESSIONS} sessions.</p>"
+                      f"<p><strong>Tonight the sweep would say:</strong> {state}</p>")
+    html = f"""<!DOCTYPE html><html><head><title>{symbol} — inspector</title>
+    <style>body{{background:#0d1117;color:#e6edf3;font-family:-apple-system,sans-serif;max-width:900px;margin:30px auto;padding:0 16px;}}
+    table{{width:100%;border-collapse:collapse;margin:10px 0;}}td,th{{border-bottom:1px solid #30363d;padding:7px;text-align:left;}}
+    a{{color:#58a6ff;}}</style></head><body>
+    <h1>🔎 {symbol}</h1>
+    <p>Recorded entry-day: <strong>{entry_day or 'not found in the snapshot record'}</strong>
+    {f'· {sessions} sessions ago' if entry_day else ''}
+    {f'· current close {close} <span style="color:#8b949e;">[{tech.source}]</span>' if close else f'· no cached close <span style="color:#8b949e;">({_hesc(tech.source)}: {_hesc(tech.reason or "cold cache — not yet fetched this session")})</span>'}</p>
+    {rails_html}
+    <h2>Recorded claims <span style="font-size:13px;color:#8b949e;">[source: snapshot {entry_day or "—"}, committed to data/snapshots/]</span></h2>
+    {'<table><thead><tr><th>Claim</th><th>Odds</th><th>Target</th><th>Window</th></tr></thead><tbody>' + claims_html + '</tbody></table>' if claims_html else '<p>No recorded predictions for this symbol in the snapshot record.</p>'}
+    <p style="color:#8b949e;">Everything above is recorded history or cached state — nothing fetched, nothing advised.
+    Add <code>?basis=YOUR_PRICE</code> to see the rules applied to your entry.
+    <a href="/track-record">Track record</a> · <a href="/">Board</a></p>
+    </body></html>"""
+    return html
 
 
 @app.route('/track-record')
@@ -4158,6 +4264,7 @@ def track_record_page():
       &minus;8%, 7-session expiry) land in the same nightly snapshots, so fills
       and slippage are graded by the same record that made the claims.
     </div>
+    {_graduation_section()}
     <h2>~7 calendar days</h2>{agg(7)}
     <h2>~30 calendar days</h2>{agg(30)}
     <p class="sub">The dead-cat baseline is this app's real null hypothesis: buying every loser

@@ -1282,9 +1282,10 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
             yahoo_error = f"{type(e).__name__}: {e}"
             logger.info(f"yahoo history failed for {symbol}: {type(e).__name__}")
         if hist is None or hist.empty or len(hist) < 30:
+            import sources
+            import pandas as _pd
+            fallback_reasons = []
             try:
-                import sources
-                import pandas as _pd
                 fallback = sources.daily_bars(symbol)
                 if fallback.ok:
                     frame = _pd.DataFrame(fallback.value)
@@ -1294,13 +1295,37 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
                     frame.index = _pd.to_datetime(frame["t"])
                     hist = frame
                     provider = "alpaca"
+                else:
+                    fallback_reasons.append(f"alpaca: {fallback.reason}")
             except Exception as e:
-                logger.info(f"bars fallback failed for {symbol}: {type(e).__name__}")
+                detail = f"{type(e).__name__}: {e}"
+                fallback_reasons.append(f"alpaca: {detail}")
+                logger.info(f"alpaca bars fallback failed for {symbol}: {detail}")
+            if hist is None or hist.empty or len(hist) < 30:
+                # Third string runs after EVERY Alpaca exit -- refusal or
+                # exception alike (doctrine: fallbacks at every exit).
+                try:
+                    third = sources.fmp_eod_bars(symbol)
+                    if third.ok:
+                        frame = _pd.DataFrame(third.value)
+                        frame = frame.rename(columns={"c": "Close", "v": "Volume"})
+                        frame.index = _pd.to_datetime(frame["t"])
+                        hist = frame
+                        provider = "fmp"
+                    else:
+                        fallback_reasons.append(f"fmp: {third.reason}")
+                except Exception as e:
+                    detail = f"{type(e).__name__}: {e}"
+                    fallback_reasons.append(f"fmp: {detail}")
+                    logger.info(f"fmp eod fallback failed for {symbol}: {detail}")
         if hist is None or hist.empty or len(hist) < 30:
+            chain = "; ".join(fallback_reasons) if fallback_reasons else "no fallback attempted"
             if yahoo_error is not None:
                 return {"ok": False, "reason": yahoo_error.split(":")[0],
-                        "detail": yahoo_error}
-            return {"ok": False, "reason": f"insufficient history ({0 if hist is None else len(hist)} bars)"}
+                        "detail": f"{yahoo_error}; fallbacks: {chain}"}
+            return {"ok": False,
+                    "reason": f"insufficient history ({0 if hist is None else len(hist)} bars)",
+                    "detail": f"fallbacks: {chain}"}
 
         close = hist["Close"].dropna()
         volume = hist["Volume"].dropna()
@@ -1351,7 +1376,8 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
     payload = _cached(f"tech:{symbol.upper()}", TTL_TECHNICALS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    actual = "alpaca:bars(iex)" if payload.get("provider") == "alpaca" else source
+    actual = {"alpaca": "alpaca:bars(iex)", "fmp": "fmp:eod-history"}.get(
+        payload.get("provider"), source)
     return Sourced.live(payload, actual)
 
 
