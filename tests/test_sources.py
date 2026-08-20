@@ -1230,14 +1230,13 @@ class TestProviderPrinciples:
 
 
 class TestPaperLifecycle:
-    def _resp(self, payload, status=200, text="{}"):
-        class R:
-            status_code = status
-            def raise_for_status(self):
-                if status >= 400: raise RuntimeError(f"HTTP {status}")
-            def json(self): return payload
-        R.text = text
-        return R()
+    @pytest.fixture(autouse=True)
+    def _pinned_calendar(self, monkeypatch):
+        # market_phase is already pinned closed by the module autouse; the
+        # trading calendar must be pinned too or sessions_held drifts with
+        # the ambient cache (CR, PR 74).
+        monkeypatch.setattr(sources, "trading_days_set",
+                            lambda cache_only=True: set())
 
     def test_take_profit_placed_for_unprotected_position(self, monkeypatch):
         posted = []
@@ -1251,8 +1250,8 @@ class TestPaperLifecycle:
                                       "client_order_id": "snap-2026-08-18-ZZLC1",
                                       "filled_at": "2026-08-18T13:31:00Z",
                                       "limit_price": "20.40"}])
-            if "/bars" in url:
-                return FakeResponse({"bars": [{"c": 20.5}]})
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC1": {"c": 20.5}}})
             raise AssertionError(f"unrouted {url}")
         def fake_post(url, headers=None, timeout=None, json=None, **kw):
             posted.append(json)
@@ -1286,8 +1285,8 @@ class TestPaperLifecycle:
                                       "client_order_id": "snap-2026-08-06-ZZLC2",
                                       "filled_at": "2026-08-06T13:31:00Z",
                                       "limit_price": "10.20"}])
-            if "/bars" in url:
-                return FakeResponse({"bars": [{"c": 10.1}]})
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC2": {"c": 10.1}}})
             raise AssertionError(f"unrouted {url}")
         def fake_post(url, headers=None, timeout=None, json=None, **kw):
             posted.append(json)
@@ -1299,11 +1298,12 @@ class TestPaperLifecycle:
             return R()
         monkeypatch.setattr(sources.requests, "get", fake_get)
         monkeypatch.setattr(sources.requests, "post", fake_post)
+        class CancelOk:
+            status_code = 204
         monkeypatch.setattr(sources.requests, "delete",
-                            lambda url, headers=None, timeout=None: deleted.append(url) or None)
+                            lambda url, headers=None, timeout=None: (deleted.append(url), CancelOk())[1])
         monkeypatch.setattr(sources, "_eastern_today",
                             lambda: __import__("datetime").date(2026, 8, 20))
-        monkeypatch.setattr(sources, "trading_days_set", lambda cache_only=True: set())
         result = sources.paper_manage_positions()
         assert result.ok
         act = result.value["actions"][0]
@@ -1324,8 +1324,8 @@ class TestPaperLifecycle:
                                       "client_order_id": "snap-2026-08-19-ZZLC3",
                                       "filled_at": "2026-08-19T13:31:00Z",
                                       "limit_price": "10.20"}])
-            if "/bars" in url:
-                return FakeResponse({"bars": [{"c": 9.1}]})   # ref 10.0, stop 9.2
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC3": {"c": 9.1}}})   # ref 10.0, stop 9.2
             raise AssertionError(f"unrouted {url}")
         def fake_post(url, headers=None, timeout=None, json=None, **kw):
             posted.append(json)
@@ -1385,3 +1385,43 @@ class TestPaperLifecycle:
         assert [o["symbol"] for o in posted] == ["ZZLC6"]
         assert result.value["failed"][0]["symbol"] == "ZZLC5"
         assert "cooldown" in result.value["failed"][0]["reason"]
+
+    def test_sessions_count_weekdays_before_calendar_window(self, monkeypatch):
+        """CR PR74: entry dates older than the cached calendar window must
+        fall back to weekday counting, or old positions never expire."""
+        monkeypatch.setattr(sources, "trading_days_set",
+                            lambda cache_only=True: {"2026-08-19", "2026-08-20"})
+        from datetime import date as _date
+        # Aug 6 -> Aug 20: window covers only the last two days; the nine
+        # weekday sessions before it must still count.
+        n = sources._sessions_between("2026-08-06", _date(2026, 8, 20))
+        assert n >= sources.PAPER_MAX_SESSIONS
+
+    def test_blocked_cancel_defers_exit(self, monkeypatch):
+        posted = []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZLC7", "qty": "5"}])
+            if "/v2/orders" in url and (params or {}).get("status") == "open":
+                return FakeResponse([{"id": "tp7", "symbol": "ZZLC7", "side": "sell"}])
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC7", "side": "buy",
+                                      "client_order_id": "snap-2026-08-06-ZZLC7",
+                                      "filled_at": "2026-08-06T13:31:00Z",
+                                      "limit_price": "10.20"}])
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC7": {"c": 10.1}}})
+            raise AssertionError(f"unrouted {url}")
+        class CancelFail:
+            status_code = 500
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "delete", lambda *a, **k: CancelFail())
+        monkeypatch.setattr(sources.requests, "post",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("market sell submitted past a live TP")))
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        act = result.value["actions"][0]
+        assert act["action"] == "exit-blocked"
+        assert "cancel failed" in act["reason"]

@@ -23,7 +23,7 @@ import logging
 import math
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 import requests
@@ -613,7 +613,7 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
     recently_exited = set()
     try:
         closed = _paper_get("/v2/orders", {"status": "closed", "limit": 200,
-                                           "after": (datetime.utcnow() - timedelta(days=14)).isoformat() + "Z"})
+                                           "after": (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()})
         today = _eastern_today()
         for o in closed:
             cid = o.get("client_order_id") or ""
@@ -715,11 +715,16 @@ def _sessions_between(start_iso: str, end: date) -> int:
         cal = trading_days_set(cache_only=True) or set()
     except Exception:
         cal = set()
+    # The cached calendar spans roughly [today-7d, today+400d]; dates before
+    # its earliest member must fall back to weekday counting or every older
+    # position undercounts and the expiry stop never fires (CR, PR 74).
+    min_cal = min(cal) if cal else None
     sessions, cursor = 0, start
     while cursor < end:
         cursor += _td(days=1)
-        if cal:
-            if cursor.isoformat() in cal:
+        iso = cursor.isoformat()
+        if cal and min_cal is not None and iso >= min_cal:
+            if iso in cal:
                 sessions += 1
         elif cursor.weekday() < 5:
             sessions += 1
@@ -755,14 +760,16 @@ def paper_manage_positions() -> Sourced:
         positions = _paper_get("/v2/positions")
         open_orders = _paper_get("/v2/orders", {"status": "open", "limit": 100})
         closed = _paper_get("/v2/orders", {"status": "closed", "limit": 200,
-                                           "after": (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"})
+                                           "after": (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()})
     except Exception as e:
         return Sourced.unavailable(source, f"lifecycle fetch failed ({type(e).__name__})")
 
     entries_by_symbol = {}
     for o in closed:
         cid = o.get("client_order_id") or ""
-        if cid.startswith("snap-") and not cid.startswith(("snap-tp-", "snap-exit-"))                 and o.get("side") == "buy" and o.get("filled_at"):
+        is_entry = (cid.startswith("snap-")
+                    and not cid.startswith(("snap-tp-", "snap-exit-")))
+        if is_entry and o.get("side") == "buy" and o.get("filled_at"):
             entries_by_symbol.setdefault(o["symbol"], o)
 
     open_sells = {}
@@ -793,12 +800,23 @@ def paper_manage_positions() -> Sourced:
                    and last_close <= ref * (1 - PAPER_STOP_PCT / 100.0))
         if expired or stopped:
             reason = "window expired" if expired else "stop: close below band"
+            # Every resting sell must be CONFIRMED cancelled before the market
+            # exit goes in: a failed cancel plus a market sell can fill twice
+            # and leave the account short (CR, PR 74). A blocked cancel defers
+            # the exit to the next sweep.
+            cancel_blocked = False
             for o in open_sells.get(symbol, []):
                 try:
-                    requests.delete(f"{base}/v2/orders/{o['id']}",
-                                    headers=headers, timeout=20)
+                    resp = requests.delete(f"{base}/v2/orders/{o['id']}",
+                                           headers=headers, timeout=20)
+                    if resp.status_code not in (200, 204):
+                        cancel_blocked = True
                 except Exception:
-                    pass
+                    cancel_blocked = True
+            if cancel_blocked:
+                actions.append({"symbol": symbol, "action": "exit-blocked",
+                                "reason": f"{reason}; resting sell cancel failed, retrying next sweep"})
+                continue
             cid = f"snap-exit-{today.isoformat()}-{symbol}"
             try:
                 market_data._throttle()
@@ -852,21 +870,25 @@ def paper_manage_positions() -> Sourced:
 
 
 def _paper_get_data_bar(symbol: str):
-    """Latest daily close from the data API, for the close-basis stop."""
-    payload, err = _alpaca_get(ALPACA_DATA_BASE,
-                               f"/v2/stocks/{symbol.upper()}/bars",
-                               {"timeframe": "1Day", "limit": 1, "feed": "iex"})
+    """Latest daily close for the close-basis stop.
+
+    The bars endpoint sorts ASCENDING by default, so limit=1 returns the
+    OLDEST bar in range (CR, PR 74); the latest-bar endpoint returns the
+    single canonical newest one.
+    """
+    payload, err = _alpaca_get(ALPACA_DATA_BASE, "/v2/stocks/bars/latest",
+                               {"symbols": symbol.upper(), "feed": "iex"})
     if err:
         raise RuntimeError(err)
-    bars = payload.get("bars") or []
-    return float(bars[-1]["c"]) if bars else None
+    bar = (payload.get("bars") or {}).get(symbol.upper())
+    return float(bar["c"]) if bar else None
 
 
 def paper_recent_fills(days: int = 7) -> Sourced:
     """Recent paper fills, for the slippage record."""
     source = "alpaca:paper-fills"
     try:
-        after = (datetime.utcnow() - timedelta(days=days)).isoformat() + "Z"
+        after = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         payload, err = _alpaca_get(_alpaca_trading_base(), "/v2/orders",
                                    {"status": "closed", "after": after,
                                     "limit": 100})
