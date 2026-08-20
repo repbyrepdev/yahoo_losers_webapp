@@ -1,22 +1,27 @@
-"""Multi-provider failover layer: Alpaca, Finnhub, FMP beside Yahoo.
+"""Multi-provider failover layer: Alpaca, Finnhub, FMP and FINRA beside Yahoo.
 
-One provider was a single point of failure -- every observed outage, limiter
-event, and data gap traced back to Yahoo being the only source. This module
-adds the alternates, each behind the same rules as everything else: every
-value is Sourced with the provider named, failures surface as unavailable,
-budgets are enforced in code, and nothing here runs on a render path.
+Ordering principles (probe-verified per provider, 2026-08-20):
+1. Spend abundant budgets before scarce ones -- Finnhub (60/min) and
+   Alpaca (200/min) are effectively unlimited at this volume; FMP
+   (250/day, hard in-code stop at 200) sits LAST in every chain.
+2. Official APIs over scraping when data is equal; Yahoo keeps first
+   place only for the product-defining screener, bundled quoteSummary
+   fields, and strictly richer data (consolidated volume, options OI).
 
-Verified entitlements (probed live 2026-08-19, free tiers):
-- Alpaca: clock, trading calendar (with half-days), corporate-action
-  announcements, IEX latest trades, daily bars with explicit adjustment.
-- Finnhub: real-time quote, analyst recommendation trends, earnings calendar.
-- FMP (/stable/ only -- the legacy v3/v4 API is 403 for post-2025 accounts):
-  biggest-losers screener, earnings calendar, delisted companies, per-firm
-  analyst grades, splits, quote.
+Finnhub-first: rating trends, company news, earnings calendar, and the
+profile2 name/industry backup. Alpaca: movers screener (universe backup),
+bars, IEX trades, indicative option snapshots (put/call + ATM straddle),
+trading calendar, corporate actions, and the PAPER trading account --
+entry limits at ref+2% extended-hours, GTC take-profits, expiry/stop
+exits, loss-halt and cooldown rails (constants shared with any future
+live mode). FMP: losers, targets, grades, earnings, splits, float, EOD
+history. FINRA: consolidated short interest over FMP float. Keyed
+providers carry atomic per-symbol-per-day request claims with same-day
+answer replay, so budget can never be spent twice for one question.
 
-Budgets: Alpaca 200/min and Finnhub 60/min are far above this app's trickle;
-FMP is 250/DAY and gets a hard in-code counter that refuses at 200 so an
-accident can never exhaust the account.
+Not free (probed, documented dead ends): Finnhub candles/price targets/
+short interest; FMP stock news. Every value is Sourced with its provider
+named; failures surface as unavailable with their error identity intact.
 """
 
 import logging
@@ -882,6 +887,54 @@ def _paper_get_data_bar(symbol: str):
         raise RuntimeError(err)
     bar = (payload.get("bars") or {}).get(symbol.upper())
     return float(bar["c"]) if bar else None
+
+
+def paper_account_overview() -> Sourced:
+    """Equity, positions and working orders for the page's paper section.
+
+    Read-only and cached five minutes: three requests per refresh against
+    a 200/min allowance. Positions carry Alpaca's own marks (entry, current
+    price, unrealized P/L), so the page repeats the broker's numbers rather
+    than recomputing them.
+    """
+    source = "alpaca:paper-account"
+    key = "src:paper-account"
+
+    def produce():
+        try:
+            account = _paper_get("/v2/account")
+            positions = _paper_get("/v2/positions")
+            open_orders = _paper_get("/v2/orders", {"status": "open", "limit": 50})
+        except Exception as e:
+            return {"ok": False, "reason": f"paper account unavailable ({type(e).__name__})"}
+        equity = float(account.get("equity") or 0)
+        last_equity = float(account.get("last_equity") or 0)
+        rows = []
+        for p in positions:
+            try:
+                rows.append({"symbol": p.get("symbol"),
+                             "qty": int(float(p.get("qty") or 0)),
+                             "entry": round(float(p.get("avg_entry_price") or 0), 2),
+                             "current": round(float(p.get("current_price") or 0), 2),
+                             "upl_pct": round(float(p.get("unrealized_plpc") or 0) * 100, 2),
+                             "market_value": round(float(p.get("market_value") or 0), 2)})
+            except (TypeError, ValueError):
+                continue
+        working = [{"symbol": o.get("symbol"), "side": o.get("side"),
+                    "type": o.get("type"), "limit_price": o.get("limit_price"),
+                    "client_order_id": o.get("client_order_id")}
+                   for o in open_orders]
+        return {"ok": True, "equity": round(equity, 2),
+                "cash": round(float(account.get("cash") or 0), 2),
+                "day_change_pct": (round((equity / last_equity - 1) * 100, 2)
+                                   if last_equity > 0 else None),
+                "as_of": _eastern_today().isoformat(),
+                "positions": rows, "working_orders": working}
+
+    payload = market_data._cached(key, 5 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
 
 
 def paper_recent_fills(days: int = 7) -> Sourced:

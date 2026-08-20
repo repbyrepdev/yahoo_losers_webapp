@@ -1,14 +1,18 @@
-"""Cached access to real market data via yfinance.
+"""Cached market data: Yahoo primary with total-coverage failover.
 
-Yahoo's v7 and v10 REST endpoints began requiring authentication and now return
-401 to unauthenticated callers. yfinance performs the crumb/cookie handshake
-those endpoints expect, so it reaches the same data. Every accessor here returns
-`Sourced` values, so a provider outage surfaces as unavailable rather than being
-absorbed into a substituted number.
+Yahoo carries bulk load while healthy (one batched chart call covers the
+whole board; quoteSummary bundles five factor fields into one request).
+Every producer routes EVERY failure exit -- refusal or exception, any
+stage -- through its keyed-API backup (see sources.py) before anything
+caches, and provider failures keep their error identity so a transient
+outage can never cache as hours of structural absence. A Yahoo 429/401
+arms a shared cooldown that diverts traffic instead of retrying.
 
-Caching matters operationally: the app runs on a 0.5 CPU / 512 MB instance and a
-refresh touches ~25 symbols. TTLs are set by how fast each field actually moves,
-so a page refresh does not re-fetch slow-moving fundamentals.
+Two background lanes keep the board warm: a fast lane for prices and a
+slow adaptive lane that drains missing profiles, factors and backups a
+few symbols per tick, so rendering never fetches. TTLs follow how fast
+each field moves; off-market stretching never shortens a producer's
+requested lifetime, and jitter is upward-only.
 """
 
 import logging
