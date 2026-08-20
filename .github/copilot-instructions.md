@@ -3,6 +3,7 @@
 Canonical build doctrine: `CLAUDE.md` at the repo root. Review against it.
 
 Priorities, highest first:
+
 1. **Silent failures** — swallowed exceptions, dropped rows without logs,
    fallbacks that run at only some failure exits of a producer.
 2. **Provenance violations** — any displayed value without a `Sourced`
