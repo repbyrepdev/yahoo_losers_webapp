@@ -593,6 +593,39 @@ def ratings_spread(symbol: str) -> Sourced:
     return Sourced.live(payload["spread"], source)
 
 
+def _alpaca_option_snapshots(symbol: str, until: str):
+    """Fetch and merge every page of the indicative option-snapshot chain.
+
+    Returns (snapshots, error_reason): partial chains bias anything computed
+    from them (contracts sort C-before-P), so past the five-page budget the
+    caller gets a refusal, never a truncation.
+    """
+    snapshots = {}
+    token = None
+    for _page in range(5):
+        params = {"feed": "indicative", "limit": 1000,
+                  "expiration_date_lte": until}
+        if token:
+            params["page_token"] = token
+        try:
+            payload, err = _alpaca_get(
+                ALPACA_DATA_BASE,
+                f"/v1beta1/options/snapshots/{symbol.upper()}", params)
+            if err:
+                return None, err
+        except Exception as e:
+            return None, f"alpaca options failed ({type(e).__name__})"
+        snapshots.update(payload.get("snapshots") or {})
+        token = payload.get("next_page_token")
+        if not token:
+            break
+    else:
+        return None, "options chain exceeds page budget"
+    if not snapshots:
+        return None, "no listed options"
+    return snapshots, None
+
+
 def options_putcall(symbol: str) -> Sourced:
     """Put/call volume positioning from Alpaca's indicative options feed.
 
@@ -607,32 +640,9 @@ def options_putcall(symbol: str) -> Sourced:
     def produce():
         import re as _re
         until = (date.today() + timedelta(days=45)).isoformat()
-        # The endpoint paginates (max 1000/page). Contracts sort C-before-P
-        # within each expiry, so a truncated chain would overweight calls --
-        # merge every page or refuse.
-        snapshots = {}
-        token = None
-        for _page in range(5):
-            params = {"feed": "indicative", "limit": 1000,
-                      "expiration_date_lte": until}
-            if token:
-                params["page_token"] = token
-            try:
-                payload, err = _alpaca_get(
-                    ALPACA_DATA_BASE,
-                    f"/v1beta1/options/snapshots/{symbol.upper()}", params)
-                if err:
-                    return {"ok": False, "reason": err}
-            except Exception as e:
-                return {"ok": False, "reason": f"alpaca options failed ({type(e).__name__})"}
-            snapshots.update(payload.get("snapshots") or {})
-            token = payload.get("next_page_token")
-            if not token:
-                break
-        else:
-            return {"ok": False, "reason": "options chain exceeds page budget"}
-        if not snapshots:
-            return {"ok": False, "reason": "no listed options"}
+        snapshots, err = _alpaca_option_snapshots(symbol, until)
+        if err:
+            return {"ok": False, "reason": err}
         # OCC symbology is fixed from the right (8-digit strike, C/P,
         # 6-digit date); anchor there so roots with digits still parse.
         pattern = _re.compile(r"\d{6}([CP])\d{8}$")
@@ -858,3 +868,132 @@ def short_percent_float(symbol: str, allow_fetch: bool = True) -> Sourced:
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.derived(payload["pct"],
                            f"{source} (settlement {payload['as_of']}) / fmp:shares-float")
+
+
+def company_news(symbol: str, limit: int = 5) -> Sourced:
+    """Recent headlines from Finnhub's company-news feed (free tier,
+    verified live 2026-08-20). Same item shape the page renders, so the
+    news chip survives a Yahoo outage."""
+    source = "finnhub:company-news"
+    key = f"src:news:{symbol.upper()}:{limit}"
+
+    def produce():
+        try:
+            frm = (date.today() - timedelta(days=7)).isoformat()
+            payload, err = _finnhub_get("company-news",
+                                        {"symbol": symbol.upper(),
+                                         "from": frm, "to": date.today().isoformat()})
+            if err:
+                return {"ok": False, "reason": err}
+        except Exception as e:
+            return {"ok": False, "reason": f"finnhub news failed ({type(e).__name__})"}
+        out = []
+        for item in payload or []:
+            title = item.get("headline")
+            if not title:
+                continue
+            published = item.get("datetime")
+            out.append({
+                "title": title,
+                "publisher": item.get("source"),
+                "published": (datetime.utcfromtimestamp(published).isoformat() + "Z"
+                              if isinstance(published, (int, float)) and published > 0
+                              else None),
+                "url": item.get("url"),
+            })
+            if len(out) >= limit:
+                break
+        if not out:
+            return {"ok": False, "reason": "no recent headlines"}
+        return {"ok": True, "items": out}
+
+    payload = market_data._cached(key, market_data.TTL_NEWS, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["items"], source)
+
+
+def implied_straddle_move(symbol: str, spot: float) -> Sourced:
+    """ATM straddle implied move from Alpaca's indicative options feed.
+
+    Mirrors the Yahoo computation: nearest expiry at least 5 days out, one
+    strike listed on both sides nearest spot, legs priced off live
+    bid/ask mids with dailyBar close as the honest last-trade fallback.
+    Keeps the drill-in's implied-move figure alive while Yahoo's chain is
+    limited."""
+    source = "alpaca:options-indicative-straddle"
+
+    def produce():
+        import re as _re
+        until = (date.today() + timedelta(days=45)).isoformat()
+        snapshots, err = _alpaca_option_snapshots(symbol, until)
+        if err:
+            return {"ok": False, "reason": err}
+
+        pattern = _re.compile(r"(\d{6})([CP])(\d{8})$")
+        by_expiry = {}
+        for contract, snap in snapshots.items():
+            m = pattern.search(contract)
+            if not m:
+                continue
+            raw_date, side, raw_strike = m.groups()
+            expiry = f"20{raw_date[0:2]}-{raw_date[2:4]}-{raw_date[4:6]}"
+            strike = int(raw_strike) / 1000.0
+            by_expiry.setdefault(expiry, {}).setdefault(strike, {})[side] = snap
+
+        # Eastern, matching the Yahoo path: near midnight UTC the server
+        # date could select a different expiry than the primary figure.
+        today = market_data._eastern_now().date()
+        expiry = days_to_expiry = None
+        for candidate in sorted(by_expiry):
+            try:
+                days_out = (date.fromisoformat(candidate) - today).days
+            except ValueError:
+                continue
+            if days_out >= 5:
+                expiry, days_to_expiry = candidate, days_out
+                break
+        if not expiry:
+            return {"ok": False, "reason": "no expiry at least 5 days out"}
+
+        both_sided = {k: v for k, v in by_expiry[expiry].items()
+                      if "C" in v and "P" in v}
+        if not both_sided:
+            return {"ok": False, "reason": "no strike listed on both sides"}
+        strike = min(both_sided, key=lambda k: abs(k - spot))
+
+        def leg_mid(snap):
+            quote = snap.get("latestQuote") or {}
+            bid, ask = float(quote.get("bp") or 0), float(quote.get("ap") or 0)
+            if bid > 0 and ask > 0:
+                mid = (bid + ask) / 2
+                return mid, (ask - bid) / mid if mid else None, "quote"
+            last = float((snap.get("dailyBar") or {}).get("c") or 0)
+            return (last, None, "last-trade") if last > 0 else (None, None, None)
+
+        call_mid, call_spread, call_basis = leg_mid(both_sided[strike]["C"])
+        put_mid, put_spread, put_basis = leg_mid(both_sided[strike]["P"])
+        if not call_mid or not put_mid:
+            return {"ok": False, "reason": "no usable ATM quotes"}
+        if "last-trade" in (call_basis, put_basis):
+            quality = "last-trade fallback (no live quotes)"
+        else:
+            worst_spread = max(call_spread, put_spread)
+            quality = "ok" if worst_spread < 0.35 else "wide-spread (thin chain)"
+        return {
+            "ok": True,
+            "expiry": expiry,
+            "days_to_expiry": days_to_expiry,
+            "implied_move_pct": round((call_mid + put_mid) / spot * 100, 1),
+            "spot": round(float(spot), 2),
+            "strike": float(strike),
+            "quality": quality,
+            "estimate_basis": "ATM straddle mid-quotes (indicative feed) over "
+                              "the last daily close; not a probability, the "
+                              "magnitude of move the market is pricing",
+        }
+
+    payload = produce()
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
