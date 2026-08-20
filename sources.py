@@ -283,6 +283,67 @@ def quote_failover(symbol: str) -> Sourced:
 
 # --- Losers screener failover ------------------------------------------------
 
+def _normalize_loser_rows(raw, cap=25):
+    """Yahoo-shaped rows from a raw movers list, junk filtered.
+
+    Raw screeners include sub-dollar paper and warrant/unit tickers
+    (five-letter symbols ending W/U, or dotted classes like FTRA.WS) that
+    the Yahoo cohort -- the population every hit rate was computed on --
+    never contains. A failover day's universe must resemble that cohort.
+    """
+    rows = []
+    for r in raw:
+        sym = (r.get("symbol") or "").upper()
+        pct = r.get("pct")
+        price = r.get("price")
+        if not sym or not isinstance(pct, (int, float)):
+            continue
+        if "." in sym or (len(sym) >= 5 and sym[-1] in ("W", "U")):
+            continue
+        if isinstance(price, (int, float)) and price < 1.0:
+            continue
+        rows.append({"Symbol": sym,
+                     "Name": r.get("name") or sym,
+                     "Change": str(r.get("change")),
+                     "Percent Change": f"{pct:.2f}%",
+                     "Volume": "n/a", "Market Cap": "n/a"})
+        if len(rows) >= cap:
+            break
+    return rows
+
+
+def alpaca_losers() -> Sourced:
+    """The day's biggest losers from Alpaca's official movers screener.
+
+    Second in the universe chain: an API with a per-minute budget beats
+    FMP's 200/day when the Yahoo screener is down, and its list is
+    minute-fresh (last_updated rides the payload).
+    """
+    source = "alpaca:movers-losers"
+
+    def produce():
+        try:
+            payload, err = _alpaca_get(ALPACA_DATA_BASE,
+                                       "/v1beta1/screener/stocks/movers",
+                                       {"top": 50})
+            if err:
+                return {"ok": False, "reason": err}
+        except Exception as e:
+            return {"ok": False, "reason": f"alpaca movers failed ({type(e).__name__})"}
+        raw = [{"symbol": r.get("symbol"), "pct": r.get("percent_change"),
+                "change": r.get("change"), "price": r.get("price"), "name": None}
+               for r in (payload.get("losers") or [])]
+        rows = _normalize_loser_rows(raw)
+        if not rows:
+            return {"ok": False, "reason": "empty losers list"}
+        return {"ok": True, "rows": rows}
+
+    payload = market_data._cached("src:alpaca-losers", 10 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["rows"], source)
+
+
 def fmp_losers() -> Sourced:
     """The day's biggest losers from FMP, shaped like the Yahoo screener rows.
 
@@ -296,19 +357,13 @@ def fmp_losers() -> Sourced:
             payload, err = _fmp_get("biggest-losers", {})
             if err:
                 return {"ok": False, "reason": err}
-            rows = []
-            for r in payload:
-                pct = r.get("changesPercentage")
-                if not r.get("symbol") or not isinstance(pct, (int, float)):
-                    continue  # one malformed row must not sink the last-resort source
-                rows.append({"Symbol": r.get("symbol"),
-                             "Name": r.get("name"),
-                             "Change": str(r.get("change")),
-                             "Percent Change": f"{pct:.2f}%",
-                             "Volume": "n/a", "Market Cap": "n/a"})
+            raw = [{"symbol": r.get("symbol"), "pct": r.get("changesPercentage"),
+                    "change": r.get("change"), "price": r.get("price"),
+                    "name": r.get("name")} for r in payload]
+            rows = _normalize_loser_rows(raw)
             if not rows:
                 return {"ok": False, "reason": "empty losers list"}
-            return {"ok": True, "rows": rows[:25]}
+            return {"ok": True, "rows": rows}
         except Exception as e:
             return {"ok": False, "reason": f"fmp losers failed ({type(e).__name__})"}
 
@@ -396,35 +451,50 @@ def earnings_confirmed(symbol: str) -> Sourced:
     key = earnings_cache_key(symbol)
 
     def produce():
+        # Finnhub first: its per-minute allowance is effectively unlimited at
+        # our volume, so FMP's 200/day stays in reserve (provider principle:
+        # spend abundant budgets before scarce ones).
         span_from = date.today().isoformat()
         span_to = (date.today() + timedelta(days=90)).isoformat()
-        try:
-            payload, err = _fmp_get("earnings-calendar",
-                                    {"from": span_from, "to": span_to})
-            if not err and isinstance(payload, list):
-                mine = sorted(r["date"] for r in payload
-                              if r.get("symbol") == symbol and r.get("date"))
-                if mine:
-                    return {"ok": True, "date": mine[0], "provider": "fmp"}
-        except Exception as e:
-            logger.info(f"fmp earnings unavailable: {type(e).__name__}")
+        finnhub_said_none = False
         try:
             payload, err = _finnhub_get("calendar/earnings",
                                         {"from": span_from, "to": span_to,
                                          "symbol": symbol})
+            if not err:
+                finnhub_said_none = True
+                rows = (payload.get("earningsCalendar") or [])
+                # Never trust the API-side filter: when the free tier ignores
+                # the symbol param it returns the whole market's calendar, and
+                # taking the earliest date stamps EVERY ticker with the same
+                # day (live incident 2026-08-20).
+                mine = sorted(r["date"] for r in rows
+                              if r.get("date")
+                              and str(r.get("symbol", "")).upper() == symbol)
+                if mine:
+                    return {"ok": True, "date": mine[0], "provider": "finnhub"}
+        except Exception as e:
+            logger.info(f"finnhub earnings unavailable: {type(e).__name__}")
+        try:
+            payload, err = _fmp_get("earnings-calendar",
+                                    {"from": span_from, "to": span_to})
             if err:
+                # Finnhub answered cleanly with no rows: that IS the answer;
+                # FMP's transport error must not relabel it.
+                if finnhub_said_none:
+                    return {"ok": False,
+                            "reason": "no confirmed earnings in the next 90 days"}
                 return {"ok": False, "reason": err}
-            rows = (payload.get("earningsCalendar") or [])
-            # Never trust the API-side filter: when the free tier ignores the
-            # symbol param it returns the whole market's calendar, and taking
-            # the earliest date stamps EVERY ticker with the same day.
-            mine = sorted(r["date"] for r in rows
-                          if r.get("date")
-                          and str(r.get("symbol", "")).upper() == symbol)
-            if mine:
-                return {"ok": True, "date": mine[0], "provider": "finnhub"}
+            if isinstance(payload, list):
+                mine = sorted(r["date"] for r in payload
+                              if r.get("symbol") == symbol and r.get("date"))
+                if mine:
+                    return {"ok": True, "date": mine[0], "provider": "fmp"}
             return {"ok": False, "reason": "no confirmed earnings in the next 90 days"}
         except Exception as e:
+            if finnhub_said_none:
+                return {"ok": False,
+                        "reason": "no confirmed earnings in the next 90 days"}
             return {"ok": False, "reason": f"both earnings providers failed ({type(e).__name__})"}
 
     payload = market_data._cached(key, 24 * 60 * 60, produce)
@@ -488,10 +558,16 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
     have been traded. Fills land in later snapshots as the measured-slippage
     track record.
 
-    Picks are {"symbol", "price"} dicts: Alpaca requires whole shares for
-    opg (notional means fractional, and "fractional orders must be DAY
-    orders" -- live rejection 2026-08-19), so each order is sized to the
-    nearest whole-share count under the target notional, minimum one share.
+    Picks are {"symbol", "price"} dicts sized to whole shares under the
+    target notional (fractional orders were rejected live 2026-08-19).
+
+    Time-in-force is DAY, not opg: submitted after hours the order queues
+    for the next session and fills at the first prints after the open.
+    True opg orders fill only in the opening auction, and the paper
+    simulator's IEX feed has no auction print for most mid-caps -- all
+    three opg orders expired unfilled at the 2026-08-20 open. First-prints
+    is the honest, fillable approximation of "entered at the open", and
+    the recorded ref_price still measures slippage against intent.
     """
     source = "alpaca:paper-orders"
     base = _alpaca_trading_base()   # raises on any non-paper endpoint
@@ -519,7 +595,7 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
             response = requests.post(
                 f"{base}/v2/orders", headers=headers, timeout=20,
                 json={"symbol": symbol, "qty": str(qty),
-                      "side": "buy", "type": "market", "time_in_force": "opg",
+                      "side": "buy", "type": "market", "time_in_force": "day",
                       # Deterministic per (day, symbol): a snapshot retry
                       # cannot double-submit -- Alpaca rejects the duplicate
                       # id, which we treat as already-submitted.
@@ -545,7 +621,8 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
         return Sourced.unavailable(source, f"all paper orders failed: {failed}")
     return Sourced.live({"submitted": submitted, "failed": failed,
                          "target_notional_each": PAPER_NOTIONAL_PER_PICK,
-                         "basis": "paper account, market-on-open, simulated money"},
+                         "basis": "paper account, market at next open (first "
+                                  "prints, day TIF), simulated money"},
                         source)
 
 
@@ -1006,6 +1083,34 @@ def implied_straddle_move(symbol: str, spot: float) -> Sourced:
         }
 
     payload = produce()
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+def company_profile(symbol: str) -> Sourced:
+    """Name and industry from Finnhub's profile2 (free, verified 2026-08-20).
+
+    Partial by design: profile2 carries industry but not the GICS sector
+    Yahoo reports, so sector stays honestly absent in fallback mode.
+    """
+    source = "finnhub:profile2"
+    key = f"src:profile:{symbol.upper()}"
+
+    def produce():
+        try:
+            payload, err = _finnhub_get("stock/profile2",
+                                        {"symbol": symbol.upper()})
+            if err:
+                return {"ok": False, "reason": err}
+            if not payload or not payload.get("name"):
+                return {"ok": False, "reason": "no profile published"}
+            return {"ok": True, "name": payload.get("name"),
+                    "industry": payload.get("finnhubIndustry")}
+        except Exception as e:
+            return {"ok": False, "reason": f"finnhub profile failed ({type(e).__name__})"}
+
+    payload = market_data._cached(key, 7 * 24 * 60 * 60, produce)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)

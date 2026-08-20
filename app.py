@@ -79,12 +79,19 @@ def stable_universe():
         if not status.get('success'):
             # First-ever backup for the app's spine: FMP's losers screener.
             import sources
-            fallback = sources.fmp_losers()
+            fallback = sources.alpaca_losers()
             if fallback.ok:
                 losers = fallback.value
-                status = {'success': True, 'data_source': 'fmp-failover',
+                status = {'success': True, 'data_source': 'alpaca-failover',
                           'message': '⚠️ Yahoo screener failed; universe from '
-                                     'FMP biggest-losers'}
+                                     "Alpaca's movers screener"}
+            else:
+                fallback = sources.fmp_losers()
+                if fallback.ok:
+                    losers = fallback.value
+                    status = {'success': True, 'data_source': 'fmp-failover',
+                              'message': '⚠️ Yahoo screener failed; universe from '
+                                         'FMP biggest-losers'}
         if status.get('success'):
             market_data._cache.set('universe:v1',
                                    {'losers': losers, 'status': status,
@@ -3294,7 +3301,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         {% if status.data_source == 'cached' %}📁 Cached
                         {% elif status.data_source == 'live' %}✅ Live
                         {% elif status.data_source == 'sample' %}⚠️ Sample
-                        {% elif status.data_source == 'fmp-failover' %}🟠 FMP failover
+                        {% elif status.data_source == 'alpaca-failover' %}🟠 Alpaca failover{% elif status.data_source == 'fmp-failover' %}🟠 FMP failover
                         {% elif status.data_source == 'error' %}❌ Error
                         {% endif %}
                     </span>

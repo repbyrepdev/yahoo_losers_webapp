@@ -68,7 +68,7 @@ class TestPaperGuard:
         assert result.ok
         assert len(submitted) == sources.PAPER_MAX_PICKS  # capped
         for order in submitted:
-            assert order["time_in_force"] == "opg"
+            assert order["time_in_force"] == "day"
             assert order["type"] == "market"
             # whole shares: Alpaca rejects fractional opg ("must be DAY")
             assert order["qty"] == "6"
@@ -1090,3 +1090,115 @@ class TestEarningsIntegrity:
         result = sources.earnings_confirmed("ZZEI2")
         assert not result.ok
         assert "no confirmed earnings" in result.reason
+
+
+class TestProviderPrinciples:
+    def test_alpaca_losers_filters_junk_and_shapes_rows(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "/v1beta1/screener/stocks/movers": {"losers": [
+                {"symbol": "REAL1", "percent_change": -12.5, "change": -3.1, "price": 21.7},
+                {"symbol": "GDEVW", "percent_change": -50.0, "change": -0.01, "price": 0.02},
+                {"symbol": "FTRA.WS", "percent_change": -40.0, "change": -0.2, "price": 0.3},
+                {"symbol": "PENNY", "percent_change": -30.0, "change": -0.2, "price": 0.55},
+                {"symbol": "REAL2", "percent_change": -9.9, "change": -1.0, "price": 9.1}]}}))
+        result = sources.alpaca_losers()
+        assert result.ok
+        assert [r["Symbol"] for r in result.value] == ["REAL1", "REAL2"]
+        assert result.value[0]["Percent Change"] == "-12.50%"
+
+    def test_universe_prefers_alpaca_over_fmp(self, monkeypatch):
+        import app
+        monkeypatch.setattr(app, "scrape_yahoo_losers",
+                            lambda: ([], {"success": False, "message": "boom"}))
+        monkeypatch.setattr(sources, "alpaca_losers",
+                            lambda: market_data.Sourced.live(
+                                [{"Symbol": "ZZAL1", "Name": "A", "Change": "-1",
+                                  "Percent Change": "-8.00%", "Volume": "n/a",
+                                  "Market Cap": "n/a"}], "alpaca:movers-losers"))
+        monkeypatch.setattr(sources, "fmp_losers",
+                            lambda: (_ for _ in ()).throw(AssertionError("fmp reached")))
+        market_data._cache._local.pop("universe:v1", None)
+        losers, status = app.stable_universe()
+        assert status["data_source"] == "alpaca-failover"
+        assert losers[0]["Symbol"] == "ZZAL1"
+
+    def test_universe_falls_to_fmp_when_alpaca_dead(self, monkeypatch):
+        import app
+        monkeypatch.setattr(app, "scrape_yahoo_losers",
+                            lambda: ([], {"success": False, "message": "boom"}))
+        monkeypatch.setattr(sources, "alpaca_losers",
+                            lambda: market_data.Sourced.unavailable("alpaca:movers-losers", "down"))
+        monkeypatch.setattr(sources, "fmp_losers",
+                            lambda: market_data.Sourced.live(
+                                [{"Symbol": "ZZFL1", "Name": "F", "Change": "-1",
+                                  "Percent Change": "-9.00%", "Volume": "n/a",
+                                  "Market Cap": "n/a"}], "fmp:biggest-losers"))
+        market_data._cache._local.pop("universe:v1", None)
+        losers, status = app.stable_universe()
+        assert status["data_source"] == "fmp-failover"
+
+    def test_ratings_finnhub_first_yahoo_never_touched(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(market_data, "_ticker",
+                            lambda s: calls.append(s))
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.live(
+                                {"strongBuy": 5, "buy": 10, "hold": 4,
+                                 "sell": 1, "strongSell": 0, "total": 20},
+                                "finnhub:recommendation-trends"))
+        market_data._cache._local.pop("recs:v2:ZZPP1", None)
+        result = market_data.analyst_recommendations("ZZPP1")
+        assert result.ok and result.source == "finnhub:recommendation-trends"
+        assert calls == []
+
+    def test_ratings_yahoo_backup_engages(self, monkeypatch):
+        import pandas as pd
+        class YahooHas:
+            recommendations = pd.DataFrame([{"strongBuy": 2, "buy": 3, "hold": 1,
+                                             "sell": 0, "strongSell": 0}])
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooHas())
+        monkeypatch.setattr(sources, "ratings_spread",
+                            lambda s: market_data.Sourced.unavailable(
+                                "finnhub:recommendation-trends", "quota"))
+        market_data._cache._local.pop("recs:v2:ZZPP2", None)
+        result = market_data.analyst_recommendations("ZZPP2")
+        assert result.ok
+        assert result.source == "yfinance:recommendations"
+        assert result.value["total"] == 6
+
+    def test_news_finnhub_first(self, monkeypatch):
+        monkeypatch.setattr(market_data, "_ticker",
+                            lambda s: (_ for _ in ()).throw(AssertionError("yahoo touched")))
+        monkeypatch.setattr(sources, "company_news",
+                            lambda sym, limit=5: market_data.Sourced.live(
+                                [{"title": "T", "publisher": "P", "published": None,
+                                  "url": None}], "finnhub:company-news"))
+        market_data._cache._local.pop("news:ZZPP3:5", None)
+        result = market_data.headlines("ZZPP3")
+        assert result.ok and result.source == "finnhub:company-news"
+
+    def test_earnings_finnhub_first_fmp_untouched(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            if "calendar/earnings" in url:
+                return FakeResponse({"earningsCalendar": [
+                    {"symbol": "ZZPP4", "date": "2026-09-10"}]})
+            raise AssertionError(f"unexpected call {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        result = sources.earnings_confirmed("ZZPP4")
+        assert result.ok and result.value["date"] == "2026-09-10"
+        assert "finnhub" in result.source
+
+    def test_blocked_profile_fills_name_industry_from_finnhub(self, monkeypatch):
+        monkeypatch.setattr(market_data, "_info",
+                            lambda sym, allow_fetch=True: {"ok": False, "reason": "401"})
+        monkeypatch.setattr(sources, "short_percent_float",
+                            lambda sym, allow_fetch=True: market_data.Sourced.unavailable(
+                                "finra", "cold"))
+        monkeypatch.setattr(sources, "company_profile",
+                            lambda sym: market_data.Sourced.live(
+                                {"name": "Zeta Corp", "industry": "Semiconductors"},
+                                "finnhub:profile2"))
+        prof = market_data.profile("ZZPP5")
+        assert prof["industry"].ok and prof["industry"].value == "Semiconductors"
+        assert prof["name"].value == "Zeta Corp"
+        assert not prof["sector"].ok  # profile2 has no GICS sector; stays honest
