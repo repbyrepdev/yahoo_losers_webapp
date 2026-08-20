@@ -1425,3 +1425,55 @@ class TestPaperLifecycle:
         act = result.value["actions"][0]
         assert act["action"] == "exit-blocked"
         assert "cancel failed" in act["reason"]
+
+
+class TestPaperAccountOverview:
+    def _routes(self, account=None, positions=None, orders=None):
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/account" in url:
+                return FakeResponse(account or {"equity": "101250.50", "last_equity": "100000",
+                                               "cash": "24000.25"})
+            if "/v2/positions" in url:
+                return FakeResponse(positions if positions is not None else [
+                    {"symbol": "ZZPA1", "qty": "13", "avg_entry_price": "75.01",
+                     "current_price": "76.5", "unrealized_plpc": "0.0199",
+                     "market_value": "994.5"}])
+            if "/v2/orders" in url:
+                return FakeResponse(orders or [
+                    {"symbol": "ZZPA1", "side": "sell", "type": "limit",
+                     "limit_price": "78.76", "client_order_id": "snap-tp-2026-08-20-ZZPA1"}])
+            raise AssertionError(f"unrouted {url}")
+        return fake
+
+    def test_overview_shape_and_math(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", self._routes())
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_account_overview()
+        assert result.ok
+        v = result.value
+        assert v["equity"] == 101250.50 and v["cash"] == 24000.25
+        assert v["day_change_pct"] == 1.25
+        pos = v["positions"][0]
+        assert pos["qty"] == 13 and pos["upl_pct"] == 1.99
+        assert v["working_orders"][0]["limit_price"] == "78.76"
+
+    def test_fractional_quantity_preserved(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", self._routes(positions=[
+            {"symbol": "ZZPA2", "qty": "0.25", "avg_entry_price": "100",
+             "current_price": "101", "unrealized_plpc": "0.01",
+             "market_value": "25.25"}]))
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_account_overview()
+        assert result.ok
+        assert result.value["positions"][0]["qty"] == 0.25
+
+    def test_failure_keeps_identity(self, monkeypatch):
+        def dying(url, params=None, headers=None, timeout=None, **kw):
+            raise RuntimeError("connection refused by paper-api")
+        monkeypatch.setattr(sources.requests, "get", dying)
+        market_data._cache._local.pop("src:paper-account", None)
+        result = sources.paper_account_overview()
+        assert not result.ok
+        assert result.reason == "RuntimeError"

@@ -906,14 +906,23 @@ def paper_account_overview() -> Sourced:
             positions = _paper_get("/v2/positions")
             open_orders = _paper_get("/v2/orders", {"status": "open", "limit": 50})
         except Exception as e:
-            return {"ok": False, "reason": f"paper account unavailable ({type(e).__name__})"}
+            # Keep the underlying words: the UI shows the real cause and
+            # _cached classifies on detail (transient vs rate-limited),
+            # same identity rule as every other producer (Copilot, PR 75).
+            return {"ok": False, "reason": type(e).__name__,
+                    "detail": f"{type(e).__name__}: {e}"}
         equity = float(account.get("equity") or 0)
         last_equity = float(account.get("last_equity") or 0)
         rows = []
         for p in positions:
             try:
+                # Broker-reported quantity verbatim: int() would floor a
+                # fractional position (0.25 -> 0) and contradict Alpaca's
+                # own market_value beside it (Copilot, PR 75).
+                raw_qty = float(p.get("qty") or 0)
+                qty = int(raw_qty) if raw_qty == int(raw_qty) else round(raw_qty, 4)
                 rows.append({"symbol": p.get("symbol"),
-                             "qty": int(float(p.get("qty") or 0)),
+                             "qty": qty,
                              "entry": round(float(p.get("avg_entry_price") or 0), 2),
                              "current": round(float(p.get("current_price") or 0), 2),
                              "upl_pct": round(float(p.get("unrealized_plpc") or 0) * 100, 2),
