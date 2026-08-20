@@ -253,8 +253,16 @@ def _effective_ttl(base_ttl: int, spread: float = 0.1) -> int:
     all expiring in the same second and stampeding the provider.
     """
     stretch = PHASE_TTL_STRETCH.get(market_phase()["phase"], 8)
-    ttl = base_ttl if stretch == 1 else min(base_ttl * stretch, 12 * 60 * 60)
-    return max(30, int(ttl * random.uniform(1.0 - spread, 1.0 + spread)))
+    # The 12h ceiling exists to bound STRETCHED short TTLs; it must never
+    # shorten a long-lived entry below what the producer asked for, or every
+    # daily+ cache (targets, ratings, FINRA settlement) silently expires at
+    # 12h off-market and re-spends provider budget (CR, PR 66).
+    ttl = (base_ttl if stretch == 1
+           else min(base_ttl * stretch, max(base_ttl, 12 * 60 * 60)))
+    # Jitter spreads expiries to avoid stampedes; upward-only, because a
+    # downward roll would re-shorten the daily+ TTLs the line above just
+    # protected (CR, PR 66 follow-up).
+    return max(30, int(ttl * random.uniform(1.0, 1.0 + spread)))
 
 # An analyst "consensus" drawn from one or two estimates is noise, not consensus.
 MIN_ANALYSTS_FOR_CONSENSUS = 3
@@ -317,6 +325,29 @@ class TTLCache:
             with self._lock:
                 self._local.pop(key, None)
         return None
+
+    def claim_once(self, key: str, ttl: int) -> bool:
+        """Atomically claim a marker key. True exactly once per ttl window.
+
+        Redis path uses SET NX (multi-worker atomic); the local path holds
+        the cache lock, which is atomic within a process -- and the lanes
+        that spend provider budget are lease-gated to one worker anyway.
+        """
+        if self._redis is not None:
+            try:
+                claimed = bool(self._redis.set(self._key(f"claim:{key}"), "1",
+                                               nx=True, ex=ttl))
+                self._redis_failures = 0
+                return claimed
+            except Exception as e:
+                self._redis_failed(e)
+        with self._lock:
+            now = time.time()
+            entry = self._local.get(f"claim:{key}")
+            if entry is not None and entry[0] > now:
+                return False
+            self._local[f"claim:{key}"] = (now + ttl, "1")
+            return True
 
     def set(self, key: str, value, ttl: int):
         if self._redis is not None:
@@ -661,10 +692,28 @@ def profile(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
     """Sector, industry, short interest and institutional ownership."""
     info = _info(symbol, allow_fetch)
     source = "yfinance:info"
+
+    def _short_float_fallback():
+        # Backup: FINRA settlement short interest over FMP float -- the same
+        # twice-monthly data Yahoo repackages. Keeps the score's short-interest
+        # factor alive while quoteSummary is blocked. Returns None unless it
+        # produced a real value.
+        try:
+            import sources
+            fb = sources.short_percent_float(symbol, allow_fetch)
+            return fb if fb.ok else None
+        except Exception as e:
+            logger.info(f"short-float fallback failed for {symbol}: {type(e).__name__}")
+            return None
+
     if not info.get("ok"):
         reason = info.get("reason", "unavailable")
-        return {k: Sourced.unavailable(source, reason) for k in
-                ("sector", "industry", "short_pct_float", "held_pct_institutions", "avg_volume")}
+        result = {k: Sourced.unavailable(source, reason) for k in
+                  ("sector", "industry", "short_pct_float", "held_pct_institutions", "avg_volume")}
+        fallback = _short_float_fallback()
+        if fallback is not None:
+            result["short_pct_float"] = fallback
+        return result
 
     def field(key):
         value = info.get(key)
@@ -687,7 +736,10 @@ def profile(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
         "name": field("name"),
         "sector": field("sector"),
         "industry": field("industry"),
-        "short_pct_float": field("short_pct_float"),
+        "short_pct_float": (field("short_pct_float")
+                            if info.get("short_pct_float") is not None
+                            else (_short_float_fallback()
+                                  or field("short_pct_float"))),
         "held_pct_institutions": held_sourced,
         "avg_volume": field("avg_volume"),
     }
@@ -2205,6 +2257,23 @@ def _symbols_needing_target_fallback(symbols):
     return out
 
 
+def _symbols_needing_short_fallback(symbols):
+    """Symbols whose short-interest factor has no usable Yahoo value and no
+    cached FINRA fallback yet. Healthy profiles keep this empty."""
+    out = []
+    for s in symbols:
+        if s.startswith("^"):
+            continue
+        if _cache.get(f"src:shortfloat:{s.upper()}") is not None:
+            continue
+        info = _cache.get(f"info:{s.upper()}")
+        if info is None:
+            continue  # profile drain owns it first; revisit next tick
+        if not info.get("ok") or info.get("short_pct_float") is None:
+            out.append(s)
+    return out
+
+
 def _symbols_missing_info(symbols):
     """The subset whose profile is absent from cache -- the info lane's queue."""
     return [s for s in symbols
@@ -2241,11 +2310,12 @@ def _info_loop():
                                 if _cache.get(f"src:earnings:{s.upper()}") is None]
             recs_missing, options_missing = _symbols_missing_factor_keys(universe)
             targets_missing = _symbols_needing_target_fallback(universe)
+            short_missing = _symbols_needing_short_fallback(universe)
             calendar_cold = _cache.get("src:trading-days") is None
             if (not missing and not gc_missing and not grades_missing
                     and not earnings_missing and not recs_missing
                     and not options_missing and not targets_missing
-                    and not calendar_cold):
+                    and not short_missing and not calendar_cold):
                 time.sleep(20)
                 continue
             for symbol in missing[:5]:
@@ -2286,6 +2356,11 @@ def _info_loop():
                     analyst_target(symbol)
                 except Exception as e:
                     logger.warning(f"targets warm skipped for {symbol}: {type(e).__name__}")
+            for symbol in short_missing[:2]:
+                try:
+                    profile(symbol)
+                except Exception as e:
+                    logger.warning(f"short-float warm skipped for {symbol}: {type(e).__name__}")
             save_cache_to_disk()
         except Exception as e:
             logger.warning(f"info lane cycle failed: {type(e).__name__}: {e}")

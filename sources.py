@@ -20,6 +20,7 @@ accident can never exhaust the account.
 """
 
 import logging
+import math
 import os
 import time
 from datetime import date, datetime, timedelta
@@ -649,24 +650,35 @@ def price_targets(symbol: str, allow_fetch: bool = True) -> Sourced:
     key = f"src:targets:{symbol.upper()}"
 
     def produce():
-        # The response cache alone cannot hold the one-request-per-symbol-per-
-        # day contract: structural first-strikes live 5 minutes and successes
-        # can expire early off-market. A day-keyed stamp, set before the
-        # request and regardless of outcome, makes the contract literal (CR,
-        # PR 62). The lane is lease-gated, so a cross-worker race costs at
-        # worst one duplicate request.
-        stamp_key = f"src:targets:asked:{symbol.upper()}:{date.today().isoformat()}"
-        if market_data._cache.get(stamp_key) is not None:
+        # One provider request per symbol per day, atomically claimed (CR,
+        # PRs 62 and 66): the response cache alone cannot hold that contract.
+        # The day's answer is kept beside the claim and replayed if the
+        # response cache expires early, so the factor never goes missing
+        # just because the request budget is already spent.
+        day = date.today().isoformat()
+        answer_key = f"src:targets:answer:{symbol.upper()}:{day}"
+        if not market_data._cache.claim_once(
+                f"src:targets:{symbol.upper()}:{day}", 24 * 60 * 60):
+            # The claim loser is racing an in-flight winner: wait briefly for
+            # the day's answer, and refuse transiently (never day-scoped) if
+            # it has not landed yet (CR, PR 66 follow-up).
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
             return {"ok": False,
-                    "reason": "fmp target request already spent today"}
-        market_data._cache.set(stamp_key, {"asked": True}, 24 * 60 * 60)
+                    "reason": "fmp target request in flight"}
+        def _remember(result):
+            market_data._cache.set(answer_key, result, 24 * 60 * 60)
+            return result
         try:
             payload, err = _fmp_get("price-target-summary",
                                     {"symbol": symbol.upper()})
             if err:
-                return {"ok": False, "reason": err}
+                return _remember({"ok": False, "reason": err})
             if not payload:
-                return {"ok": False, "reason": "no analyst coverage published"}
+                return _remember({"ok": False, "reason": "no analyst coverage published"})
             row = payload[0]
             # Prefer the fresher quarter window; a quiet quarter falls back
             # to the trailing year.
@@ -676,14 +688,153 @@ def price_targets(symbol: str, allow_fetch: bool = True) -> Sourced:
                 count = int(row.get(count_key) or 0)
                 mean = row.get(mean_key)
                 if count > 0 and mean:
-                    return {"ok": True, "mean": float(mean), "count": count,
-                            "window": window}
-            return {"ok": False, "reason": "no analyst coverage published"}
+                    return _remember({"ok": True, "mean": float(mean),
+                                      "count": count, "window": window})
+            return _remember({"ok": False, "reason": "no analyst coverage published"})
         except Exception as e:
-            return {"ok": False, "reason": f"fmp targets failed ({type(e).__name__})"}
+            return _remember({"ok": False, "reason": f"fmp targets failed ({type(e).__name__})"})
 
     payload = market_data._cached(key, 24 * 60 * 60, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({"mean": payload["mean"], "count": payload["count"],
                          "window": payload["window"]}, source)
+
+
+def _finra_latest_settlement() -> Optional[str]:
+    """Newest consolidated-short-interest settlement date. One request per
+    day, shared by every symbol -- the dataset is partitioned by date and
+    only sortable within a named partition."""
+    key = "src:finra:si-settlement"
+
+    def produce():
+        try:
+            resp = requests.get(
+                "https://api.finra.org/partitions/group/otcMarket"
+                "/name/consolidatedShortInterest",
+                headers={"Accept": "application/json"}, timeout=20)
+            resp.raise_for_status()
+            parts = [p["partitions"][0]
+                     for p in (resp.json().get("availablePartitions") or [])
+                     if p.get("partitions")]
+            if not parts:
+                return {"ok": False, "reason": "no partitions listed"}
+            return {"ok": True, "settlement": max(parts)}
+        except Exception as e:
+            return {"ok": False, "reason": f"finra partitions failed ({type(e).__name__})"}
+
+    payload = market_data._cached(key, 24 * 60 * 60, produce)
+    return payload.get("settlement") if payload.get("ok") else None
+
+
+def shares_float(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Free-float share count from FMP (free tier, verified 2026-08-19).
+
+    Float moves slowly: cached a week, and a day stamp caps HTTP at one
+    request per symbol per day whatever the response cache does."""
+    source = "fmp:shares-float"
+    key = f"src:float:{symbol.upper()}"
+
+    def produce():
+        day = date.today().isoformat()
+        answer_key = f"src:float:answer:{symbol.upper()}:{day}"
+        if not market_data._cache.claim_once(
+                f"src:float:{symbol.upper()}:{day}", 24 * 60 * 60):
+            # The claim loser is racing an in-flight winner: wait briefly for
+            # the day's answer, and refuse transiently (never day-scoped) if
+            # it has not landed yet (CR, PR 66 follow-up).
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
+            return {"ok": False, "reason": "fmp float request in flight"}
+        def _remember(result):
+            market_data._cache.set(answer_key, result, 24 * 60 * 60)
+            return result
+        try:
+            payload, err = _fmp_get("shares-float", {"symbol": symbol.upper()})
+            if err:
+                return _remember({"ok": False, "reason": err})
+            if not payload or not payload[0].get("floatShares"):
+                return _remember({"ok": False, "reason": "float not reported"})
+            shares = float(payload[0]["floatShares"])
+            # json.loads accepts NaN/Infinity literals, and NaN <= 0 is
+            # False -- an explicit finiteness check or garbage caches as truth.
+            if not math.isfinite(shares) or shares <= 0:
+                return _remember({"ok": False, "reason": "float not reported"})
+            return _remember({"ok": True, "floatShares": shares,
+                              "as_of": (payload[0].get("date") or "")[:10]})
+        except Exception as e:
+            return _remember({"ok": False, "reason": f"fmp float failed ({type(e).__name__})"})
+
+    payload = market_data._cached(key, 7 * 24 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+def short_percent_float(symbol: str, allow_fetch: bool = True) -> Sourced:
+    """Short interest as a fraction of float: FINRA's consolidated short
+    interest (the same twice-monthly settlement data Yahoo repackages) over
+    FMP's float. Backup for the score's short-interest factor -- the last
+    input that was Yahoo-only. Labeled with its settlement date."""
+    source = "finra:consolidated-short-interest"
+    key = f"src:shortfloat:{symbol.upper()}"
+
+    def produce():
+        day = date.today().isoformat()
+        answer_key = f"src:shortfloat:answer:{symbol.upper()}:{day}"
+        if not market_data._cache.claim_once(
+                f"src:shortfloat:{symbol.upper()}:{day}", 24 * 60 * 60):
+            # The claim loser is racing an in-flight winner: wait briefly for
+            # the day's answer, and refuse transiently (never day-scoped) if
+            # it has not landed yet (CR, PR 66 follow-up).
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
+            return {"ok": False, "reason": "short-interest request in flight"}
+        def _remember(result):
+            market_data._cache.set(answer_key, result, 24 * 60 * 60)
+            return result
+        settlement = _finra_latest_settlement()
+        if not settlement:
+            return _remember({"ok": False, "reason": "finra settlement calendar unavailable"})
+        try:
+            resp = requests.post(
+                "https://api.finra.org/data/group/otcMarket"
+                "/name/consolidatedShortInterest",
+                headers={"Accept": "application/json",
+                         "Content-Type": "application/json"},
+                json={"limit": 1, "compareFilters": [
+                    {"compareType": "EQUAL", "fieldName": "symbolCode",
+                     "fieldValue": symbol.upper()},
+                    {"compareType": "EQUAL", "fieldName": "settlementDate",
+                     "fieldValue": settlement}]},
+                timeout=20)
+            resp.raise_for_status()
+            rows = resp.json()
+        except Exception as e:
+            return _remember({"ok": False, "reason": f"finra short interest failed ({type(e).__name__})"})
+        if not rows or not int(rows[0].get("currentShortPositionQuantity") or 0):
+            return _remember({"ok": False, "reason": "no short interest reported"})
+        shares_short = int(rows[0]["currentShortPositionQuantity"])
+        flt = shares_float(symbol, allow_fetch=True)
+        if not flt.ok:
+            return _remember({"ok": False, "reason": f"float unavailable ({flt.reason})"})
+        pct = shares_short / flt.value["floatShares"]
+        # 150% of float is the valid ceiling (GME 2021 hit ~140%); above it
+        # the composition is presumed broken, not the market exotic.
+        if not 0 < pct <= 1.5:
+            return _remember({"ok": False,
+                              "reason": f"implausible short/float ratio {pct:.2f}"})
+        return _remember({"ok": True, "pct": round(pct, 4),
+                          "shares_short": shares_short, "as_of": settlement})
+
+    payload = market_data._cached(key, 3 * 24 * 60 * 60, produce, allow_fetch)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.derived(payload["pct"],
+                           f"{source} (settlement {payload['as_of']}) / fmp:shares-float")
