@@ -942,7 +942,8 @@ def paper_account_overview() -> Sourced:
 
     payload = market_data._cached(key, 5 * 60, produce)
     if not payload.get("ok"):
-        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+        return Sourced.unavailable(
+            source, payload.get("detail") or payload.get("reason", "unavailable"))
     return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
 
 

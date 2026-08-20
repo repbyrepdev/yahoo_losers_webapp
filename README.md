@@ -32,6 +32,7 @@ provider (2026-08-20):
 | Live quotes | Yahoo | Alpaca IEX → Finnhub | FMP |
 | Analyst targets | Yahoo quoteSummary | FMP target summary | — |
 | Rating spread | **Finnhub trends** | Yahoo recommendations | — |
+| Analyst grade events (chips) | FMP per-firm grades¹ | Finnhub trend (derived) | — |
 | Options put/call + implied move | Yahoo chain (has OI) | Alpaca indicative snapshots | — |
 | Short % of float | Yahoo | FINRA short interest ÷ FMP float | — |
 | Earnings dates | **Finnhub calendar** | FMP calendar | Yahoo estimate (labelled) |
@@ -40,6 +41,10 @@ provider (2026-08-20):
 | Trading calendar / splits | Alpaca | FMP | weekday approximation |
 | Macro / filings / short volume | FRED / EDGAR / FINRA (the authorities) | — | — |
 | Social | StockTwits | — (Reddit needs keys) | — |
+
+¹ The one FMP-first exception: per-firm upgrade/downgrade events exist only
+on FMP's free tier — Finnhub's trend is an aggregate, so it serves as the
+derived backup rather than the primary.
 
 Universe backups pass a junk filter (sub-dollar paper, warrant/unit
 tickers, dotted classes) so a failover day's cohort still resembles the

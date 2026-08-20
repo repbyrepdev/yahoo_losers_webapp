@@ -3814,6 +3814,14 @@ def index():
             # Recomputed at serve time: the policy line must describe the
             # phase the reader is in, and old cached payloads predate the key.
             cached_results['refresh_policy'] = page_cache_policy()['description']
+            try:
+                import sources
+                _paper = sources.paper_account_overview()
+                cached_results['paper_account'] = _paper.value if _paper.ok else None
+                cached_results['paper_account_reason'] = None if _paper.ok else _paper.reason
+            except Exception as _e:
+                cached_results.setdefault('paper_account', None)
+                cached_results['paper_account_reason'] = f"unavailable ({type(_e).__name__})"
             response = make_response(render_template_string(html_template, **cached_results))
             response.headers['ETag'] = etag
             return add_cache_headers(response, max_age=60)
@@ -3844,6 +3852,7 @@ def index():
         
         # Prepare template variables
         try:
+            import sources
             _paper = sources.paper_account_overview()
             paper_account = _paper.value if _paper.ok else None
             paper_account_reason = None if _paper.ok else _paper.reason

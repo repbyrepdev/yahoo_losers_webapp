@@ -1476,4 +1476,5 @@ class TestPaperAccountOverview:
         market_data._cache._local.pop("src:paper-account", None)
         result = sources.paper_account_overview()
         assert not result.ok
-        assert result.reason == "RuntimeError"
+        # full detail surfaces, not just the class name
+        assert "RuntimeError" in result.reason and "connection refused" in result.reason
