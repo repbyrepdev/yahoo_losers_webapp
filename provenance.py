@@ -10,9 +10,20 @@ rendered as an analyst price target. A caller that cannot get real data now
 returns `Sourced.unavailable(...)`, which the UI renders as an em dash.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+# Credential query parameters that providers put in URLs. HTTPError text
+# embeds the full request URL, so any exception string that might be
+# stored, logged, or rendered must pass through redact_secrets first.
+_SECRET_PARAM_RE = re.compile(r"""(?i)\b(apikey|token)=[^&\s"'<>]+""")
+
+
+def redact_secrets(text) -> str:
+    """Strip credential values from provider-originated text."""
+    return _SECRET_PARAM_RE.sub(r"\1=REDACTED", str(text))
 
 # What the UI shows when we have no real value. Never a number.
 UNAVAILABLE_DISPLAY = "—"

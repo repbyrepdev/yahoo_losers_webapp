@@ -50,6 +50,14 @@ same doctrine is mirrored for reviewers in `.coderabbit.yaml` and
    and nitpick sections included), inline comments, thread states. Address
    or rebut every finding; resolve threads with evidence. Never merge red
    or unread. CI green ≠ reviewed — they are independent systems.
+   **Arm auto-merge only AFTER the review lands.** `gh pr merge --auto`
+   at PR-open time lets a fast CI outrun the reviewer and merge the PR
+   mid-review (incident, PR #77: merged 30s after CI-green; CodeRabbit
+   aborted with "the pull request is closed"). Thread-resolution rules
+   cannot catch it — zero posted threads counts as zero unresolved.
+   Sequence: open PR → review posts → read all → fix/rebut → resolve →
+   then arm. If it ever slips, run the local reviewer over the exact
+   unreviewed commit range and ship real findings as a follow-up PR.
 6. **Reviewer budgets**: ≤1 CodeRabbit summon per PR per hour, silent
    polling otherwise; batch related changes (30 PRs/week ground CR's meter
    to ~1/hour once). `bash tools/review_budget_status.sh` shows live
