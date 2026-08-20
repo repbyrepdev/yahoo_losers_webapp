@@ -1112,6 +1112,16 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 grid-column: 1 / -1;
             }
             
+            .chip, td span[style*="border-radius: 999px"], td div[style*="font-size: 10px"] > span { white-space: nowrap; }
+            @media (min-width: 1700px) {
+                .container { max-width: min(2100px, 95vw); }
+                table { font-size: 14px; }
+                td, th { padding: 10px 12px; }
+                .stock-symbol { font-size: 16px; }
+                td span[style*="font-size: 11px"] { font-size: 12px !important; }
+                td div[style*="font-size: 10px"] { font-size: 11px !important; }
+                td div[style*="font-size: 11px"] { font-size: 12px !important; }
+            }
             @media (max-width: 1200px) {
                 .grid-layout {
                     grid-template-columns: 1fr;
@@ -1392,6 +1402,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             .chip-upside { border-color: #2ecc71; color: #2ecc71; }
             .chip-earnings { border-color: #fd7e14; color: #ffb066; background: rgba(253,126,20,0.12); }
             [data-theme="light"] .chip-earnings { color: #b45309; }
+            .chip-earnings-far { border-color: var(--border-color); color: var(--text-secondary); background: transparent; }
             .chip-upside em { font-style: normal; font-size: 10px; opacity: 0.8; }
 
             /* The tables scroll sideways inside this wrapper on narrow
@@ -3395,7 +3406,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         <span class="chip" title="{{ stock['P Medium'].get('detail','') }}">21d <strong>{{ stock['P Medium']['display'] }}</strong></span>
                         <span class="chip" title="{{ stock['P Long'].get('detail','') }}">6mo <strong>{{ stock['P Long']['display'] }}</strong></span>
                         <span class="chip chip-upside">{% if stock['Potential Return %'] != '\u2014' %}▲ {{ stock['Potential Return %'] }}% <em>{{ stock.get('Analyst Count') or '?' }} an.</em>{% else %}▲ &#8212;{% endif %}</span>
-                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Earnings Soon') %}<span class="chip chip-earnings" title="Confirmed earnings date inside the short-term bounce window. The odds shown were computed across all matched setups; a scheduled print makes this window a different, more binary bet.">📅 earnings {{ stock['Earnings Soon'] }}</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}{% if stock.get('Analyst Revisions') %}<span class="chip" style="border-color: #17a2b8; color: #7fd8e8;" title="Analyst rating changes, past 30 days.">📣 {{ stock['Analyst Revisions'].label }}</span>{% endif %}
+                        {% if stock.get('Sector Context') %}<span class="chip" title="{{ stock['Sector Context'].estimate_basis }}">{{ stock['Sector Context'].label }}</span>{% endif %}{% if stock.get('Going Concern') %}<span class="chip" style="border-color: #dc3545; color: #ff9f9f;" title="{{ stock['Going Concern'].note }}">⚠️ going concern</span>{% endif %}{% if stock.get('Earnings Soon') %}<span class="chip chip-earnings" title="Confirmed earnings date inside the short-term bounce window. The odds shown were computed across all matched setups; a scheduled print makes this window a different, more binary bet.">📅 earnings {{ stock['Earnings Soon'] }}</span>{% endif %}{% if stock.get('Earnings Next') %}<span class="chip chip-earnings-far" title="Next confirmed earnings date. Outside the short-term bounce window, but inside the 1-month and 6-month horizons this board also quotes.">📅 earnings {{ stock['Earnings Next'] }}</span>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<span class="chip" style="border-color: #ffc107; color: #ffd97d;" title="20-day average of close × volume; thin tape, spreads matter.">🫙 {{ stock['Liquidity'].display }}</span>{% endif %}{% if stock.get('Analyst Revisions') %}<span class="chip" style="border-color: #17a2b8; color: #7fd8e8;" title="Analyst rating changes, past 30 days.">📣 {{ stock['Analyst Revisions'].label }}</span>{% endif %}
                     </div>
                 </div>
                 {% endfor %}
@@ -3440,7 +3451,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr class="highlight">
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Earnings Soon') %}<div style="font-size: 10px; margin-top: 2px;"><span class="chip-earnings" title="Confirmed earnings date inside the short-term bounce window. A scheduled print makes this window a different, more binary bet." style="border: 1px solid #fd7e14; border-radius: 999px; padding: 1px 7px;">📅 earnings {{ stock['Earnings Soon'] }}</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].label }}</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Earnings Soon') %}<div style="font-size: 10px; margin-top: 2px;"><span class="chip-earnings" title="Confirmed earnings date inside the short-term bounce window. A scheduled print makes this window a different, more binary bet." style="border: 1px solid #fd7e14; border-radius: 999px; padding: 1px 7px;">📅 earnings {{ stock['Earnings Soon'] }}</span></div>{% endif %}{% if stock.get('Earnings Next') %}<div style="font-size: 10px; margin-top: 2px;"><span class="chip-earnings-far" title="Next confirmed earnings date. Outside the short-term bounce window, but relevant to the 1-month and 6-month horizons." style="border: 1px solid var(--border-color); border-radius: 999px; padding: 1px 7px;">📅 earnings {{ stock['Earnings Next'] }}</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].label }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
                                     {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
@@ -3545,7 +3556,7 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             <tr>
                                 <td>
                                     <strong class="stock-symbol">{{ stock.Symbol }}</strong>
-                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Earnings Soon') %}<div style="font-size: 10px; margin-top: 2px;"><span class="chip-earnings" title="Confirmed earnings date inside the short-term bounce window. A scheduled print makes this window a different, more binary bet." style="border: 1px solid #fd7e14; border-radius: 999px; padding: 1px 7px;">📅 earnings {{ stock['Earnings Soon'] }}</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].label }}</span></div>{% endif %}
+                                    {% if stock.get('Sector Context') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Sector Context'].estimate_basis }}" style="background: rgba(108,92,231,0.15); border: 1px solid #6c5ce7; border-radius: 999px; padding: 1px 7px; color: var(--text-secondary);">{{ stock['Sector Context'].label }}</span></div>{% endif %}{% if stock.get('Going Concern') %}<div style="font-size: 10px; margin-top: 2px;"><span title="{{ stock['Going Concern'].note }}" style="background: rgba(220,53,69,0.15); border: 1px solid #dc3545; border-radius: 999px; padding: 1px 7px; color: #ff9f9f;">⚠️ going-concern language ({{ stock['Going Concern'].form }} {{ stock['Going Concern'].latest }})</span></div>{% endif %}{% if stock.get('Earnings Soon') %}<div style="font-size: 10px; margin-top: 2px;"><span class="chip-earnings" title="Confirmed earnings date inside the short-term bounce window. A scheduled print makes this window a different, more binary bet." style="border: 1px solid #fd7e14; border-radius: 999px; padding: 1px 7px;">📅 earnings {{ stock['Earnings Soon'] }}</span></div>{% endif %}{% if stock.get('Earnings Next') %}<div style="font-size: 10px; margin-top: 2px;"><span class="chip-earnings-far" title="Next confirmed earnings date. Outside the short-term bounce window, but relevant to the 1-month and 6-month horizons." style="border: 1px solid var(--border-color); border-radius: 999px; padding: 1px 7px;">📅 earnings {{ stock['Earnings Next'] }}</span></div>{% endif %}{% if stock.get('Liquidity') and stock['Liquidity'].thin %}<div style="font-size: 10px; margin-top: 2px;"><span title="20-day average of close × volume. On a thin tape the bid-ask spread can consume a large share of the predicted move." style="background: rgba(255,193,7,0.12); border: 1px solid #ffc107; border-radius: 999px; padding: 1px 7px; color: #ffd97d;">🫙 thin: {{ stock['Liquidity'].display }}</span></div>{% endif %}{% if stock.get('Analyst Revisions') %}<div style="font-size: 10px; margin-top: 2px;"><span title="Per-firm rating changes in the past 30 days:{% for e in stock['Analyst Revisions'].events[:4] %} {{ e.date }} {{ e.firm }} {{ e.action }} ({{ e['from'] }}→{{ e.to }});{% endfor %}" style="background: rgba(23,162,184,0.12); border: 1px solid #17a2b8; border-radius: 999px; padding: 1px 7px; color: #7fd8e8;">📣 {{ stock['Analyst Revisions'].label }}</span></div>{% endif %}
                                 </td>
                                 <td data-val="{{ stock['Composite'].value if stock.get('Composite') else -1 }}" title="{{ stock['Composite'].basis if stock.get('Composite') else 'not enough measurable inputs to rank' }}">
                                     {% if stock.get('Composite') %}<strong>{{ stock['Composite'].value }}</strong><div style="font-size: 10px; color: var(--text-secondary);">{{ stock['Composite'].components }}/3 inputs</div>{% else %}&#8212;{% endif %}
@@ -5178,6 +5189,46 @@ def _cohort_prior(band, upside_pct, exclude_symbol=None):
     return round(sum(usable) / len(usable), 4) if len(usable) >= 5 else None
 
 
+def _next_confirmed_earnings(symbol):
+    """(iso_date, days_away) for the next confirmed print, cache-only.
+
+    Confirmed dates are known up to ~90 days out. A print far beyond the
+    bounce window still matters to a medium-horizon reader -- the chip
+    just says it calmly instead of as a warning."""
+    from datetime import date as _date
+    import sources as _src
+    confirmed = market_data._cache.get(_src.earnings_cache_key(symbol))
+    if not (confirmed and confirmed.get("ok") and confirmed.get("date")):
+        return None
+    try:
+        when = _date.fromisoformat(str(confirmed["date"])[:10])
+    except ValueError:
+        return None
+    today = tracking.trading_date_today()
+    if when < today:
+        return None
+    # The hot/calm boundary is TRADING sessions, matching the bounce window
+    # it warns about: 11 calendar days across two weekends is still inside
+    # 7 sessions (CR, PR 72). Cached exchange calendar when warm; weekday
+    # count otherwise -- an honest approximation, never a render-path fetch.
+    import sources as _src
+    from datetime import timedelta as _td
+    try:
+        calendar_days = _src.trading_days_set(cache_only=True) or set()
+    except Exception:
+        calendar_days = set()
+    sessions = 0
+    cursor = today
+    while cursor < when:
+        cursor += _td(days=1)
+        if calendar_days:
+            if cursor.isoformat() in calendar_days:
+                sessions += 1
+        elif cursor.weekday() < 5:
+            sessions += 1
+    return when.isoformat(), sessions
+
+
 def _earnings_in_window(symbol, horizon_days):
     """The earnings date (or estimated range) inside the horizon, or None.
 
@@ -5189,7 +5240,8 @@ def _earnings_in_window(symbol, horizon_days):
     from datetime import date as _date, timedelta as _td
     # A CONFIRMED calendar date (FMP/Finnhub, warmed by the info lane) beats
     # Yahoo's estimated ranges when one is cached.
-    confirmed = market_data._cache.get(f"src:earnings:{symbol.upper()}")
+    import sources as _src
+    confirmed = market_data._cache.get(_src.earnings_cache_key(symbol))
     if confirmed and confirmed.get("ok") and confirmed.get("date"):
         try:
             when = _date.fromisoformat(str(confirmed["date"])[:10])
@@ -6429,7 +6481,10 @@ def calculate_enhanced_investment_analysis(losers_data, details_data):
         # binary event dominates a days-horizon hold. Cache-only read; the
         # info lane keeps confirmed dates warm. 7 calendar days covers every
         # short-term window the board quotes.
-        enhanced['Earnings Soon'] = _earnings_in_window(symbol, 7)
+        nxt = _next_confirmed_earnings(symbol)
+        enhanced['Earnings Soon'] = nxt[0] if nxt and nxt[1] <= 7 else None
+        enhanced['Earnings Next'] = (nxt[0] if nxt and nxt[1] > 7
+                                     else None)
 
         # Tradability context: on a thin tape the spread can consume a large
         # share of any predicted bounce. From cached OHLCV, no requests.

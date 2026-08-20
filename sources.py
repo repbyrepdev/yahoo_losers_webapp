@@ -383,10 +383,17 @@ def analyst_grades(symbol: str, days: int = GRADES_WINDOW_DAYS) -> Sourced:
 
 # --- Earnings ----------------------------------------------------------------
 
+def earnings_cache_key(symbol: str) -> str:
+    # v2: v1 entries were poisoned when Finnhub's calendar ignored the symbol
+    # param and every ticker inherited the market's next earnings date
+    # (live 2026-08-20: STLD and MTSI wore SMTC's Aug 25).
+    return f"src:earnings:v2:{symbol.upper()}"
+
+
 def earnings_confirmed(symbol: str) -> Sourced:
     """Confirmed upcoming earnings date: FMP first, Finnhub fallback."""
     symbol = symbol.upper()
-    key = f"src:earnings:{symbol}"
+    key = earnings_cache_key(symbol)
 
     def produce():
         span_from = date.today().isoformat()
@@ -408,7 +415,12 @@ def earnings_confirmed(symbol: str) -> Sourced:
             if err:
                 return {"ok": False, "reason": err}
             rows = (payload.get("earningsCalendar") or [])
-            mine = sorted(r["date"] for r in rows if r.get("date"))
+            # Never trust the API-side filter: when the free tier ignores the
+            # symbol param it returns the whole market's calendar, and taking
+            # the earliest date stamps EVERY ticker with the same day.
+            mine = sorted(r["date"] for r in rows
+                          if r.get("date")
+                          and str(r.get("symbol", "")).upper() == symbol)
             if mine:
                 return {"ok": True, "date": mine[0], "provider": "finnhub"}
             return {"ok": False, "reason": "no confirmed earnings in the next 90 days"}
