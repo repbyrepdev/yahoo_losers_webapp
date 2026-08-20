@@ -23,7 +23,7 @@ import logging
 import math
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 import requests
@@ -544,6 +544,13 @@ PAPER_MAX_PICKS = 3
 # gap past the band is a recorded miss, not a worse fill) and makes the
 # order eligible in extended hours, which market orders never are.
 PAPER_ENTRY_BAND_PCT = 2.0
+# Lifecycle rails -- identical constants for the eventual live mode; paper
+# exists to rehearse exactly these numbers.
+PAPER_TP_PCT = 5.0                    # take-profit at the recorded claim level
+PAPER_STOP_PCT = 8.0                  # close-basis stop below ref (no wick-outs)
+PAPER_MAX_SESSIONS = 7                # thesis expiry: the measured window
+PAPER_REENTRY_COOLDOWN_SESSIONS = 5   # no revenge-buying a stopped name
+PAPER_DAILY_LOSS_HALT_PCT = 2.0       # equity down 2% on the day: no new entries
 
 
 def _eastern_today() -> date:
@@ -589,6 +596,32 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
     headers = _alpaca_headers()
     if headers is None:
         return Sourced.unavailable(source, "Alpaca keys not configured")
+    # Daily-loss halt: equity down PAPER_DAILY_LOSS_HALT_PCT on the day means
+    # no NEW risk -- existing positions and exits keep managing themselves.
+    try:
+        account = _paper_get("/v2/account")
+        equity = float(account.get("equity") or 0)
+        last_equity = float(account.get("last_equity") or 0)
+        if last_equity > 0 and equity <= last_equity * (1 - PAPER_DAILY_LOSS_HALT_PCT / 100.0):
+            return Sourced.unavailable(
+                source, f"daily loss halt: equity {equity:.2f} is more than "
+                        f"{PAPER_DAILY_LOSS_HALT_PCT:.0f}% below yesterday's "
+                        f"{last_equity:.2f}; no new entries today")
+    except Exception as e:
+        logger.info(f"account check unavailable ({type(e).__name__}); proceeding")
+    # Re-entry cooldown: a name we exited recently is not a fresh setup.
+    recently_exited = set()
+    try:
+        closed = _paper_get("/v2/orders", {"status": "closed", "limit": 200,
+                                           "after": (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()})
+        today = _eastern_today()
+        for o in closed:
+            cid = o.get("client_order_id") or ""
+            if cid.startswith(("snap-exit-", "snap-tp-")) and o.get("filled_at"):
+                if _sessions_between(str(o["filled_at"])[:10], today) < PAPER_REENTRY_COOLDOWN_SESSIONS:
+                    recently_exited.add(o.get("symbol"))
+    except Exception as e:
+        logger.info(f"cooldown check unavailable ({type(e).__name__}); proceeding")
     submitted, failed = [], []
     for pick in picks:
         # Validate BEFORE consuming a slot: an unpriceable high-ranked pick
@@ -602,6 +635,10 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
         if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
             failed.append({"symbol": symbol,
                            "reason": "no price to size the order"})
+            continue
+        if symbol in recently_exited:
+            failed.append({"symbol": symbol,
+                           "reason": f"re-entry cooldown ({PAPER_REENTRY_COOLDOWN_SESSIONS} sessions after an exit)"})
             continue
         qty = max(1, int(PAPER_NOTIONAL_PER_PICK // price))
         limit_price = round(price * (1 + PAPER_ENTRY_BAND_PCT / 100.0), 2)
@@ -646,11 +683,212 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
                         source)
 
 
+def _paper_get(path, params=None):
+    payload, err = _alpaca_get(_alpaca_trading_base(), path, params or {})
+    if err:
+        raise RuntimeError(err)
+    return payload
+
+
+def _entry_ref_price(order) -> Optional[float]:
+    """Recover the recorded reference from an entry order's limit price.
+
+    Entries are always placed at ref * (1 + band), so the ref is
+    deterministic -- no side store to drift out of sync with the broker.
+    """
+    try:
+        limit = float(order.get("limit_price") or 0)
+        if limit <= 0:
+            return None
+        return round(limit / (1 + PAPER_ENTRY_BAND_PCT / 100.0), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sessions_between(start_iso: str, end: date) -> int:
+    from datetime import date as _date, timedelta as _td
+    try:
+        start = _date.fromisoformat(str(start_iso)[:10])
+    except ValueError:
+        return 0
+    try:
+        cal = trading_days_set(cache_only=True) or set()
+    except Exception:
+        cal = set()
+    # The cached calendar spans roughly [today-7d, today+400d]; dates before
+    # its earliest member must fall back to weekday counting or every older
+    # position undercounts and the expiry stop never fires (CR, PR 74).
+    min_cal = min(cal) if cal else None
+    sessions, cursor = 0, start
+    while cursor < end:
+        cursor += _td(days=1)
+        iso = cursor.isoformat()
+        if cal and min_cal is not None and iso >= min_cal:
+            if iso in cal:
+                sessions += 1
+        elif cursor.weekday() < 5:
+            sessions += 1
+    return sessions
+
+
+def paper_manage_positions() -> Sourced:
+    """The nightly lifecycle sweep: exits derive from the recorded claims.
+
+    For every open position: ensure a GTC take-profit sell at
+    ref * (1 + PAPER_TP_PCT); exit at the next open when the thesis
+    expires (PAPER_MAX_SESSIONS elapsed -- the window the odds were
+    measured over) or breaks (close <= ref * (1 - PAPER_STOP_PCT),
+    close-basis so intraday wicks cannot shake positions out). Every
+    action is idempotent via deterministic client ids and recorded with
+    its reason.
+    """
+    source = "alpaca:paper-lifecycle"
+    try:
+        if market_data.market_phase().get("phase") == "open":
+            return Sourced.unavailable(
+                source, "market is open; lifecycle sweeps run off-hours so "
+                        "exits queue for the next open")
+    except Exception:
+        pass
+    headers = _alpaca_headers()
+    if headers is None:
+        return Sourced.unavailable(source, "Alpaca keys not configured")
+    base = _alpaca_trading_base()
+    today = _eastern_today()
+    actions, held = [], []
+    try:
+        positions = _paper_get("/v2/positions")
+        open_orders = _paper_get("/v2/orders", {"status": "open", "limit": 100})
+        closed = _paper_get("/v2/orders", {"status": "closed", "limit": 200,
+                                           "after": (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()})
+    except Exception as e:
+        return Sourced.unavailable(source, f"lifecycle fetch failed ({type(e).__name__})")
+
+    entries_by_symbol = {}
+    for o in closed:
+        cid = o.get("client_order_id") or ""
+        is_entry = (cid.startswith("snap-")
+                    and not cid.startswith(("snap-tp-", "snap-exit-")))
+        if is_entry and o.get("side") == "buy" and o.get("filled_at"):
+            entries_by_symbol.setdefault(o["symbol"], o)
+
+    open_sells = {}
+    for o in open_orders:
+        if o.get("side") == "sell":
+            open_sells.setdefault(o["symbol"], []).append(o)
+
+    for pos in positions:
+        symbol = pos.get("symbol")
+        qty = int(float(pos.get("qty") or 0))
+        if not symbol or qty <= 0:
+            continue
+        entry = entries_by_symbol.get(symbol)
+        ref = _entry_ref_price(entry) if entry else None
+        if ref is None:
+            held.append({"symbol": symbol, "note": "no snap entry order found; unmanaged"})
+            continue
+        entry_date = str(entry.get("filled_at") or entry.get("submitted_at"))[:10]
+        sessions = _sessions_between(entry_date, today)
+        last_close = None
+        try:
+            bars = _paper_get_data_bar(symbol)
+            last_close = bars
+        except Exception:
+            pass
+        expired = sessions >= PAPER_MAX_SESSIONS
+        stopped = (isinstance(last_close, (int, float))
+                   and last_close <= ref * (1 - PAPER_STOP_PCT / 100.0))
+        if expired or stopped:
+            reason = "window expired" if expired else "stop: close below band"
+            # Every resting sell must be CONFIRMED cancelled before the market
+            # exit goes in: a failed cancel plus a market sell can fill twice
+            # and leave the account short (CR, PR 74). A blocked cancel defers
+            # the exit to the next sweep.
+            cancel_blocked = False
+            for o in open_sells.get(symbol, []):
+                try:
+                    resp = requests.delete(f"{base}/v2/orders/{o['id']}",
+                                           headers=headers, timeout=20)
+                    if resp.status_code not in (200, 204):
+                        cancel_blocked = True
+                except Exception:
+                    cancel_blocked = True
+            if cancel_blocked:
+                actions.append({"symbol": symbol, "action": "exit-blocked",
+                                "reason": f"{reason}; resting sell cancel failed, retrying next sweep"})
+                continue
+            cid = f"snap-exit-{today.isoformat()}-{symbol}"
+            try:
+                market_data._throttle()
+                resp = requests.post(f"{base}/v2/orders", headers=headers, timeout=20,
+                                     json={"symbol": symbol, "qty": str(qty),
+                                           "side": "sell", "type": "market",
+                                           "time_in_force": "day",
+                                           "client_order_id": cid})
+                if resp.status_code == 422 and "client_order_id" in resp.text:
+                    actions.append({"symbol": symbol, "action": "exit",
+                                    "status": "already-queued", "reason": reason})
+                else:
+                    resp.raise_for_status()
+                    actions.append({"symbol": symbol, "action": "exit",
+                                    "status": resp.json().get("status"),
+                                    "reason": reason, "sessions_held": sessions})
+            except Exception as e:
+                body = getattr(getattr(e, "response", None), "text", "") or str(e)
+                actions.append({"symbol": symbol, "action": "exit-failed",
+                                "reason": f"{type(e).__name__}: {body[:120]}"})
+            continue
+        if not open_sells.get(symbol):
+            tp_price = round(ref * (1 + PAPER_TP_PCT / 100.0), 2)
+            cid = f"snap-tp-{entry_date}-{symbol}"
+            try:
+                market_data._throttle()
+                resp = requests.post(f"{base}/v2/orders", headers=headers, timeout=20,
+                                     json={"symbol": symbol, "qty": str(qty),
+                                           "side": "sell", "type": "limit",
+                                           "limit_price": str(tp_price),
+                                           "time_in_force": "gtc",
+                                           "client_order_id": cid})
+                if resp.status_code == 422 and "client_order_id" in resp.text:
+                    actions.append({"symbol": symbol, "action": "take-profit",
+                                    "status": "already-placed", "tp": tp_price})
+                else:
+                    resp.raise_for_status()
+                    actions.append({"symbol": symbol, "action": "take-profit",
+                                    "status": resp.json().get("status"),
+                                    "tp": tp_price})
+            except Exception as e:
+                body = getattr(getattr(e, "response", None), "text", "") or str(e)
+                actions.append({"symbol": symbol, "action": "tp-failed",
+                                "reason": f"{type(e).__name__}: {body[:120]}"})
+        held.append({"symbol": symbol, "qty": qty, "ref": ref,
+                     "sessions_held": sessions, "last_close": last_close})
+    return Sourced.live({"actions": actions, "positions": held,
+                         "rails": {"tp_pct": PAPER_TP_PCT,
+                                   "stop_pct": PAPER_STOP_PCT,
+                                   "max_sessions": PAPER_MAX_SESSIONS}}, source)
+
+
+def _paper_get_data_bar(symbol: str):
+    """Latest daily close for the close-basis stop.
+
+    The bars endpoint sorts ASCENDING by default, so limit=1 returns the
+    OLDEST bar in range (CR, PR 74); the latest-bar endpoint returns the
+    single canonical newest one.
+    """
+    payload, err = _alpaca_get(ALPACA_DATA_BASE, "/v2/stocks/bars/latest",
+                               {"symbols": symbol.upper(), "feed": "iex"})
+    if err:
+        raise RuntimeError(err)
+    bar = (payload.get("bars") or {}).get(symbol.upper())
+    return float(bar["c"]) if bar else None
+
+
 def paper_recent_fills(days: int = 7) -> Sourced:
     """Recent paper fills, for the slippage record."""
     source = "alpaca:paper-fills"
     try:
-        after = (datetime.utcnow() - timedelta(days=days)).isoformat() + "Z"
+        after = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         payload, err = _alpaca_get(_alpaca_trading_base(), "/v2/orders",
                                    {"status": "closed", "after": after,
                                     "limit": 100})

@@ -1227,3 +1227,201 @@ class TestProviderPrinciples:
         monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Resp())
         result = sources.paper_execute_picks([{"symbol": "ZZMO2", "price": 10.0}])
         assert result.ok and result.value["submitted"][0]["symbol"] == "ZZMO2"
+
+
+class TestPaperLifecycle:
+    @pytest.fixture(autouse=True)
+    def _pinned_calendar(self, monkeypatch):
+        # market_phase is already pinned closed by the module autouse; the
+        # trading calendar must be pinned too or sessions_held drifts with
+        # the ambient cache (CR, PR 74).
+        monkeypatch.setattr(sources, "trading_days_set",
+                            lambda cache_only=True: set())
+
+    def test_take_profit_placed_for_unprotected_position(self, monkeypatch):
+        posted = []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZLC1", "qty": "10"}])
+            if "/v2/orders" in url and (params or {}).get("status") == "open":
+                return FakeResponse([])
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC1", "side": "buy",
+                                      "client_order_id": "snap-2026-08-18-ZZLC1",
+                                      "filled_at": "2026-08-18T13:31:00Z",
+                                      "limit_price": "20.40"}])
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC1": {"c": 20.5}}})
+            raise AssertionError(f"unrouted {url}")
+        def fake_post(url, headers=None, timeout=None, json=None, **kw):
+            posted.append(json)
+            class R:
+                status_code = 200
+                text = "{}"
+                def raise_for_status(self): pass
+                def json(self): return {"status": "accepted"}
+            return R()
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post", fake_post)
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        assert len(posted) == 1
+        # ref = 20.40 / 1.02 = 20.0 -> TP at 21.0
+        assert posted[0]["limit_price"] == "21.0"
+        assert posted[0]["time_in_force"] == "gtc"
+        assert posted[0]["client_order_id"] == "snap-tp-2026-08-18-ZZLC1"
+
+    def test_window_expiry_exits_at_next_open(self, monkeypatch):
+        posted, deleted = [], []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZLC2", "qty": "5"}])
+            if "/v2/orders" in url and (params or {}).get("status") == "open":
+                return FakeResponse([{"id": "tp1", "symbol": "ZZLC2", "side": "sell"}])
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC2", "side": "buy",
+                                      "client_order_id": "snap-2026-08-06-ZZLC2",
+                                      "filled_at": "2026-08-06T13:31:00Z",
+                                      "limit_price": "10.20"}])
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC2": {"c": 10.1}}})
+            raise AssertionError(f"unrouted {url}")
+        def fake_post(url, headers=None, timeout=None, json=None, **kw):
+            posted.append(json)
+            class R:
+                status_code = 200
+                text = "{}"
+                def raise_for_status(self): pass
+                def json(self): return {"status": "accepted"}
+            return R()
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post", fake_post)
+        class CancelOk:
+            status_code = 204
+        monkeypatch.setattr(sources.requests, "delete",
+                            lambda url, headers=None, timeout=None: (deleted.append(url), CancelOk())[1])
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        act = result.value["actions"][0]
+        assert act["action"] == "exit" and act["reason"] == "window expired"
+        assert act["sessions_held"] >= sources.PAPER_MAX_SESSIONS
+        assert deleted and "tp1" in deleted[0]
+        assert posted[0]["side"] == "sell" and posted[0]["type"] == "market"
+
+    def test_close_below_stop_exits(self, monkeypatch):
+        posted = []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZLC3", "qty": "5"}])
+            if "/v2/orders" in url and (params or {}).get("status") == "open":
+                return FakeResponse([])
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC3", "side": "buy",
+                                      "client_order_id": "snap-2026-08-19-ZZLC3",
+                                      "filled_at": "2026-08-19T13:31:00Z",
+                                      "limit_price": "10.20"}])
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC3": {"c": 9.1}}})   # ref 10.0, stop 9.2
+            raise AssertionError(f"unrouted {url}")
+        def fake_post(url, headers=None, timeout=None, json=None, **kw):
+            posted.append(json)
+            class R:
+                status_code = 200
+                text = "{}"
+                def raise_for_status(self): pass
+                def json(self): return {"status": "accepted"}
+            return R()
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post", fake_post)
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        assert result.value["actions"][0]["reason"].startswith("stop")
+        assert posted and posted[0]["side"] == "sell"
+
+    def test_daily_loss_halt_blocks_new_entries(self, monkeypatch):
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/account" in url:
+                return FakeResponse({"equity": "97000", "last_equity": "100000"})
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("submitted")))
+        result = sources.paper_execute_picks([{"symbol": "ZZLC4", "price": 10.0}])
+        assert not result.ok
+        assert "daily loss halt" in result.reason
+
+    def test_reentry_cooldown_skips_recent_exit(self, monkeypatch):
+        posted = []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/account" in url:
+                return FakeResponse({"equity": "100000", "last_equity": "100000"})
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC5", "side": "sell",
+                                      "client_order_id": "snap-exit-2026-08-19-ZZLC5",
+                                      "filled_at": "2026-08-19T13:35:00Z"}])
+            raise AssertionError(f"unrouted {url}")
+        def fake_post(url, headers=None, timeout=None, json=None, **kw):
+            posted.append(json)
+            class R:
+                status_code = 200
+                text = "{}"
+                def raise_for_status(self): pass
+                def json(self): return {"id": "x", "status": "accepted"}
+            return R()
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post", fake_post)
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        monkeypatch.setattr(sources, "trading_days_set", lambda cache_only=True: set())
+        result = sources.paper_execute_picks(
+            [{"symbol": "ZZLC5", "price": 10.0}, {"symbol": "ZZLC6", "price": 10.0}])
+        assert result.ok
+        assert [o["symbol"] for o in posted] == ["ZZLC6"]
+        assert result.value["failed"][0]["symbol"] == "ZZLC5"
+        assert "cooldown" in result.value["failed"][0]["reason"]
+
+    def test_sessions_count_weekdays_before_calendar_window(self, monkeypatch):
+        """CR PR74: entry dates older than the cached calendar window must
+        fall back to weekday counting, or old positions never expire."""
+        monkeypatch.setattr(sources, "trading_days_set",
+                            lambda cache_only=True: {"2026-08-19", "2026-08-20"})
+        from datetime import date as _date
+        # Aug 6 -> Aug 20: window covers only the last two days; the nine
+        # weekday sessions before it must still count.
+        n = sources._sessions_between("2026-08-06", _date(2026, 8, 20))
+        assert n >= sources.PAPER_MAX_SESSIONS
+
+    def test_blocked_cancel_defers_exit(self, monkeypatch):
+        posted = []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZLC7", "qty": "5"}])
+            if "/v2/orders" in url and (params or {}).get("status") == "open":
+                return FakeResponse([{"id": "tp7", "symbol": "ZZLC7", "side": "sell"}])
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC7", "side": "buy",
+                                      "client_order_id": "snap-2026-08-06-ZZLC7",
+                                      "filled_at": "2026-08-06T13:31:00Z",
+                                      "limit_price": "10.20"}])
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC7": {"c": 10.1}}})
+            raise AssertionError(f"unrouted {url}")
+        class CancelFail:
+            status_code = 500
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "delete", lambda *a, **k: CancelFail())
+        monkeypatch.setattr(sources.requests, "post",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("market sell submitted past a live TP")))
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        act = result.value["actions"][0]
+        assert act["action"] == "exit-blocked"
+        assert "cancel failed" in act["reason"]
