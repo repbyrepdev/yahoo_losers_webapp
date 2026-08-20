@@ -34,7 +34,7 @@ from typing import List, Optional
 import requests
 
 import market_data
-from provenance import Sourced
+from provenance import Sourced, redact_secrets
 from secrets_store import get as get_secret
 
 logger = logging.getLogger(__name__)
@@ -141,9 +141,15 @@ def _fmp_get(path: str, params: dict):
     if not _fmp_budget_ok():
         return None, f"FMP daily budget ({FMP_DAILY_BUDGET}) exhausted"
     market_data._throttle()
-    response = requests.get(f"{FMP_BASE}/{path}",
-                            params={**params, "apikey": api_key}, timeout=20)
-    response.raise_for_status()
+    try:
+        response = requests.get(f"{FMP_BASE}/{path}",
+                                params={**params, "apikey": api_key}, timeout=20)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        # HTTPError text embeds the full URL -- including apikey. Re-raise
+        # the same type with redacted text and no chained original, so no
+        # caller's detail string or traceback can leak the key.
+        raise type(e)(redact_secrets(e)) from None
     return response.json(), None
 
 
@@ -152,10 +158,24 @@ def _finnhub_get(path: str, params: dict):
     if not token:
         return None, "FINNHUB_API_KEY not configured"
     market_data._throttle()
-    response = requests.get(f"{FINNHUB_BASE}/{path}",
-                            params={**params, "token": token}, timeout=20)
-    response.raise_for_status()
+    try:
+        response = requests.get(f"{FINNHUB_BASE}/{path}",
+                                params={**params, "token": token}, timeout=20)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        raise type(e)(redact_secrets(e)) from None
     return response.json(), None
+
+
+def _compose_failure(payload: dict) -> str:
+    """reason names the cause, detail carries the chain; a caller-facing
+    message must lose neither (review: 'detail or reason' dropped the
+    primary cause whenever both existed)."""
+    reason = payload.get("reason")
+    detail = payload.get("detail")
+    if detail and reason and reason not in detail:
+        return f"{reason}; {detail}"
+    return detail or reason or "unavailable"
 
 
 def _alpaca_get(base: str, path: str, params: Optional[dict] = None):
@@ -1606,12 +1626,10 @@ def fmp_eod_bars(symbol: str, days: int = 180) -> Sourced:
                               "bars": rows[-days:]})
         except Exception as e:
             return _remember({"ok": False, "reason": type(e).__name__,
-                              "detail": f"fmp eod failed: {type(e).__name__}: {e}"})
+                              "detail": redact_secrets(
+                                  f"fmp eod failed: {type(e).__name__}: {e}")})
 
     payload = market_data._cached(key, 24 * 60 * 60, produce)
     if not payload.get("ok"):
-        # detail (full text) beats reason (exception name) when present --
-        # the UI and the fallback chain should see the real cause.
-        return Sourced.unavailable(
-            source, payload.get("detail") or payload.get("reason", "unavailable"))
+        return Sourced.unavailable(source, _compose_failure(payload))
     return Sourced.live(payload["bars"], source)

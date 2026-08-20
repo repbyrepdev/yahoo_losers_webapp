@@ -1726,6 +1726,54 @@ class TestFmpEodHygiene:
         assert result.ok
         assert len(result.value) == len(good)
 
+
+class TestSecretRedaction:
+    """Copilot server review (security): HTTPError embeds the keyed request
+    URL; that text must never reach a stored detail, a Sourced reason, or
+    the rendered page."""
+
+    def test_fmp_http_error_cannot_leak_the_key(self, monkeypatch):
+        monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "sk-SECRET123")
+        import requests as _rq
+        def boom(url, params=None, timeout=None):
+            raise _rq.HTTPError(
+                f"429 Client Error: Too Many Requests for url: {url}?apikey="
+                f"{params['apikey']}&symbol=X")
+        monkeypatch.setattr(sources.requests, "get", boom)
+        result = sources.fmp_eod_bars("ZZS1")
+        assert not result.ok
+        assert "sk-SECRET123" not in result.reason
+        assert "apikey=REDACTED" in result.reason
+        assert "429" in result.reason  # identity preserved
+
+    def test_finnhub_boundary_redacts_token(self, monkeypatch):
+        monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "fh-SECRET456")
+        import requests as _rq
+        def boom(url, params=None, timeout=None):
+            raise _rq.HTTPError(f"401 for url: {url}?token={params['token']}")
+        monkeypatch.setattr(sources.requests, "get", boom)
+        import pytest as _pt
+        with _pt.raises(_rq.HTTPError) as exc:
+            sources._finnhub_get("quote", {"symbol": "X"})
+        assert "fh-SECRET456" not in str(exc.value)
+        assert "token=REDACTED" in str(exc.value)
+        # `from None` suppresses the keyed original in rendered tracebacks
+        # (the surface that reaches logs) -- assert on that surface.
+        import traceback as _tb
+        rendered = "".join(_tb.format_exception(
+            type(exc.value), exc.value, exc.value.__traceback__))
+        assert "fh-SECRET456" not in rendered
+
+    def test_compose_failure_keeps_both_parts(self):
+        msg = sources._compose_failure({"reason": "insufficient history (5 bars)",
+                                        "detail": "fallbacks: alpaca: a-down"})
+        assert "insufficient history (5 bars)" in msg
+        assert "fallbacks: alpaca: a-down" in msg
+        # no duplication when reason already leads the detail
+        msg2 = sources._compose_failure({"reason": "RuntimeError",
+                                         "detail": "RuntimeError: boom"})
+        assert msg2 == "RuntimeError: boom"
+
     def test_insufficient_after_skips_names_the_reasons(self, monkeypatch):
         monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "test-key")
         rows = ([{"date": f"2026-03-{d:02d}", "price": 10.0, "volume": 1}

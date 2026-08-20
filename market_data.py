@@ -1375,10 +1375,11 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
 
     payload = _cached(f"tech:{symbol.upper()}", TTL_TECHNICALS, produce, allow_fetch)
     if not payload.get("ok"):
-        # detail carries the rate-limit text and the fallback chain; the
-        # inspector and callers must see the real cause, not the bare name.
-        return Sourced.unavailable(
-            source, payload.get("detail") or payload.get("reason", "unavailable"))
+        # reason names the cause, detail carries the chain -- the inspector
+        # and callers must see both (never 'detail or reason': that dropped
+        # the primary cause whenever both existed).
+        import sources as _s
+        return Sourced.unavailable(source, _s._compose_failure(payload))
     actual = {"alpaca": "alpaca:bars(iex)", "fmp": "fmp:eod-history"}.get(
         payload.get("provider"), source)
     return Sourced.live(payload, actual)
