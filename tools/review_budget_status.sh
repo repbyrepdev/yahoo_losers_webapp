@@ -11,8 +11,7 @@ MONTH=$(date -u +%Y-%m)
 
 echo "== CodeRabbit (Pro Plus; allowance shrinks with 7-day attempts) =="
 PRS=$(gh pr list --repo "$REPO" --state all --search "created:>=$SINCE" --json number --jq 'length')
-SUMMONS=$(gh api "search/issues" -X GET -f q="repo:$REPO is:pr commented:>=$SINCE" --jq '.total_count' 2>/dev/null || echo "?")
-echo "  PRs opened (7d, each = 1 CR attempt): $PRS"
+echo "  PRs opened (7d, each = 1 CR attempt; summons add more): $PRS"
 echo "  latest CR limit notice (authoritative when present):"
 gh api "search/issues" -X GET -f q="repo:$REPO commenter:app/coderabbitai created:>=$SINCE" --jq '.items[0].html_url // "none surfaced via search"' 2>/dev/null | sed 's/^/    /'
 echo "  rule: ≤1 summon per PR per hour; silent polling otherwise"

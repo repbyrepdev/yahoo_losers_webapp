@@ -786,7 +786,19 @@ def paper_manage_positions() -> Sourced:
     for pos in positions:
         symbol = pos.get("symbol")
         qty = int(float(pos.get("qty") or 0))
-        if not symbol or qty <= 0:
+        if not symbol:
+            continue
+        if qty < 0:
+            # A short position should be impossible under these rails (OCO
+            # legs are one-cancels-other), but a broker race or manual action
+            # could create one -- and silently skipping it would leave an
+            # unmanaged short invisible forever (CR CLI, local review).
+            actions.append({"symbol": symbol, "action": "unexpected-short",
+                            "qty": qty,
+                            "reason": "short position outside the rails; "
+                                      "needs manual attention -- not auto-managed"})
+            continue
+        if qty == 0:
             continue
         entry = entries_by_symbol.get(symbol)
         ref = _entry_ref_price(entry) if entry else None

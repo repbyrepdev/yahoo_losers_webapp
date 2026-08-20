@@ -1563,3 +1563,21 @@ class TestTechnicalsFailover:
         result = market_data.technicals("ZZTF21")
         assert not result.ok
         assert "RuntimeError" in result.reason
+
+    def test_unexpected_short_is_surfaced_never_skipped(self, monkeypatch):
+        """CR CLI local review (Critical): a short position must be reported,
+        not silently skipped by the qty filter."""
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZSH1", "qty": "-5"}])
+            if "/v2/orders" in url:
+                return FakeResponse([])
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no orders for shorts")))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        act = result.value["actions"][0]
+        assert act["action"] == "unexpected-short" and act["qty"] == -5
+        assert "manual attention" in act["reason"]
