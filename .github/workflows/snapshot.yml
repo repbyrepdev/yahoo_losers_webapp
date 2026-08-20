@@ -8,12 +8,12 @@ name: nightly-snapshot
 
 on:
   schedule:
-    # 00:05 UTC = 8:05 PM EDT / 7:05 PM EST -- after the close in both DST
-    # regimes AND inside Alpaca's opg submission window (rejected between
-    # 9:28 AM and 7:00 PM ET; live incident 2026-08-19: the 5:45 PM run's
-    # paper orders all bounced with code 40310000). Tue-Sat UTC mornings are
-    # Mon-Fri ET evenings; the date label comes from the app's ET clock.
-    - cron: '5 0 * * 2-6'
+    # 01:15 UTC = 9:15 PM EDT / 8:15 PM EST -- after the EXTENDED session
+    # closes (20:00 ET) in both DST regimes, so extended-hours limit orders
+    # become eligible at the NEXT pre-market, never the same evening.
+    # Tue-Sat UTC mornings are Mon-Fri ET evenings; the date label comes
+    # from the app's ET clock.
+    - cron: '15 1 * * 2-6'
   workflow_dispatch:
 
 permissions:

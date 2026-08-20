@@ -713,6 +713,17 @@ def profile(symbol: str, allow_fetch: bool = True) -> Dict[str, Sourced]:
         fallback = _short_float_fallback()
         if fallback is not None:
             result["short_pct_float"] = fallback
+        try:
+            import sources
+            prof2 = sources.company_profile(symbol)
+            if prof2.ok:
+                # profile2 carries industry but not the GICS sector; only
+                # what it actually reports fills in.
+                result["name"] = Sourced.live(prof2.value.get("name"), prof2.source)
+                if prof2.value.get("industry"):
+                    result["industry"] = Sourced.live(prof2.value["industry"], prof2.source)
+        except Exception as e:
+            logger.info(f"profile fallback failed for {symbol}: {type(e).__name__}")
         return result
 
     def field(key):
@@ -799,6 +810,19 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
     source = "yfinance:news"
 
     def produce():
+        # Finnhub first: official API, abundant allowance; Yahoo's scraped
+        # feed is the backup.
+        finnhub_error = None
+        try:
+            import sources
+            primary = sources.company_news(symbol, limit)
+            if primary.ok:
+                return {"ok": True, "items": primary.value,
+                        "provider": "finnhub"}
+            finnhub_error = primary.reason
+        except Exception as e:
+            finnhub_error = f"{type(e).__name__}: {e}"
+            logger.info(f"finnhub news failed for {symbol}: {type(e).__name__}")
         yahoo_error = None
         try:
             items = _ticker(symbol).news or []
@@ -821,22 +845,15 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
                 "url": url,
             })
         if not out:
-            # Backup: Finnhub's company-news carries the same shape, so the
-            # news chip survives a Yahoo outage.
-            try:
-                import sources
-                fallback = sources.company_news(symbol, limit)
-                if fallback.ok:
-                    return {"ok": True, "items": fallback.value,
-                            "provider": "finnhub"}
-            except Exception as e:
-                logger.info(f"news fallback failed for {symbol}: {type(e).__name__}")
-            if yahoo_error is not None:
+            provider_failure = yahoo_error or (
+                finnhub_error if finnhub_error and
+                "no recent headlines" not in str(finnhub_error) else None)
+            if provider_failure is not None:
                 # A provider failure is not "no news": keep the identity so
                 # _cached classifies transient or rate-limited, never a
                 # six-hour structural absence (same rule as ratings).
-                return {"ok": False, "reason": yahoo_error.split(":")[0],
-                        "detail": yahoo_error}
+                return {"ok": False, "reason": str(provider_failure).split(":")[0],
+                        "detail": str(provider_failure)}
             return {"ok": False, "reason": "no recent headlines"}
         return {"ok": True, "items": out}
 
@@ -844,7 +861,7 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     actual = ("finnhub:company-news" if payload.get("provider") == "finnhub"
-              else source)
+              else "yfinance:news")
     return Sourced.live(payload["items"], actual)
 
 
@@ -861,6 +878,20 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     source = "yfinance:recommendations"
 
     def produce():
+        # Finnhub first: an official API with an effectively unlimited
+        # allowance at our volume beats scraping the endpoint Yahoo has
+        # blocked twice this week. Yahoo becomes the backup.
+        finnhub_error = None
+        try:
+            import sources
+            primary = sources.ratings_spread(symbol)
+            if primary.ok:
+                return {"ok": True, "spread": primary.value,
+                        "provider": "finnhub"}
+            finnhub_error = primary.reason
+        except Exception as e:
+            finnhub_error = f"{type(e).__name__}: {e}"
+            logger.info(f"finnhub ratings failed for {symbol}: {type(e).__name__}")
         yahoo_error = None
         try:
             frame = _ticker(symbol).recommendations
@@ -869,22 +900,15 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
             yahoo_error = f"{type(e).__name__}: {e}"
             logger.info(f"yahoo ratings failed for {symbol}: {type(e).__name__}")
         if frame is None or frame.empty:
-            # Backup: Finnhub's trends carry the same spread, so the score's
-            # ratings factor survives a quoteSummary outage.
-            try:
-                import sources
-                fallback = sources.ratings_spread(symbol)
-                if fallback.ok:
-                    return {"ok": True, "spread": fallback.value,
-                            "provider": "finnhub"}
-            except Exception as e:
-                logger.info(f"ratings fallback failed for {symbol}: {type(e).__name__}")
-            if yahoo_error is not None:
-                # A provider failure is not "no coverage": keep the original
-                # detail so _cached classifies it transient or rate-limited,
-                # never a six-hour structural absence (CR, PR 60).
-                return {"ok": False, "reason": yahoo_error.split(":")[0],
-                        "detail": yahoo_error}
+            provider_failure = yahoo_error or (
+                finnhub_error if finnhub_error and
+                "no ratings published" not in str(finnhub_error) else None)
+            if provider_failure is not None:
+                # A provider failure is not "no coverage": keep the identity
+                # so _cached classifies transient/rate-limited, never a
+                # six-hour structural absence (CR, PR 60).
+                return {"ok": False, "reason": str(provider_failure).split(":")[0],
+                        "detail": str(provider_failure)}
             return {"ok": False, "reason": "no ratings published"}
         row = frame.iloc[0].to_dict()
         spread = {k: int(row.get(k, 0) or 0) for k in
@@ -899,7 +923,7 @@ def analyst_recommendations(symbol: str, allow_fetch: bool = True) -> Sourced:
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     actual = ("finnhub:recommendation-trends" if payload.get("provider") == "finnhub"
-              else source)
+              else "yfinance:recommendations")
     return Sourced.live(payload["spread"], actual)
 
 
