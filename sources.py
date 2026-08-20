@@ -593,6 +593,39 @@ def ratings_spread(symbol: str) -> Sourced:
     return Sourced.live(payload["spread"], source)
 
 
+def _alpaca_option_snapshots(symbol: str, until: str):
+    """Fetch and merge every page of the indicative option-snapshot chain.
+
+    Returns (snapshots, error_reason): partial chains bias anything computed
+    from them (contracts sort C-before-P), so past the five-page budget the
+    caller gets a refusal, never a truncation.
+    """
+    snapshots = {}
+    token = None
+    for _page in range(5):
+        params = {"feed": "indicative", "limit": 1000,
+                  "expiration_date_lte": until}
+        if token:
+            params["page_token"] = token
+        try:
+            payload, err = _alpaca_get(
+                ALPACA_DATA_BASE,
+                f"/v1beta1/options/snapshots/{symbol.upper()}", params)
+            if err:
+                return None, err
+        except Exception as e:
+            return None, f"alpaca options failed ({type(e).__name__})"
+        snapshots.update(payload.get("snapshots") or {})
+        token = payload.get("next_page_token")
+        if not token:
+            break
+    else:
+        return None, "options chain exceeds page budget"
+    if not snapshots:
+        return None, "no listed options"
+    return snapshots, None
+
+
 def options_putcall(symbol: str) -> Sourced:
     """Put/call volume positioning from Alpaca's indicative options feed.
 
@@ -607,32 +640,9 @@ def options_putcall(symbol: str) -> Sourced:
     def produce():
         import re as _re
         until = (date.today() + timedelta(days=45)).isoformat()
-        # The endpoint paginates (max 1000/page). Contracts sort C-before-P
-        # within each expiry, so a truncated chain would overweight calls --
-        # merge every page or refuse.
-        snapshots = {}
-        token = None
-        for _page in range(5):
-            params = {"feed": "indicative", "limit": 1000,
-                      "expiration_date_lte": until}
-            if token:
-                params["page_token"] = token
-            try:
-                payload, err = _alpaca_get(
-                    ALPACA_DATA_BASE,
-                    f"/v1beta1/options/snapshots/{symbol.upper()}", params)
-                if err:
-                    return {"ok": False, "reason": err}
-            except Exception as e:
-                return {"ok": False, "reason": f"alpaca options failed ({type(e).__name__})"}
-            snapshots.update(payload.get("snapshots") or {})
-            token = payload.get("next_page_token")
-            if not token:
-                break
-        else:
-            return {"ok": False, "reason": "options chain exceeds page budget"}
-        if not snapshots:
-            return {"ok": False, "reason": "no listed options"}
+        snapshots, err = _alpaca_option_snapshots(symbol, until)
+        if err:
+            return {"ok": False, "reason": err}
         # OCC symbology is fixed from the right (8-digit strike, C/P,
         # 6-digit date); anchor there so roots with digits still parse.
         pattern = _re.compile(r"\d{6}([CP])\d{8}$")
@@ -916,29 +926,9 @@ def implied_straddle_move(symbol: str, spot: float) -> Sourced:
     def produce():
         import re as _re
         until = (date.today() + timedelta(days=45)).isoformat()
-        snapshots = {}
-        token = None
-        for _page in range(5):
-            params = {"feed": "indicative", "limit": 1000,
-                      "expiration_date_lte": until}
-            if token:
-                params["page_token"] = token
-            try:
-                payload, err = _alpaca_get(
-                    ALPACA_DATA_BASE,
-                    f"/v1beta1/options/snapshots/{symbol.upper()}", params)
-                if err:
-                    return {"ok": False, "reason": err}
-            except Exception as e:
-                return {"ok": False, "reason": f"alpaca options failed ({type(e).__name__})"}
-            snapshots.update(payload.get("snapshots") or {})
-            token = payload.get("next_page_token")
-            if not token:
-                break
-        else:
-            return {"ok": False, "reason": "options chain exceeds page budget"}
-        if not snapshots:
-            return {"ok": False, "reason": "no listed options"}
+        snapshots, err = _alpaca_option_snapshots(symbol, until)
+        if err:
+            return {"ok": False, "reason": err}
 
         pattern = _re.compile(r"(\d{6})([CP])(\d{8})$")
         by_expiry = {}
@@ -951,7 +941,9 @@ def implied_straddle_move(symbol: str, spot: float) -> Sourced:
             strike = int(raw_strike) / 1000.0
             by_expiry.setdefault(expiry, {}).setdefault(strike, {})[side] = snap
 
-        today = date.today()
+        # Eastern, matching the Yahoo path: near midnight UTC the server
+        # date could select a different expiry than the primary figure.
+        today = market_data._eastern_now().date()
         expiry = days_to_expiry = None
         for candidate in sorted(by_expiry):
             try:

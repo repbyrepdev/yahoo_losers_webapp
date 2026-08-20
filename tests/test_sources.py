@@ -937,6 +937,13 @@ class TestCacheContracts:
 
 
 class TestLastTwoBackups:
+    @pytest.fixture(autouse=True)
+    def _isolated_options_cooldown(self):
+        prior = market_data._options_cooldown_until[0]
+        market_data._options_cooldown_until[0] = 0
+        yield
+        market_data._options_cooldown_until[0] = prior
+
     def test_company_news_maps_finnhub_shape(self, monkeypatch):
         monkeypatch.setattr(sources.requests, "get", _fake_get({
             "company-news": [
@@ -966,17 +973,18 @@ class TestLastTwoBackups:
         assert result.value[0]["title"] == "T"
 
     def test_straddle_from_alpaca_quotes(self, monkeypatch):
+        exp = (date.today() + timedelta(days=30)).strftime("%y%m%d")
+
         def fake(url, params=None, headers=None, timeout=None, **kw):
             assert "/v1beta1/options/snapshots/ZZIM1" in url
             return FakeResponse({"snapshots": {
                 # expiry 30d out, strikes 10 and 12 both-sided
-                "ZZIM1260918C00010000": {"latestQuote": {"bp": 1.0, "ap": 1.2}},
-                "ZZIM1260918P00010000": {"latestQuote": {"bp": 0.8, "ap": 1.0}},
-                "ZZIM1260918C00012000": {"latestQuote": {"bp": 0.4, "ap": 0.6}},
-                "ZZIM1260918P00012000": {"latestQuote": {"bp": 1.6, "ap": 1.8}},
+                f"ZZIM1{exp}C00010000": {"latestQuote": {"bp": 1.0, "ap": 1.2}},
+                f"ZZIM1{exp}P00010000": {"latestQuote": {"bp": 0.8, "ap": 1.0}},
+                f"ZZIM1{exp}C00012000": {"latestQuote": {"bp": 0.4, "ap": 0.6}},
+                f"ZZIM1{exp}P00012000": {"latestQuote": {"bp": 1.6, "ap": 1.8}},
             }})
         monkeypatch.setattr(sources.requests, "get", fake)
-        import datetime as _dt
         result = sources.implied_straddle_move("ZZIM1", spot=10.4)
         assert result.ok
         v = result.value
@@ -986,10 +994,12 @@ class TestLastTwoBackups:
         assert v["quality"] == "ok"
 
     def test_straddle_last_trade_quality_flagged(self, monkeypatch):
+        exp = (date.today() + timedelta(days=30)).strftime("%y%m%d")
+
         def fake(url, params=None, headers=None, timeout=None, **kw):
             return FakeResponse({"snapshots": {
-                "ZZIM2260918C00010000": {"dailyBar": {"c": 1.1}},
-                "ZZIM2260918P00010000": {"latestQuote": {"bp": 0.8, "ap": 1.0}},
+                f"ZZIM2{exp}C00010000": {"dailyBar": {"c": 1.1}},
+                f"ZZIM2{exp}P00010000": {"latestQuote": {"bp": 0.8, "ap": 1.0}},
             }})
         monkeypatch.setattr(sources.requests, "get", fake)
         result = sources.implied_straddle_move("ZZIM2", spot=10.0)
@@ -998,23 +1008,54 @@ class TestLastTwoBackups:
 
     def test_implied_move_falls_back_during_cooldown(self, monkeypatch):
         import time as _time
-        prior = market_data._options_cooldown_until[0]
         market_data._options_cooldown_until[0] = _time.time() + 600
-        try:
-            monkeypatch.setattr(market_data, "technicals",
-                                lambda sym, allow_fetch=True: market_data.Sourced.live(
-                                    {"close": 20.0}, "test"))
-            monkeypatch.setattr(sources, "implied_straddle_move",
-                                lambda sym, spot: market_data.Sourced.live(
-                                    {"expiry": "2026-09-18", "days_to_expiry": 29,
-                                     "implied_move_pct": 12.5, "spot": spot,
-                                     "strike": 20.0, "quality": "ok",
-                                     "estimate_basis": "x"},
-                                    "alpaca:options-indicative-straddle"))
-            market_data._cache._local.pop("implied:ZZIM3", None)
-            result = market_data.implied_move("ZZIM3")
-            assert result.ok
-            assert result.value["implied_move_pct"] == 12.5
-            assert "alpaca" in result.source
-        finally:
-            market_data._options_cooldown_until[0] = prior
+        monkeypatch.setattr(market_data, "technicals",
+                            lambda sym, allow_fetch=True: market_data.Sourced.live(
+                                {"close": 20.0}, "test"))
+        monkeypatch.setattr(sources, "implied_straddle_move",
+                            lambda sym, spot: market_data.Sourced.live(
+                                {"expiry": "2026-09-18", "days_to_expiry": 29,
+                                 "implied_move_pct": 12.5, "spot": spot,
+                                 "strike": 20.0, "quality": "ok",
+                                 "estimate_basis": "x"},
+                                "alpaca:options-indicative-straddle"))
+        market_data._cache._local.pop("implied:ZZIM3", None)
+        result = market_data.implied_move("ZZIM3")
+        assert result.ok
+        assert result.value["implied_move_pct"] == 12.5
+        assert "alpaca" in result.source
+
+    def test_news_dual_failure_keeps_error_identity(self, monkeypatch):
+        class YahooDies:
+            @property
+            def news(self):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "company_news",
+                            lambda sym, limit=5: market_data.Sourced.unavailable(
+                                "finnhub:company-news", "quota"))
+        result = market_data.headlines("ZZNW3")
+        assert not result.ok
+        assert result.reason != "no recent headlines"
+        assert "RuntimeError" in result.reason
+
+    def test_implied_move_rate_limit_single_fallback_attempt(self, monkeypatch):
+        calls = []
+
+        class ExpiryDies:
+            @property
+            def options(self):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: ExpiryDies())
+        monkeypatch.setattr(market_data, "technicals",
+                            lambda sym, allow_fetch=True: market_data.Sourced.live(
+                                {"close": 20.0}, "test"))
+
+        def counting_unavailable(sym, spot):
+            calls.append(sym)
+            return market_data.Sourced.unavailable(
+                "alpaca:options-indicative-straddle", "budget exhausted")
+        monkeypatch.setattr(sources, "implied_straddle_move", counting_unavailable)
+        result = market_data.implied_move("ZZIM4")
+        assert not result.ok
+        assert len(calls) == 1

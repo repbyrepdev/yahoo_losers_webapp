@@ -799,10 +799,12 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
     source = "yfinance:news"
 
     def produce():
+        yahoo_error = None
         try:
             items = _ticker(symbol).news or []
         except Exception as e:
             items = []
+            yahoo_error = f"{type(e).__name__}: {e}"
             logger.info(f"yahoo news failed for {symbol}: {type(e).__name__}")
         out = []
         for item in items[:limit]:
@@ -829,6 +831,12 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
                             "provider": "finnhub"}
             except Exception as e:
                 logger.info(f"news fallback failed for {symbol}: {type(e).__name__}")
+            if yahoo_error is not None:
+                # A provider failure is not "no news": keep the identity so
+                # _cached classifies transient or rate-limited, never a
+                # six-hour structural absence (same rule as ratings).
+                return {"ok": False, "reason": yahoo_error.split(":")[0],
+                        "detail": yahoo_error}
             return {"ok": False, "reason": "no recent headlines"}
         return {"ok": True, "items": out}
 
@@ -1038,12 +1046,20 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
         try:
             result = _yahoo_straddle()
         except Exception as e:
-            if _is_rate_limited(f"{type(e).__name__}: {e}"):
+            detail = f"{type(e).__name__}: {e}"
+            rate_limited = _is_rate_limited(detail)
+            if rate_limited:
                 _options_refused()
             spot = _spot()
             fallback = _alpaca_fallback(spot) if spot else None
             if fallback:
                 return fallback
+            if rate_limited:
+                # Return, don't raise: _cached's quick retry would re-enter
+                # under the just-armed cooldown and call Alpaca a second
+                # time per symbol per cycle (same rule as options_flow).
+                return {"ok": False, "reason": type(e).__name__,
+                        "detail": detail}
             raise
         if not result.get("ok"):
             spot = _spot()
