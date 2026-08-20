@@ -934,3 +934,87 @@ class TestCacheContracts:
         row = result.value["submitted"][0]
         assert row["status"] == "already-submitted"
         assert row["qty"] == 40 and row["ref_price"] == 25.0
+
+
+class TestLastTwoBackups:
+    def test_company_news_maps_finnhub_shape(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "company-news": [
+                {"headline": "Title A", "source": "SeekingAlpha",
+                 "datetime": 1787182806, "url": "https://x/a"},
+                {"headline": "", "source": "skip-me"},
+                {"headline": "Title B", "source": "Reuters",
+                 "datetime": 1787182800, "url": "https://x/b"}]}))
+        result = sources.company_news("ZZNW1", limit=5)
+        assert result.ok
+        assert [i["title"] for i in result.value] == ["Title A", "Title B"]
+        assert result.value[0]["publisher"] == "SeekingAlpha"
+        assert result.value[0]["published"].endswith("Z")
+
+    def test_headlines_fall_back_to_finnhub(self, monkeypatch):
+        class NoNews:
+            news = []
+        monkeypatch.setattr(market_data, "_ticker", lambda s: NoNews())
+        monkeypatch.setattr(sources, "company_news",
+                            lambda sym, limit=5: market_data.Sourced.live(
+                                [{"title": "T", "publisher": "P",
+                                  "published": None, "url": None}],
+                                "finnhub:company-news"))
+        result = market_data.headlines("ZZNW2")
+        assert result.ok
+        assert result.source == "finnhub:company-news"
+        assert result.value[0]["title"] == "T"
+
+    def test_straddle_from_alpaca_quotes(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            assert "/v1beta1/options/snapshots/ZZIM1" in url
+            return FakeResponse({"snapshots": {
+                # expiry 30d out, strikes 10 and 12 both-sided
+                "ZZIM1260918C00010000": {"latestQuote": {"bp": 1.0, "ap": 1.2}},
+                "ZZIM1260918P00010000": {"latestQuote": {"bp": 0.8, "ap": 1.0}},
+                "ZZIM1260918C00012000": {"latestQuote": {"bp": 0.4, "ap": 0.6}},
+                "ZZIM1260918P00012000": {"latestQuote": {"bp": 1.6, "ap": 1.8}},
+            }})
+        monkeypatch.setattr(sources.requests, "get", fake)
+        import datetime as _dt
+        result = sources.implied_straddle_move("ZZIM1", spot=10.4)
+        assert result.ok
+        v = result.value
+        assert v["strike"] == 10.0  # nearest to spot
+        # mids: call 1.1, put 0.9 -> 2.0 / 10.4 = 19.2%
+        assert v["implied_move_pct"] == 19.2
+        assert v["quality"] == "ok"
+
+    def test_straddle_last_trade_quality_flagged(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            return FakeResponse({"snapshots": {
+                "ZZIM2260918C00010000": {"dailyBar": {"c": 1.1}},
+                "ZZIM2260918P00010000": {"latestQuote": {"bp": 0.8, "ap": 1.0}},
+            }})
+        monkeypatch.setattr(sources.requests, "get", fake)
+        result = sources.implied_straddle_move("ZZIM2", spot=10.0)
+        assert result.ok
+        assert "last-trade" in result.value["quality"]
+
+    def test_implied_move_falls_back_during_cooldown(self, monkeypatch):
+        import time as _time
+        prior = market_data._options_cooldown_until[0]
+        market_data._options_cooldown_until[0] = _time.time() + 600
+        try:
+            monkeypatch.setattr(market_data, "technicals",
+                                lambda sym, allow_fetch=True: market_data.Sourced.live(
+                                    {"close": 20.0}, "test"))
+            monkeypatch.setattr(sources, "implied_straddle_move",
+                                lambda sym, spot: market_data.Sourced.live(
+                                    {"expiry": "2026-09-18", "days_to_expiry": 29,
+                                     "implied_move_pct": 12.5, "spot": spot,
+                                     "strike": 20.0, "quality": "ok",
+                                     "estimate_basis": "x"},
+                                    "alpaca:options-indicative-straddle"))
+            market_data._cache._local.pop("implied:ZZIM3", None)
+            result = market_data.implied_move("ZZIM3")
+            assert result.ok
+            assert result.value["implied_move_pct"] == 12.5
+            assert "alpaca" in result.source
+        finally:
+            market_data._options_cooldown_until[0] = prior

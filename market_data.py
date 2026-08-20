@@ -799,7 +799,11 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
     source = "yfinance:news"
 
     def produce():
-        items = _ticker(symbol).news or []
+        try:
+            items = _ticker(symbol).news or []
+        except Exception as e:
+            items = []
+            logger.info(f"yahoo news failed for {symbol}: {type(e).__name__}")
         out = []
         for item in items[:limit]:
             content = item.get("content") or item
@@ -815,13 +819,25 @@ def headlines(symbol: str, limit: int = 5) -> Sourced:
                 "url": url,
             })
         if not out:
+            # Backup: Finnhub's company-news carries the same shape, so the
+            # news chip survives a Yahoo outage.
+            try:
+                import sources
+                fallback = sources.company_news(symbol, limit)
+                if fallback.ok:
+                    return {"ok": True, "items": fallback.value,
+                            "provider": "finnhub"}
+            except Exception as e:
+                logger.info(f"news fallback failed for {symbol}: {type(e).__name__}")
             return {"ok": False, "reason": "no recent headlines"}
         return {"ok": True, "items": out}
 
     payload = _cached(f"news:{symbol.upper()}:{limit}", TTL_NEWS, produce)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    return Sourced.live(payload["items"], source)
+    actual = ("finnhub:company-news" if payload.get("provider") == "finnhub"
+              else source)
+    return Sourced.live(payload["items"], actual)
 
 
 def _recs_key(symbol: str) -> str:
@@ -996,16 +1012,48 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
     """
     source = "yfinance:option-chain-atm-straddle"
 
+    def _alpaca_fallback(spot):
+        """Straddle from the indicative feed: keeps the implied move alive
+        while Yahoo's chain endpoint is limited."""
+        try:
+            import sources
+            fallback = sources.implied_straddle_move(symbol, spot)
+            if fallback.ok:
+                return {"ok": True, "provider": "alpaca", **fallback.value}
+        except Exception as e:
+            logger.info(f"straddle fallback failed for {symbol}: {type(e).__name__}")
+        return None
+
+    def _spot():
+        # Spot must be a real underlying price for either provider's chain;
+        # a straddle anchored to a guessed level is a fabricated figure.
+        tech = technicals(symbol, allow_fetch=False)
+        return tech.value.get("close") if tech.ok else None
+
     def produce():
         if _options_cooldown_active():
-            return {"ok": False, "reason": "options endpoint cooling down"}
+            spot = _spot()
+            fallback = _alpaca_fallback(spot) if spot else None
+            return fallback or {"ok": False, "reason": "options endpoint cooling down"}
         try:
-            ticker = _ticker(symbol)
-            expiries = ticker.options
+            result = _yahoo_straddle()
         except Exception as e:
             if _is_rate_limited(f"{type(e).__name__}: {e}"):
                 _options_refused()
+            spot = _spot()
+            fallback = _alpaca_fallback(spot) if spot else None
+            if fallback:
+                return fallback
             raise
+        if not result.get("ok"):
+            spot = _spot()
+            fallback = _alpaca_fallback(spot) if spot else None
+            return fallback or result
+        return result
+
+    def _yahoo_straddle():
+        ticker = _ticker(symbol)
+        expiries = ticker.options
         if not expiries:
             return {"ok": False, "reason": "no listed options"}
         from datetime import date as _date
@@ -1022,21 +1070,12 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
         if not expiry:
             return {"ok": False, "reason": "no expiry at least 5 days out"}
 
-        try:
-            chain = ticker.option_chain(expiry)
-        except Exception as e:
-            if _is_rate_limited(f"{type(e).__name__}: {e}"):
-                _options_refused()
-            raise
+        chain = ticker.option_chain(expiry)
         calls, puts = chain.calls, chain.puts
         if calls.empty or puts.empty:
             return {"ok": False, "reason": "one-sided chain"}
 
-        # Spot must be a real underlying price. A strike is not one, and a
-        # straddle anchored to a guessed level is a fabricated figure. Read
-        # through technicals() so the payload contract has one owner.
-        tech = technicals(symbol, allow_fetch=False)
-        spot = tech.value.get("close") if tech.ok else None
+        spot = _spot()
         if not spot:
             return {"ok": False, "reason": "no cached underlying price to anchor the strike"}
 
@@ -1088,7 +1127,9 @@ def implied_move(symbol: str, allow_fetch: bool = True) -> Sourced:
     payload = _cached(f"implied:{symbol.upper()}", TTL_OPTIONS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    return Sourced.derived({k: v for k, v in payload.items() if k != "ok"}, source)
+    actual = ("alpaca:options-indicative-straddle"
+              if payload.get("provider") == "alpaca" else source)
+    return Sourced.derived({k: v for k, v in payload.items() if k != "ok"}, actual)
 
 
 EDGAR_FTS_URL = "https://efts.sec.gov/LATEST/search-index"
