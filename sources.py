@@ -1435,3 +1435,39 @@ def company_profile(symbol: str) -> Sourced:
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live({k: v for k, v in payload.items() if k != "ok"}, source)
+
+
+def daily_bars(symbol: str, days: int = 180) -> Sourced:
+    """Daily OHLCV bars from Alpaca, shaped for the technicals computation.
+
+    The history fallback the README promises: when Yahoo's chart endpoint
+    fails, the mean-reversion factors compute from IEX bars instead of going
+    dark. IEX volume is a subset of consolidated volume -- the source label
+    says so, and the honest alternative is no technicals at all.
+    """
+    source = "alpaca:bars(iex)"
+
+    def produce():
+        start = (date.today() - timedelta(days=int(days * 1.6))).isoformat()
+        try:
+            payload, err = _alpaca_get(ALPACA_DATA_BASE,
+                                       f"/v2/stocks/{symbol.upper()}/bars",
+                                       {"timeframe": "1Day", "start": start,
+                                        "limit": 400, "feed": "iex",
+                                        "adjustment": "split"})
+            if err:
+                return {"ok": False, "reason": err}
+        except Exception as e:
+            return {"ok": False, "reason": f"alpaca bars failed ({type(e).__name__})"}
+        bars = payload.get("bars") or []
+        if len(bars) < 30:
+            return {"ok": False, "reason": f"insufficient history ({len(bars)} bars)"}
+        return {"ok": True, "bars": [{"t": b.get("t"), "o": b.get("o"),
+                                      "h": b.get("h"), "l": b.get("l"),
+                                      "c": b.get("c"), "v": b.get("v")}
+                                     for b in bars]}
+
+    payload = market_data._cached(f"src:bars:{symbol.upper()}", 15 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["bars"], source)

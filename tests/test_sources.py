@@ -1478,3 +1478,45 @@ class TestPaperAccountOverview:
         assert not result.ok
         # full detail surfaces, not just the class name
         assert "RuntimeError" in result.reason and "connection refused" in result.reason
+
+
+class TestTechnicalsFailover:
+    def test_alpaca_bars_serve_when_yahoo_dies(self, monkeypatch):
+        """The README's promised history failover, now real (CR, PR 75)."""
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        import datetime as _dt
+        base = _dt.date(2026, 2, 2)
+        bars = []
+        d = base
+        px = 50.0
+        while len(bars) < 60:
+            if d.weekday() < 5:
+                bars.append({"t": d.isoformat() + "T05:00:00Z", "o": px, "h": px * 1.01,
+                             "l": px * 0.99, "c": px, "v": 100000})
+                # oscillate: an all-gains series degenerates Wilder RSI to NaN
+                px *= 1.004 if len(bars) % 2 else 0.998
+            d += _dt.timedelta(days=1)
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.live(bars, "alpaca:bars(iex)"))
+        market_data._cache._local.pop("tech:ZZTF20", None)
+        result = market_data.technicals("ZZTF20")
+        assert result.ok
+        assert result.source == "alpaca:bars(iex)"
+        assert 0 <= result.value["rsi14"] <= 100
+        assert result.value["bars"] >= 30
+
+    def test_dual_history_failure_keeps_identity(self, monkeypatch):
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable(
+                                "alpaca:bars(iex)", "down"))
+        market_data._cache._local.pop("tech:ZZTF21", None)
+        result = market_data.technicals("ZZTF21")
+        assert not result.ok
+        assert "RuntimeError" in result.reason

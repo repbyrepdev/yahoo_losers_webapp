@@ -1270,14 +1270,43 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
     source = "yfinance:history"
 
     def produce():
-        hist = _ticker(symbol).history(period="6mo", interval="1d")
+        # Total coverage, as the README promises: Yahoo's chart first, and on
+        # failure or thin data the Alpaca IEX bars stand in (labelled -- IEX
+        # volume is a subset, better than no technicals at all).
+        provider = None
+        hist = None
+        yahoo_error = None
+        try:
+            hist = _ticker(symbol).history(period="6mo", interval="1d")
+        except Exception as e:
+            yahoo_error = f"{type(e).__name__}: {e}"
+            logger.info(f"yahoo history failed for {symbol}: {type(e).__name__}")
         if hist is None or hist.empty or len(hist) < 30:
+            try:
+                import sources
+                import pandas as _pd
+                fallback = sources.daily_bars(symbol)
+                if fallback.ok:
+                    frame = _pd.DataFrame(fallback.value)
+                    frame = frame.rename(columns={"c": "Close", "h": "High",
+                                                  "l": "Low", "o": "Open",
+                                                  "v": "Volume"})
+                    frame.index = _pd.to_datetime(frame["t"])
+                    hist = frame
+                    provider = "alpaca"
+            except Exception as e:
+                logger.info(f"bars fallback failed for {symbol}: {type(e).__name__}")
+        if hist is None or hist.empty or len(hist) < 30:
+            if yahoo_error is not None:
+                return {"ok": False, "reason": yahoo_error.split(":")[0],
+                        "detail": yahoo_error}
             return {"ok": False, "reason": f"insufficient history ({0 if hist is None else len(hist)} bars)"}
 
         close = hist["Close"].dropna()
         volume = hist["Volume"].dropna()
         if len(close) < 30:
             return {"ok": False, "reason": "insufficient closing prices"}
+        _provider = provider
 
         # Wilder RSI(14)
         delta = close.diff()
@@ -1307,6 +1336,7 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
 
         return {
             "ok": True,
+            "provider": _provider,
             "fetched_at": time.time(),
             "close": last_close,
             "rsi14": round(float(rsi), 2) if rsi == rsi else None,
@@ -1321,7 +1351,8 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
     payload = _cached(f"tech:{symbol.upper()}", TTL_TECHNICALS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    return Sourced.live(payload, source)
+    actual = "alpaca:bars(iex)" if payload.get("provider") == "alpaca" else source
+    return Sourced.live(payload, actual)
 
 
 def price_history(symbol: str, period: str = "5y", allow_fetch: bool = True) -> Sourced:
