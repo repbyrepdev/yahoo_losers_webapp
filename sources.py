@@ -540,6 +540,10 @@ def delisted_recent(days: int = 365) -> Sourced:
 
 PAPER_NOTIONAL_PER_PICK = 1000.0
 PAPER_MAX_PICKS = 3
+# Entry band above the recorded reference: the buy limit. Caps chasing (a
+# gap past the band is a recorded miss, not a worse fill) and makes the
+# order eligible in extended hours, which market orders never are.
+PAPER_ENTRY_BAND_PCT = 2.0
 
 
 def _eastern_today() -> date:
@@ -561,15 +565,26 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
     Picks are {"symbol", "price"} dicts sized to whole shares under the
     target notional (fractional orders were rejected live 2026-08-19).
 
-    Time-in-force is DAY, not opg: submitted after hours the order queues
-    for the next session and fills at the first prints after the open.
-    True opg orders fill only in the opening auction, and the paper
-    simulator's IEX feed has no auction print for most mid-caps -- all
-    three opg orders expired unfilled at the 2026-08-20 open. First-prints
-    is the honest, fillable approximation of "entered at the open", and
-    the recorded ref_price still measures slippage against intent.
+    Orders are LIMIT at ref_price plus the entry band, extended-hours
+    eligible, day TIF -- the workflow Damien actually trades: decide after
+    the close, let the order work from pre-market, fill anywhere inside
+    the band, and record a miss when the stock gaps beyond it (a capped
+    entry, never a chased one). Market orders were the wrong instrument
+    twice: opg expired unfilled (no IEX auction print for mid-caps,
+    2026-08-20) and plain market cannot work extended hours at all.
     """
     source = "alpaca:paper-orders"
+    # DAY market orders fill IMMEDIATELY while the market is open -- the
+    # public snapshot route or a manual dispatch during regular hours would
+    # buy intraday instead of at the next open (CR, PR 73). Entries submit
+    # only outside the regular session.
+    try:
+        if market_data.market_phase().get("phase") == "open":
+            return Sourced.unavailable(
+                source, "market is open; paper entries submit only outside "
+                        "regular hours so fills happen at the next open")
+    except Exception:
+        pass
     base = _alpaca_trading_base()   # raises on any non-paper endpoint
     headers = _alpaca_headers()
     if headers is None:
@@ -589,13 +604,16 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
                            "reason": "no price to size the order"})
             continue
         qty = max(1, int(PAPER_NOTIONAL_PER_PICK // price))
+        limit_price = round(price * (1 + PAPER_ENTRY_BAND_PCT / 100.0), 2)
         client_order_id = f"snap-{_eastern_today().isoformat()}-{symbol}"
         try:
             market_data._throttle()
             response = requests.post(
                 f"{base}/v2/orders", headers=headers, timeout=20,
                 json={"symbol": symbol, "qty": str(qty),
-                      "side": "buy", "type": "market", "time_in_force": "day",
+                      "side": "buy", "type": "limit",
+                      "limit_price": str(limit_price),
+                      "extended_hours": True, "time_in_force": "day",
                       # Deterministic per (day, symbol): a snapshot retry
                       # cannot double-submit -- Alpaca rejects the duplicate
                       # id, which we treat as already-submitted.
@@ -609,7 +627,7 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
             order = response.json()
             submitted.append({"symbol": symbol, "order_id": order.get("id"),
                               "status": order.get("status"), "qty": qty,
-                              "ref_price": price})
+                              "ref_price": price, "limit_price": limit_price})
         except Exception as e:
             # Keep the provider's words: "HTTPError" alone cost a debugging
             # round trip when every order bounced off the opg window rule.
@@ -621,8 +639,10 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
         return Sourced.unavailable(source, f"all paper orders failed: {failed}")
     return Sourced.live({"submitted": submitted, "failed": failed,
                          "target_notional_each": PAPER_NOTIONAL_PER_PICK,
-                         "basis": "paper account, market at next open (first "
-                                  "prints, day TIF), simulated money"},
+                         "entry_band_pct": PAPER_ENTRY_BAND_PCT,
+                         "basis": "paper account, buy limit at ref plus "
+                                  f"{PAPER_ENTRY_BAND_PCT:.0f}% band, extended-hours "
+                                  "eligible, day TIF, simulated money"},
                         source)
 
 

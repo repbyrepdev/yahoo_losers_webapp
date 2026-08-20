@@ -42,6 +42,9 @@ def _keys(monkeypatch):
     monkeypatch.setattr(sources, "get_secret",
                         lambda name, **kw: f"test-{name.lower()}")
     monkeypatch.setattr(market_data, "_throttle", lambda: None)
+    # Paper-entry rules depend on the market phase; the suite must not
+    # change behaviour with the wall clock.
+    monkeypatch.setattr(market_data, "market_phase", lambda: {"phase": "closed"})
 
 
 class TestPaperGuard:
@@ -69,8 +72,10 @@ class TestPaperGuard:
         assert len(submitted) == sources.PAPER_MAX_PICKS  # capped
         for order in submitted:
             assert order["time_in_force"] == "day"
-            assert order["type"] == "market"
-            # whole shares: Alpaca rejects fractional opg ("must be DAY")
+            assert order["type"] == "limit"
+            assert order["extended_hours"] is True
+            # ref 151.30 +2% band
+            assert order["limit_price"] == "154.33"
             assert order["qty"] == "6"
             assert "notional" not in order
         assert "simulated money" in result.value["basis"]
@@ -1202,3 +1207,23 @@ class TestProviderPrinciples:
         assert prof["industry"].ok and prof["industry"].value == "Semiconductors"
         assert prof["name"].value == "Zeta Corp"
         assert not prof["sector"].ok  # profile2 has no GICS sector; stays honest
+
+    def test_paper_orders_refuse_while_market_open(self, monkeypatch):
+        monkeypatch.setattr(market_data, "market_phase", lambda: {"phase": "open"})
+        monkeypatch.setattr(sources.requests, "post",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("submitted")))
+        result = sources.paper_execute_picks([{"symbol": "ZZMO1", "price": 10.0}])
+        assert not result.ok
+        assert "market is open" in result.reason
+
+    def test_paper_orders_proceed_after_hours(self, monkeypatch):
+        monkeypatch.setattr(market_data, "market_phase", lambda: {"phase": "after_hours"})
+
+        class Resp:
+            status_code = 200
+            text = "{}"
+            def raise_for_status(self): pass
+            def json(self): return {"id": "x", "status": "accepted"}
+        monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Resp())
+        result = sources.paper_execute_picks([{"symbol": "ZZMO2", "price": 10.0}])
+        assert result.ok and result.value["submitted"][0]["symbol"] == "ZZMO2"

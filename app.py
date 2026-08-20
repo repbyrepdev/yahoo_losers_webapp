@@ -1869,6 +1869,17 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 });
         }
         
+        function escHtml(v) {
+            return String(v ?? '').replace(/[&<>"']/g,
+                c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        function safeUrl(u) {
+            // Provider-controlled URLs render into href: allow web schemes only.
+            try {
+                const p = new URL(u, window.location.href);
+                return (p.protocol === 'https:' || p.protocol === 'http:') ? p.href : '#';
+            } catch (e) { return '#'; }
+        }
         function showAnalysisLoading(symbol) {
             const modal = createModal('ai-analysis-modal');
             const container = createModalContainer();
@@ -1938,16 +1949,16 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                         ${(analysis.headlines && analysis.headlines.available && analysis.headlines.items.length)
                             ? analysis.headlines.items.map(h => `
                                 <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color);">
-                                    <a href="${h.url || '#'}" target="_blank" rel="noopener noreferrer"
+                                    <a href="${safeUrl(h.url)}" target="_blank" rel="noopener noreferrer"
                                        style="color: var(--text-primary); text-decoration: none; font-size: 15px; line-height: 1.4;">
-                                        ${h.title}
+                                        ${escHtml(h.title)}
                                     </a>
-                                    <div style="font-size: 12px; color: #888; margin-top: 3px;">${h.publisher || ''}</div>
+                                    <div style="font-size: 12px; color: #888; margin-top: 3px;">${escHtml(h.publisher || '')}</div>
                                 </div>`).join('')
                             : `<p style="margin:0; color:#888;">— no headlines available
-                                 ${(analysis.headlines && analysis.headlines.reason) ? '(' + analysis.headlines.reason + ')' : ''}</p>`}
+                                 ${(analysis.headlines && analysis.headlines.reason) ? '(' + escHtml(analysis.headlines.reason) + ')' : ''}</p>`}
                         <div style="font-size: 11px; color: #888; margin-top: 10px;">
-                            Source: ${(analysis.headlines && analysis.headlines.source) || 'unknown'}
+                            Source: ${escHtml((analysis.headlines && analysis.headlines.source) || 'unknown')}
                         </div>
                     </div>
                 </div>
@@ -2538,12 +2549,12 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                             ${(aiAnalysis.headlines && aiAnalysis.headlines.available && aiAnalysis.headlines.items.length)
                                 ? aiAnalysis.headlines.items.slice(0, 4).map(h => `
                                     <div style="padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.25);">
-                                        <a href="${h.url || '#'}" target="_blank" rel="noopener noreferrer"
-                                           style="color: white; text-decoration: none;">${h.title}</a>
-                                        <div style="font-size: 12px; opacity: 0.75;">${h.publisher || ''}</div>
+                                        <a href="${safeUrl(h.url)}" target="_blank" rel="noopener noreferrer"
+                                           style="color: white; text-decoration: none;">${escHtml(h.title)}</a>
+                                        <div style="font-size: 12px; opacity: 0.75;">${escHtml(h.publisher || '')}</div>
                                     </div>`).join('')
                                 : `<div style="text-align:center; opacity:0.85;">\u2014 no headlines available${
-                                    (aiAnalysis.headlines && aiAnalysis.headlines.reason) ? ' (' + aiAnalysis.headlines.reason + ')' : ''}</div>`}
+                                    (aiAnalysis.headlines && aiAnalysis.headlines.reason) ? ' (' + escHtml(aiAnalysis.headlines.reason) + ')' : ''}</div>`}
                         </div>
                         <div style="text-align: center; font-size: 15px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.25);">
                             ${(aiAnalysis.analyst_posture && aiAnalysis.analyst_posture.available)
