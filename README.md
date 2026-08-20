@@ -9,23 +9,60 @@ Every field carries its provenance. A value that cannot be sourced renders as an
 em dash with the reason attached — it is never replaced by a substitute. Live
 provider status is at `/health/sources`.
 
-| Data | Source | Status |
-| --- | --- | --- |
-| Daily losers list | Yahoo screener `day_losers` | ✅ Live |
-| Prices, volume, market cap | Yahoo `v8/finance/chart` | ✅ Live |
-| Analyst targets + spread + count | yfinance `targetMeanPrice` | ✅ Live |
-| Analyst rating spread | yfinance `recommendations` | ✅ Live |
-| Options chain / put-call ratio | yfinance `option_chain` | ✅ Live |
-| Earnings dates | yfinance `calendar` | ✅ Live |
-| Headlines | yfinance `news` | ✅ Live |
-| Sector / industry | yfinance `info` | ✅ Live |
-| Short interest | yfinance `shortPercentOfFloat` | ✅ Live |
-| Institutional ownership + 13F holders | yfinance `institutional_holders` | ✅ Live |
-| RSI-14, Bollinger %B, 20-day gap | computed from real OHLCV | ✅ Live |
-| FOMC meeting dates | federalreserve.gov | ✅ Live |
-| StockTwits sentiment + volume | StockTwits API | ✅ Live |
-| CPI / jobs / GDP / retail dates | FRED `release/dates` | ✅ Live |
-| Reddit mentions | Reddit OAuth API | ⚙️ Needs `REDDIT_CLIENT_ID`/`SECRET` |
+### Provider chains: primary, backup, third
+
+Two principles picked every ordering, verified by live probes of each
+provider (2026-08-20):
+
+1. **Spend abundant budgets before scarce ones.** Finnhub allows 60
+   calls/min and Alpaca 200/min — effectively unlimited at this app's
+   volume. FMP allows 250/day (hard in-code stop at 200), so it sits
+   last in every chain it appears in. Yahoo is unmetered but unofficial:
+   it carries bulk load while healthy, and the moment it throws a limit
+   a cooldown diverts traffic to the keyed APIs.
+2. **Official APIs over scraping, when the data is equal.** Yahoo keeps
+   first place only where it is the product definition (the losers
+   screener), bundles many fields into one call (quoteSummary), or has
+   strictly richer data (consolidated volume, options open interest).
+
+| Data | Primary | Backup | Third |
+| --- | --- | --- | --- |
+| Losers universe | Yahoo screener | Alpaca movers screener | FMP biggest-losers |
+| Price history + volume | Yahoo chart (1 batched call) | Alpaca IEX bars | — |
+| Live quotes | Yahoo | Alpaca IEX → Finnhub | FMP |
+| Analyst targets | Yahoo quoteSummary | FMP target summary | — |
+| Rating spread | **Finnhub trends** | Yahoo recommendations | — |
+| Analyst grade events (chips) | FMP per-firm grades¹ | Finnhub trend (derived) | — |
+| Options put/call + implied move | Yahoo chain (has OI) | Alpaca indicative snapshots | — |
+| Short % of float | Yahoo | FINRA short interest ÷ FMP float | — |
+| Earnings dates | **Finnhub calendar** | FMP calendar | Yahoo estimate (labelled) |
+| Headlines | **Finnhub company-news** | Yahoo news | — |
+| Sector / industry | Yahoo info | Finnhub profile2 (name + industry) | — |
+| Trading calendar / splits | Alpaca | FMP | weekday approximation |
+| Macro / filings / short volume | FRED / EDGAR / FINRA (the authorities) | — | — |
+| Social | StockTwits | — (Reddit needs keys) | — |
+
+¹ The one FMP-first exception: per-firm upgrade/downgrade events exist only
+on FMP's free tier — Finnhub's trend is an aggregate, so it serves as the
+derived backup rather than the primary.
+
+Universe backups pass a junk filter (sub-dollar paper, warrant/unit
+tickers, dotted classes) so a failover day's cohort still resembles the
+population every historical hit rate was computed on.
+
+### Why an outage cannot silently degrade the board
+
+- Any Yahoo 429/401 arms a shared cooldown; traffic diverts to the
+  backup instead of retrying, so a limiter event *reduces* pressure.
+- Every fallback runs at **every** failure exit of a producer, and
+  provider failures keep their error identity — a transient outage can
+  never cache as hours of structural "no data".
+- Keyed providers carry per-symbol-per-day request claims (atomic, with
+  the day's answer replayed on cache expiry), so no code path can spend
+  the same budget twice.
+- If a factor still goes missing board-wide, a banner says so, names the
+  factor, and the affected rows show reduced input counts — never
+  silently lowered scores.
 
 ### Insider filings and balance-sheet posture
 
@@ -127,6 +164,40 @@ institutional view shows **FINRA's daily reported short-sale share of volume**
 (T+1, labelled). A `health-watch` Action probes the live source health every
 30 minutes and opens/closes a GitHub issue on failures; a daily digest issue
 posts the top of the board. `/methodology` serves this document in-app.
+
+## 📈 Paper trading: the full lifecycle, rehearsed nightly
+
+A paper Alpaca account trades the board's rules with simulated money so
+the strategy earns (or is spared) real dollars on evidence. Every
+constant below is a named rail shared with any future live mode.
+
+**Entry** (nightly snapshot, 9:15 PM ET, only when the market is closed):
+top qualifying scores become whole-share **limit orders at the recorded
+reference +2%**, extended-hours eligible, day TIF — working from 4:00 AM
+pre-market, filling anywhere inside the band. A gap beyond the band is a
+recorded miss, never a chased fill. Entries refuse when equity is down
+2% on the day (daily-loss halt) or the name was exited within the last
+5 sessions (re-entry cooldown).
+
+**Exit** (nightly sweep, before any new risk): every position holds a
+GTC take-profit at **ref +5%** — the level its odds were measured
+against; positions exit at the next open when the thesis **expires**
+(7 sessions, the measured window) or **breaks** (close ≤ ref −8%,
+close-basis so intraday wicks cannot shake positions out). Every action
+is idempotent and recorded with its reason in the snapshot.
+
+**Graduation path**: the calibration and slippage record accumulates in
+`data/snapshots/`. If predicted odds resolve near their stated rates and
+fill slippage stays tolerable for several weeks, the same code — same
+rails, same constants — points at live keys by deliberate manual arming.
+Nothing flips automatically.
+
+### Earnings chips
+
+Rows flag confirmed earnings dates (FMP/Finnhub only — never estimates):
+**hot orange** when the print lands within 7 *trading sessions* (inside
+the bounce window: a binary event the odds were not conditioned on), calm
+gray out to the ~90-day confirmed horizon for medium-term context.
 
 ## 📋 Reading the table in one glance
 
@@ -267,8 +338,8 @@ Rank correlation between score and realised return: **+0.032 (5d), +0.043 (20d),
 
 The board's five numbers answer five different questions, so none of them is
 the right default ordering on its own. The **Rank** column is one stated
-formula for "which row first": `0.40 × setup score + 0.35 × 7-day bounce odds
-+ 0.25 × downside shape` (the median outcome of the windows that MISSED,
+formula for "which row first": `0.40 × setup score + 0.35 × 7-day
+bounce odds + 0.25 × downside shape` (the median outcome of the windows that MISSED,
 clipped to 0…−10% — the half of expected value the bounce odds don't already
 carry, so no component is double-counted). Missing components impute a
 neutral 0.5 rather than renormalising: a row can never outrank another by

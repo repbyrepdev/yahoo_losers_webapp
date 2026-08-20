@@ -3437,7 +3437,35 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
             </div>
             {% endif %}
             <div class="section">
-                <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
+                <div style="border: 1px solid var(--border-color); border-radius: 12px; padding: 16px 18px; margin: 14px 0;">
+                <h2 style="text-align: left; margin-top: 0;">📈 Paper Account <span style="font-size: 13px; font-weight: 400; color: var(--text-secondary);">(simulated money — rehearsing the board's rules)</span></h2>
+                {% if paper_account %}
+                <div style="display: flex; gap: 26px; flex-wrap: wrap; align-items: baseline; margin-bottom: 10px;">
+                    <div><span style="font-size: 22px; font-weight: 700;">${{ '%.2f' % paper_account.equity }}</span> <span style="color: var(--text-secondary); font-size: 12px;">equity</span></div>
+                    {% if paper_account.day_change_pct is not none %}<div style="color: {{ '#2ecc71' if paper_account.day_change_pct >= 0 else '#e74c3c' }}; font-weight: 600;">{{ '%+.2f' % paper_account.day_change_pct }}% today</div>{% endif %}
+                    <div style="color: var(--text-secondary); font-size: 13px;">cash ${{ '%.2f' % paper_account.cash }}</div>
+                    <div style="color: var(--text-secondary); font-size: 12px;">as of {{ paper_account.as_of }}</div>
+                </div>
+                {% if paper_account.positions %}
+                <div class="table-wrap"><table style="width: 100%;">
+                    <thead><tr><th>Symbol</th><th>Qty</th><th>Entry</th><th>Now</th><th>P/L</th><th>Value</th></tr></thead>
+                    <tbody>
+                    {% for p in paper_account.positions %}
+                    <tr><td><strong>{{ p.symbol }}</strong></td><td>{{ p.qty }}</td><td>${{ '%.2f' % p.entry }}</td><td>${{ '%.2f' % p.current }}</td>
+                        <td style="color: {{ '#2ecc71' if p.upl_pct >= 0 else '#e74c3c' }};">{{ '%+.2f' % p.upl_pct }}%</td><td>${{ '%.2f' % p.market_value }}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+                {% else %}<div style="color: var(--text-secondary);">No open positions. Entries submit nightly for qualifying scores; fills work from pre-market inside the +2% band.</div>{% endif %}
+                {% if paper_account.working_orders %}
+                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">Working: {% for o in paper_account.working_orders %}{{ o.side }} {{ o.symbol }}{% if o.limit_price %} @ ${{ o.limit_price }}{% endif %}{{ '' if loop.last else ' · ' }}{% endfor %}</div>
+                {% endif %}
+                <div style="font-size: 11px; color: var(--text-secondary); margin-top: 10px;">Rails: entry limit ref+2% (extended hours) · take-profit +5% · stop close&le;ref&minus;8% · 7-session expiry · max 3 positions · 2% daily-loss halt · 5-session re-entry cooldown. Full record on the <a href="/track-record" style="color: inherit;">track record</a>.</div>
+                {% else %}
+                <div style="color: var(--text-secondary);">Paper account warming{% if paper_account_reason %} ({{ paper_account_reason }}){% endif %} — first refresh fills this in.</div>
+                {% endif %}
+            </div>
+            <h2 style="text-align: left;">🔍 Short Term Recovery Recommendations</h2>
                 <p style="font-size: 12px; color: var(--text-secondary); margin: 4px 0 10px;">Odds = how often that recovery actually happened in this stock's own history. Hover any number for its evidence. Click a column header to sort.</p>
 
                 {% if recommendations %}
@@ -3786,6 +3814,14 @@ def index():
             # Recomputed at serve time: the policy line must describe the
             # phase the reader is in, and old cached payloads predate the key.
             cached_results['refresh_policy'] = page_cache_policy()['description']
+            try:
+                import sources
+                _paper = sources.paper_account_overview()
+                cached_results['paper_account'] = _paper.value if _paper.ok else None
+                cached_results['paper_account_reason'] = None if _paper.ok else _paper.reason
+            except Exception as _e:
+                cached_results.setdefault('paper_account', None)
+                cached_results['paper_account_reason'] = f"unavailable ({type(_e).__name__})"
             response = make_response(render_template_string(html_template, **cached_results))
             response.headers['ETag'] = etag
             return add_cache_headers(response, max_age=60)
@@ -3815,6 +3851,13 @@ def index():
         market_analysis = get_comprehensive_market_analysis()
         
         # Prepare template variables
+        try:
+            import sources
+            _paper = sources.paper_account_overview()
+            paper_account = _paper.value if _paper.ok else None
+            paper_account_reason = None if _paper.ok else _paper.reason
+        except Exception as _e:
+            paper_account, paper_account_reason = None, f"unavailable ({type(_e).__name__})"
         template_vars = {
             'timestamp': datetime.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d %I:%M:%S %p %Z'),
             'prices_as_of': _oldest_price_fetch([s['Symbol'] for s in losers_data if s.get('Symbol')]),
@@ -3828,6 +3871,8 @@ def index():
             'all_analysis': all_analysis,
             'recommendations': recommendations,
             'status': losers_status,
+            'paper_account': paper_account,
+            'paper_account_reason': paper_account_reason,
             'cache_info': cache_status,
             'market_status': market_status,
             'market_analysis': market_analysis
@@ -4103,6 +4148,16 @@ def track_record_page():
     <p class="sub">Recording began <strong>{record['first_date'] or 'today'}</strong> &middot;
     {record['snapshot_days']} snapshot day(s) &middot; model v{record['model_version']} &middot;
     picks are scores &ge; {record['pick_threshold']:.0f} &middot; {record['pending']} pick(s) awaiting a forward price.</p>
+    <div style="border: 1px solid var(--border-color, #333); border-radius: 10px; padding: 14px 16px; margin: 14px 0; font-size: 14px; line-height: 1.6;">
+      <strong>How grades are made.</strong> Every board pick and drill-in claim is
+      recorded the day it was shown, then graded against what prices actually did:
+      a target counts as hit when the day's <em>high</em> touches it inside the
+      claim's window (split-corrected, one representative claim per symbol and
+      horizon per day). Partial price coverage decides nothing. Paper-account
+      entries and exits (limit at ref+2%, take-profit +5%, close-basis stop
+      &minus;8%, 7-session expiry) land in the same nightly snapshots, so fills
+      and slippage are graded by the same record that made the claims.
+    </div>
     <h2>~7 calendar days</h2>{agg(7)}
     <h2>~30 calendar days</h2>{agg(30)}
     <p class="sub">The dead-cat baseline is this app's real null hypothesis: buying every loser

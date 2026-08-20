@@ -1425,3 +1425,98 @@ class TestPaperLifecycle:
         act = result.value["actions"][0]
         assert act["action"] == "exit-blocked"
         assert "cancel failed" in act["reason"]
+
+
+class TestPaperAccountOverview:
+    def _routes(self, account=None, positions=None, orders=None):
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/account" in url:
+                return FakeResponse(account or {"equity": "101250.50", "last_equity": "100000",
+                                               "cash": "24000.25"})
+            if "/v2/positions" in url:
+                return FakeResponse(positions if positions is not None else [
+                    {"symbol": "ZZPA1", "qty": "13", "avg_entry_price": "75.01",
+                     "current_price": "76.5", "unrealized_plpc": "0.0199",
+                     "market_value": "994.5"}])
+            if "/v2/orders" in url:
+                return FakeResponse(orders or [
+                    {"symbol": "ZZPA1", "side": "sell", "type": "limit",
+                     "limit_price": "78.76", "client_order_id": "snap-tp-2026-08-20-ZZPA1"}])
+            raise AssertionError(f"unrouted {url}")
+        return fake
+
+    def test_overview_shape_and_math(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", self._routes())
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_account_overview()
+        assert result.ok
+        v = result.value
+        assert v["equity"] == 101250.50 and v["cash"] == 24000.25
+        assert v["day_change_pct"] == 1.25
+        pos = v["positions"][0]
+        assert pos["qty"] == 13 and pos["upl_pct"] == 1.99
+        assert v["working_orders"][0]["limit_price"] == "78.76"
+
+    def test_fractional_quantity_preserved(self, monkeypatch):
+        monkeypatch.setattr(sources.requests, "get", self._routes(positions=[
+            {"symbol": "ZZPA2", "qty": "0.25", "avg_entry_price": "100",
+             "current_price": "101", "unrealized_plpc": "0.01",
+             "market_value": "25.25"}]))
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_account_overview()
+        assert result.ok
+        assert result.value["positions"][0]["qty"] == 0.25
+
+    def test_failure_keeps_identity(self, monkeypatch):
+        def dying(url, params=None, headers=None, timeout=None, **kw):
+            raise RuntimeError("connection refused by paper-api")
+        monkeypatch.setattr(sources.requests, "get", dying)
+        market_data._cache._local.pop("src:paper-account", None)
+        result = sources.paper_account_overview()
+        assert not result.ok
+        # full detail surfaces, not just the class name
+        assert "RuntimeError" in result.reason and "connection refused" in result.reason
+
+
+class TestTechnicalsFailover:
+    def test_alpaca_bars_serve_when_yahoo_dies(self, monkeypatch):
+        """The README's promised history failover, now real (CR, PR 75)."""
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        import datetime as _dt
+        base = _dt.date(2026, 2, 2)
+        bars = []
+        d = base
+        px = 50.0
+        while len(bars) < 60:
+            if d.weekday() < 5:
+                bars.append({"t": d.isoformat() + "T05:00:00Z", "o": px, "h": px * 1.01,
+                             "l": px * 0.99, "c": px, "v": 100000})
+                # oscillate: an all-gains series degenerates Wilder RSI to NaN
+                px *= 1.004 if len(bars) % 2 else 0.998
+            d += _dt.timedelta(days=1)
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.live(bars, "alpaca:bars(iex)"))
+        market_data._cache._local.pop("tech:ZZTF20", None)
+        result = market_data.technicals("ZZTF20")
+        assert result.ok
+        assert result.source == "alpaca:bars(iex)"
+        assert 0 <= result.value["rsi14"] <= 100
+        assert result.value["bars"] >= 30
+
+    def test_dual_history_failure_keeps_identity(self, monkeypatch):
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable(
+                                "alpaca:bars(iex)", "down"))
+        market_data._cache._local.pop("tech:ZZTF21", None)
+        result = market_data.technicals("ZZTF21")
+        assert not result.ok
+        assert "RuntimeError" in result.reason
