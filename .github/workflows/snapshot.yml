@@ -80,6 +80,26 @@ jobs:
               if r.get('analyst_target_mean') and r.get('price'):
                   upside = f"{(r['analyst_target_mean']/r['price']-1)*100:+.1f}% ({r.get('analyst_count','?')} an.)"
               print(f"| {r['symbol']} | {r['score']:.1f} | {r.get('confidence','')} | {upside} |")
+          paper = snap.get('paper_orders') or {}
+          life = snap.get('paper_lifecycle') or {}
+          print("\n## Paper account events")
+          if isinstance(paper, dict) and paper.get('unavailable'):
+              print(f"- ⚠️ entries: {paper['unavailable']}")
+          for o in (paper.get('submitted') or []):
+              print(f"- 🟢 entry {o.get('symbol')}: {o.get('qty')} sh, limit {o.get('limit_price')} (ref {o.get('ref_price')}) — {o.get('status')}")
+          for f in (paper.get('failed') or []):
+              print(f"- ⛔ entry skipped {f.get('symbol')}: {f.get('reason')}")
+          if isinstance(life, dict) and life.get('unavailable'):
+              print(f"- ⚠️ lifecycle: {life['unavailable']}")
+          for a in (life.get('actions') or []):
+              icon = {'exit': '🔴', 'protective-pair': '🛡️', 'take-profit': '🛡️',
+                      'exit-blocked': '⚠️'}.get(a.get('action'), '•')
+              print(f"- {icon} {a.get('action')} {a.get('symbol')}: " +
+                    ", ".join(f"{k}={v}" for k, v in a.items() if k not in ('action', 'symbol')))
+          for p in (life.get('positions') or []):
+              print(f"- 📌 holding {p.get('symbol')}: {p.get('qty')} sh, ref {p.get('ref')}, session {p.get('sessions_held')}/7")
+          if not (paper.get('submitted') or paper.get('failed') or life.get('actions') or life.get('positions')):
+              print("- (no paper activity today)")
           print("\nScores measure similarity to historical mean-reversion setups — "
                 "not return forecasts, not advice. Full record: "
                 "https://yahoo-losers-webapp.onrender.com/track-record")

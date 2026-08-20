@@ -1268,10 +1268,53 @@ class TestPaperLifecycle:
         result = sources.paper_manage_positions()
         assert result.ok
         assert len(posted) == 1
-        # ref = 20.40 / 1.02 = 20.0 -> TP at 21.0
-        assert posted[0]["limit_price"] == "21.0"
+        # ref = 20.40 / 1.02 = 20.0 -> TP 21.0, catastrophe floor 17.0
+        assert posted[0]["order_class"] == "oco"
+        assert posted[0]["take_profit"]["limit_price"] == "21.0"
+        assert posted[0]["stop_loss"]["stop_price"] == "17.0"
         assert posted[0]["time_in_force"] == "gtc"
         assert posted[0]["client_order_id"] == "snap-tp-2026-08-18-ZZLC1"
+
+    def test_oco_sibling_cancel_counts_as_cancelled(self, monkeypatch):
+        posted = []
+        def fake_get(url, params=None, headers=None, timeout=None, **kw):
+            if "/v2/positions" in url:
+                return FakeResponse([{"symbol": "ZZLC8", "qty": "5"}])
+            if "/v2/orders" in url and (params or {}).get("status") == "open":
+                return FakeResponse([{"id": "legA", "symbol": "ZZLC8", "side": "sell"},
+                                     {"id": "legB", "symbol": "ZZLC8", "side": "sell"}])
+            if "/v2/orders" in url:
+                return FakeResponse([{"symbol": "ZZLC8", "side": "buy",
+                                      "client_order_id": "snap-2026-08-06-ZZLC8",
+                                      "filled_at": "2026-08-06T13:31:00Z",
+                                      "limit_price": "10.20"}])
+            if "/bars/latest" in url:
+                return FakeResponse({"bars": {"ZZLC8": {"c": 10.1}}})
+            raise AssertionError(f"unrouted {url}")
+        deletes = []
+        class Gone:
+            status_code = 404
+        class Ok:
+            status_code = 204
+        monkeypatch.setattr(sources.requests, "delete",
+                            lambda url, headers=None, timeout=None: (deletes.append(url),
+                                Ok() if "legA" in url else Gone())[1])
+        def fake_post(url, headers=None, timeout=None, json=None, **kw):
+            posted.append(json)
+            class R:
+                status_code = 200
+                text = "{}"
+                def raise_for_status(self): pass
+                def json(self): return {"status": "accepted"}
+            return R()
+        monkeypatch.setattr(sources.requests, "get", fake_get)
+        monkeypatch.setattr(sources.requests, "post", fake_post)
+        monkeypatch.setattr(sources, "_eastern_today",
+                            lambda: __import__("datetime").date(2026, 8, 20))
+        result = sources.paper_manage_positions()
+        assert result.ok
+        assert result.value["actions"][0]["action"] == "exit"
+        assert len(deletes) == 2 and posted[0]["side"] == "sell"
 
     def test_window_expiry_exits_at_next_open(self, monkeypatch):
         posted, deleted = [], []
