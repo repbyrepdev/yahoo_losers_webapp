@@ -1669,6 +1669,10 @@ class TestHistoryThirdString:
         assert "429 Too Many Requests" in payload["detail"]
         assert "alpaca: a-down" in payload["detail"]
         assert "fmp: f-down" in payload["detail"]
+        # Pass-3 review: the Sourced the caller renders must carry the SAME
+        # chain, not just the exception name (technicals threads detail).
+        assert "alpaca: a-down" in result.reason
+        assert "fmp: f-down" in result.reason
 
     def test_fallback_exception_text_survives_for_ttl_classification(self, monkeypatch):
         """Verification review (Major): a rate-limit exception from a fallback
@@ -1705,6 +1709,20 @@ class TestFmpEodHygiene:
         monkeypatch.setattr(sources.requests, "get", _fake_get({
             "historical-price-eod/light": good + junk}))
         result = sources.fmp_eod_bars("ZZJ1")
+        assert result.ok
+        assert len(result.value) == len(good)
+
+    def test_null_items_and_bad_dates_skip_individually(self, monkeypatch):
+        """Pass-3 review: a null list item or unparseable date must cost one
+        row, not raise into the outer handler and reject the response."""
+        monkeypatch.setattr(sources, "get_secret", lambda name, **kw: "test-key")
+        good = [{"date": f"2026-0{m}-{d:02d}", "price": 10 + d * 0.1, "volume": 1000}
+                for m in (3, 4, 5) for d in range(1, 25)]
+        junk = [None, "a string", {"date": "06/01/2026", "price": 5.0, "volume": 1},
+                {"date": None, "price": 5.0, "volume": 1}]
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "historical-price-eod/light": good + junk}))
+        result = sources.fmp_eod_bars("ZZJ4")
         assert result.ok
         assert len(result.value) == len(good)
 

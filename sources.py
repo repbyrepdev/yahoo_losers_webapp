@@ -1570,7 +1570,15 @@ def fmp_eod_bars(symbol: str, days: int = 180) -> Sourced:
             def _skip(why):
                 skip_reasons[why] = skip_reasons.get(why, 0) + 1
             for r in (payload if isinstance(payload, list) else []):
-                if not r.get("date") or r.get("price") is None:
+                if not isinstance(r, dict):
+                    _skip("non-object")
+                    continue
+                try:
+                    date.fromisoformat(r.get("date") or "")
+                except (TypeError, ValueError):
+                    _skip("invalid date")
+                    continue
+                if r.get("price") is None:
                     _skip("missing field")
                     continue
                 # Convert inside the loop: one malformed value skips ONE
