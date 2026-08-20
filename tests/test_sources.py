@@ -1270,6 +1270,12 @@ class TestPaperLifecycle:
         assert len(posted) == 1
         # ref = 20.40 / 1.02 = 20.0 -> TP 21.0, catastrophe floor 17.0
         assert posted[0]["order_class"] == "oco"
+        # Probed live 2026-08-20: Alpaca accepts exactly this OCO shape --
+        # top-level type=limit with prices ONLY in the nested legs. Dropping
+        # type fails ("invalid order type"); adding a top-level limit_price
+        # is the other regression to guard against.
+        assert posted[0]["type"] == "limit"
+        assert "limit_price" not in posted[0]
         assert posted[0]["take_profit"]["limit_price"] == "21.0"
         assert posted[0]["stop_loss"]["stop_price"] == "17.0"
         assert posted[0]["time_in_force"] == "gtc"

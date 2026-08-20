@@ -878,8 +878,9 @@ def paper_manage_positions() -> Sourced:
                                            "time_in_force": "gtc",
                                            "client_order_id": cid})
                 if resp.status_code == 422 and "client_order_id" in resp.text:
-                    actions.append({"symbol": symbol, "action": "take-profit",
-                                    "status": "already-placed", "tp": tp_price})
+                    actions.append({"symbol": symbol, "action": "protective-pair",
+                                    "status": "already-placed", "tp": tp_price,
+                                    "catastrophe_stop": cat_price})
                 else:
                     resp.raise_for_status()
                     actions.append({"symbol": symbol, "action": "protective-pair",
