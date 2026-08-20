@@ -467,7 +467,7 @@ def _eastern_today() -> date:
     return datetime.now(ZoneInfo("America/New_York")).date()
 
 
-def paper_execute_picks(symbols: List[str]) -> Sourced:
+def paper_execute_picks(picks: List[dict]) -> Sourced:
     """Submit market-on-open PAPER orders for the day's top picks.
 
     Simulated money only: the endpoint is pinned to paper-api and anything
@@ -475,6 +475,11 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
     (time_in_force=opg), which matches how the snapshot's entry would really
     have been traded. Fills land in later snapshots as the measured-slippage
     track record.
+
+    Picks are {"symbol", "price"} dicts: Alpaca requires whole shares for
+    opg (notional means fractional, and "fractional orders must be DAY
+    orders" -- live rejection 2026-08-19), so each order is sized to the
+    nearest whole-share count under the target notional, minimum one share.
     """
     source = "alpaca:paper-orders"
     base = _alpaca_trading_base()   # raises on any non-paper endpoint
@@ -482,13 +487,26 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
     if headers is None:
         return Sourced.unavailable(source, "Alpaca keys not configured")
     submitted, failed = [], []
-    for symbol in [s.upper() for s in symbols][:PAPER_MAX_PICKS]:
+    for pick in picks:
+        # Validate BEFORE consuming a slot: an unpriceable high-ranked pick
+        # must not crowd out a valid lower-ranked one (CR, PR 67).
+        if len(submitted) >= PAPER_MAX_PICKS:
+            break
+        symbol = str(pick.get("symbol", "")).upper()
+        price = pick.get("price")
+        if not symbol:
+            continue
+        if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+            failed.append({"symbol": symbol,
+                           "reason": "no price to size the order"})
+            continue
+        qty = max(1, int(PAPER_NOTIONAL_PER_PICK // price))
         client_order_id = f"snap-{_eastern_today().isoformat()}-{symbol}"
         try:
             market_data._throttle()
             response = requests.post(
                 f"{base}/v2/orders", headers=headers, timeout=20,
-                json={"symbol": symbol, "notional": PAPER_NOTIONAL_PER_PICK,
+                json={"symbol": symbol, "qty": str(qty),
                       "side": "buy", "type": "market", "time_in_force": "opg",
                       # Deterministic per (day, symbol): a snapshot retry
                       # cannot double-submit -- Alpaca rejects the duplicate
@@ -496,12 +514,14 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
                       "client_order_id": client_order_id})
             if response.status_code == 422 and "client_order_id" in response.text:
                 submitted.append({"symbol": symbol, "order_id": client_order_id,
-                                  "status": "already-submitted"})
+                                  "status": "already-submitted", "qty": qty,
+                                  "ref_price": price})
                 continue
             response.raise_for_status()
             order = response.json()
             submitted.append({"symbol": symbol, "order_id": order.get("id"),
-                              "status": order.get("status")})
+                              "status": order.get("status"), "qty": qty,
+                              "ref_price": price})
         except Exception as e:
             # Keep the provider's words: "HTTPError" alone cost a debugging
             # round trip when every order bounced off the opg window rule.
@@ -512,7 +532,7 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
     if not submitted and failed:
         return Sourced.unavailable(source, f"all paper orders failed: {failed}")
     return Sourced.live({"submitted": submitted, "failed": failed,
-                         "notional_each": PAPER_NOTIONAL_PER_PICK,
+                         "target_notional_each": PAPER_NOTIONAL_PER_PICK,
                          "basis": "paper account, market-on-open, simulated money"},
                         source)
 

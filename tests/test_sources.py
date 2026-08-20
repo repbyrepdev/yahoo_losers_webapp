@@ -63,13 +63,16 @@ class TestPaperGuard:
             submitted.append(json)
             return FakeResponse({"id": f"o{len(submitted)}", "status": "accepted"})
         monkeypatch.setattr(sources.requests, "post", fake_post)
-        result = sources.paper_execute_picks(["AAA", "BBB", "CCC", "DDD"])
+        result = sources.paper_execute_picks(
+            [{"symbol": sym, "price": 151.30} for sym in ("AAA", "BBB", "CCC", "DDD")])
         assert result.ok
         assert len(submitted) == sources.PAPER_MAX_PICKS  # capped
         for order in submitted:
             assert order["time_in_force"] == "opg"
             assert order["type"] == "market"
-            assert order["notional"] == sources.PAPER_NOTIONAL_PER_PICK
+            # whole shares: Alpaca rejects fractional opg ("must be DAY")
+            assert order["qty"] == "6"
+            assert "notional" not in order
         assert "simulated money" in result.value["basis"]
 
 
@@ -676,7 +679,7 @@ class TestPaperWindowFix:
             def json(self):
                 return {}
         monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Resp())
-        result = sources.paper_execute_picks(["ZZPW1"])
+        result = sources.paper_execute_picks([{"symbol": "ZZPW1", "price": 10.0}])
         assert not result.ok
         assert "40310000" in result.reason or "opg" in result.reason
 
@@ -695,9 +698,42 @@ class TestPaperWindowFix:
             captured.update(json or {})
             return Resp()
         monkeypatch.setattr(sources.requests, "post", post)
-        result = sources.paper_execute_picks(["ZZPW2"])
+        result = sources.paper_execute_picks([{"symbol": "ZZPW2", "price": 10.0}])
         assert result.ok
         assert captured["client_order_id"] == "snap-2026-08-19-ZZPW2"
+
+    def test_expensive_stock_still_buys_one_share(self, monkeypatch):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "{}"
+            def raise_for_status(self): pass
+            def json(self): return {"id": "x", "status": "accepted"}
+
+        def post(url, headers=None, timeout=None, json=None, **kw):
+            captured.update(json or {})
+            return Resp()
+        monkeypatch.setattr(sources.requests, "post", post)
+        result = sources.paper_execute_picks(
+            [{"symbol": "ZZPW3", "price": sources.PAPER_NOTIONAL_PER_PICK * 3}])
+        assert result.ok
+        assert captured["qty"] == "1"
+
+    def test_missing_price_refuses_that_pick_only(self, monkeypatch):
+        class Resp:
+            status_code = 200
+            text = "{}"
+            def raise_for_status(self): pass
+            def json(self): return {"id": "x", "status": "accepted"}
+        monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Resp())
+        result = sources.paper_execute_picks(
+            [{"symbol": "ZZPW4", "price": None},
+             {"symbol": "ZZPW5", "price": 20.0}])
+        assert result.ok
+        assert [o["symbol"] for o in result.value["submitted"]] == ["ZZPW5"]
+        assert result.value["failed"][0]["symbol"] == "ZZPW4"
+        assert "no price" in result.value["failed"][0]["reason"]
 
 class TestShortFloatBackup:
     def test_composes_finra_short_over_fmp_float(self, monkeypatch):
@@ -860,3 +896,41 @@ class TestCacheContracts:
         first.join()
         assert results["winner"].ok and results["winner"].value["mean"] == 42.0
         assert results["loser"].ok and results["loser"].value["mean"] == 42.0
+
+    def test_unpriceable_pick_does_not_burn_a_slot(self, monkeypatch):
+        """CR PR67: validation must precede the pick cap, or a bad top pick
+        excludes a valid lower-ranked one."""
+        submitted = []
+
+        class Resp:
+            status_code = 200
+            text = "{}"
+            def raise_for_status(self): pass
+            def json(self): return {"id": "x", "status": "accepted"}
+
+        def post(url, headers=None, timeout=None, json=None, **kw):
+            submitted.append(json["symbol"])
+            return Resp()
+        monkeypatch.setattr(sources.requests, "post", post)
+        result = sources.paper_execute_picks(
+            [{"symbol": "BAD1", "price": None},
+             {"symbol": "OK1", "price": 10.0},
+             {"symbol": "OK2", "price": 10.0},
+             {"symbol": "OK3", "price": 10.0},
+             {"symbol": "OK4", "price": 10.0}])
+        assert result.ok
+        assert submitted == ["OK1", "OK2", "OK3"]
+        assert result.value["failed"][0]["symbol"] == "BAD1"
+
+    def test_duplicate_retry_keeps_qty_and_ref_price(self, monkeypatch):
+        class Dup:
+            status_code = 422
+            text = '{"message":"client_order_id must be unique"}'
+            def raise_for_status(self): pass
+            def json(self): return {}
+        monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Dup())
+        result = sources.paper_execute_picks([{"symbol": "ZZDR1", "price": 25.0}])
+        assert result.ok
+        row = result.value["submitted"][0]
+        assert row["status"] == "already-submitted"
+        assert row["qty"] == 40 and row["ref_price"] == 25.0
