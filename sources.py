@@ -487,7 +487,11 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
     if headers is None:
         return Sourced.unavailable(source, "Alpaca keys not configured")
     submitted, failed = [], []
-    for pick in picks[:PAPER_MAX_PICKS]:
+    for pick in picks:
+        # Validate BEFORE consuming a slot: an unpriceable high-ranked pick
+        # must not crowd out a valid lower-ranked one (CR, PR 67).
+        if len(submitted) >= PAPER_MAX_PICKS:
+            break
         symbol = str(pick.get("symbol", "")).upper()
         price = pick.get("price")
         if not symbol:
@@ -510,7 +514,8 @@ def paper_execute_picks(picks: List[dict]) -> Sourced:
                       "client_order_id": client_order_id})
             if response.status_code == 422 and "client_order_id" in response.text:
                 submitted.append({"symbol": symbol, "order_id": client_order_id,
-                                  "status": "already-submitted"})
+                                  "status": "already-submitted", "qty": qty,
+                                  "ref_price": price})
                 continue
             response.raise_for_status()
             order = response.json()

@@ -896,3 +896,41 @@ class TestCacheContracts:
         first.join()
         assert results["winner"].ok and results["winner"].value["mean"] == 42.0
         assert results["loser"].ok and results["loser"].value["mean"] == 42.0
+
+    def test_unpriceable_pick_does_not_burn_a_slot(self, monkeypatch):
+        """CR PR67: validation must precede the pick cap, or a bad top pick
+        excludes a valid lower-ranked one."""
+        submitted = []
+
+        class Resp:
+            status_code = 200
+            text = "{}"
+            def raise_for_status(self): pass
+            def json(self): return {"id": "x", "status": "accepted"}
+
+        def post(url, headers=None, timeout=None, json=None, **kw):
+            submitted.append(json["symbol"])
+            return Resp()
+        monkeypatch.setattr(sources.requests, "post", post)
+        result = sources.paper_execute_picks(
+            [{"symbol": "BAD1", "price": None},
+             {"symbol": "OK1", "price": 10.0},
+             {"symbol": "OK2", "price": 10.0},
+             {"symbol": "OK3", "price": 10.0},
+             {"symbol": "OK4", "price": 10.0}])
+        assert result.ok
+        assert submitted == ["OK1", "OK2", "OK3"]
+        assert result.value["failed"][0]["symbol"] == "BAD1"
+
+    def test_duplicate_retry_keeps_qty_and_ref_price(self, monkeypatch):
+        class Dup:
+            status_code = 422
+            text = '{"message":"client_order_id must be unique"}'
+            def raise_for_status(self): pass
+            def json(self): return {}
+        monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Dup())
+        result = sources.paper_execute_picks([{"symbol": "ZZDR1", "price": 25.0}])
+        assert result.ok
+        row = result.value["submitted"][0]
+        assert row["status"] == "already-submitted"
+        assert row["qty"] == 40 and row["ref_price"] == 25.0

@@ -3946,8 +3946,10 @@ def api_snapshot():
                              if isinstance(r.get("score"), (int, float))
                              and r["score"] >= MIN_REBOUND_SCORE),
                             key=lambda r: r["score"], reverse=True)
+        # Full ranked list: the executor validates prices first and stops
+        # after PAPER_MAX_PICKS valid orders, so a bad price cannot burn a slot.
         top = [{"symbol": r["symbol"], "price": r.get("price")}
-               for r in qualifying[:sources.PAPER_MAX_PICKS]]
+               for r in qualifying]
         if top:
             orders = sources.paper_execute_picks(top)
             snapshot["paper_orders"] = (orders.value if orders.ok
