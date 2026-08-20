@@ -216,3 +216,23 @@ class TestSystemicMissingFactorBanner:
                 + [self._row(60, [])] * 4)  # exactly 80% of the board
         degraded, note = app.degraded_state(rows)
         assert degraded is True and "Options positioning" in note
+
+
+class TestEarningsChip:
+    def test_confirmed_date_in_window_flags(self, monkeypatch):
+        import app as app_mod
+        import market_data
+        market_data._cache.set("src:earnings:ZZEC1", {"ok": True, "date": "2026-08-25"}, 60)
+        import tracking
+        from datetime import date as _date
+        monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
+        assert app_mod._earnings_in_window("ZZEC1", 7) == "2026-08-25"
+
+    def test_far_date_does_not_flag(self, monkeypatch):
+        import app as app_mod
+        import market_data
+        market_data._cache.set("src:earnings:ZZEC2", {"ok": True, "date": "2026-11-03"}, 60)
+        import tracking
+        from datetime import date as _date
+        monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
+        assert app_mod._earnings_in_window("ZZEC2", 7) is None
