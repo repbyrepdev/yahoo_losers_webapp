@@ -5207,7 +5207,26 @@ def _next_confirmed_earnings(symbol):
     today = tracking.trading_date_today()
     if when < today:
         return None
-    return when.isoformat(), (when - today).days
+    # The hot/calm boundary is TRADING sessions, matching the bounce window
+    # it warns about: 11 calendar days across two weekends is still inside
+    # 7 sessions (CR, PR 72). Cached exchange calendar when warm; weekday
+    # count otherwise -- an honest approximation, never a render-path fetch.
+    import sources as _src
+    from datetime import timedelta as _td
+    try:
+        calendar_days = _src.trading_days_set(cache_only=True) or set()
+    except Exception:
+        calendar_days = set()
+    sessions = 0
+    cursor = today
+    while cursor < when:
+        cursor += _td(days=1)
+        if calendar_days:
+            if cursor.isoformat() in calendar_days:
+                sessions += 1
+        elif cursor.weekday() < 5:
+            sessions += 1
+    return when.isoformat(), sessions
 
 
 def _earnings_in_window(symbol, horizon_days):

@@ -249,7 +249,7 @@ class TestEarningsChip:
                                {"ok": True, "date": "2026-10-19"}, 60)
         monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
         nxt = app_mod._next_confirmed_earnings("ZZEC3")
-        assert nxt == ("2026-10-19", 60)
+        assert nxt[0] == "2026-10-19" and nxt[1] > 7
 
     def test_past_date_yields_nothing(self, monkeypatch):
         import app as app_mod
@@ -261,3 +261,31 @@ class TestEarningsChip:
                                {"ok": True, "date": "2026-08-01"}, 60)
         monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
         assert app_mod._next_confirmed_earnings("ZZEC4") is None
+
+    def test_weekend_crossing_print_is_still_hot(self, monkeypatch):
+        """CR PR72: Aug 31 is 11 calendar days from Aug 20 but only 7 trading
+        sessions -- it must classify hot, not calm."""
+        import app as app_mod
+        import market_data
+        import sources as _src
+        import tracking
+        from datetime import date as _date
+        monkeypatch.setattr(_src, "trading_days_set", lambda cache_only=True: set())
+        market_data._cache.set(_src.earnings_cache_key("ZZEC5"),
+                               {"ok": True, "date": "2026-08-31"}, 60)
+        monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
+        nxt = app_mod._next_confirmed_earnings("ZZEC5")
+        assert nxt == ("2026-08-31", 7)   # 7 sessions -> hot boundary
+
+    def test_true_far_date_counts_sessions(self, monkeypatch):
+        import app as app_mod
+        import market_data
+        import sources as _src
+        import tracking
+        from datetime import date as _date
+        monkeypatch.setattr(_src, "trading_days_set", lambda cache_only=True: set())
+        market_data._cache.set(_src.earnings_cache_key("ZZEC6"),
+                               {"ok": True, "date": "2026-10-19"}, 60)
+        monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
+        d, sessions = app_mod._next_confirmed_earnings("ZZEC6")
+        assert d == "2026-10-19" and sessions > 7
