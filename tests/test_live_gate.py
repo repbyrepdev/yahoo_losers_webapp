@@ -112,3 +112,72 @@ class TestLiveArming:
         base, headers = sources._alpaca_trading_context()
         assert base == "https://paper-api.alpaca.markets"
         assert headers["APCA-API-KEY-ID"] == "val-ALPACA_API_KEY"
+
+
+class TestGraduationSection:
+    def test_failure_shows_escaped_detail(self, monkeypatch):
+        """Verification review: the page must show the real cause, escaped."""
+        import app as app_mod
+        def boom():
+            raise RuntimeError("boom <disk>")
+        monkeypatch.setattr(app_mod.tracking, "live_readiness", boom)
+        html = app_mod._graduation_section()
+        assert "RuntimeError: boom &lt;disk&gt;" in html
+        assert "<disk>" not in html
+
+    def test_scoreboard_names_its_sources(self):
+        import app as app_mod
+        html = app_mod._graduation_section()
+        assert "data/snapshots/" in html
+        assert "calibration record" in html
+
+
+class TestInspectorPage:
+    def _client(self, monkeypatch, close=None, reason=None):
+        import app as app_mod
+        monkeypatch.setattr(app_mod.tracking, "_load_snapshots", lambda d=None: [])
+        if close is not None:
+            fake = app_mod.market_data.Sourced.live(
+                {"close": close}, "yfinance:history")
+        else:
+            fake = app_mod.market_data.Sourced.unavailable(
+                "yfinance:history", reason or "cold")
+        monkeypatch.setattr(app_mod.market_data, "technicals",
+                            lambda sym, allow_fetch=True: fake)
+        app_mod.request_counts.clear()
+        return app_mod.app.test_client()
+
+    def test_catastrophe_floor_is_an_evaluated_state(self, monkeypatch):
+        client = self._client(monkeypatch, close=84.0)
+        page = client.get("/inspect/ZZI1?basis=100").get_data(as_text=True)
+        assert "catastrophe floor breached" in page
+
+    def test_close_basis_stop_between_cat_and_stop(self, monkeypatch):
+        client = self._client(monkeypatch, close=90.0)
+        page = client.get("/inspect/ZZI2?basis=100").get_data(as_text=True)
+        assert "close-basis stop breached" in page
+        assert "catastrophe floor breached" not in page
+
+    def test_unavailable_close_shows_reason_and_source(self, monkeypatch):
+        client = self._client(monkeypatch, reason="429 rate limited")
+        page = client.get("/inspect/ZZI3").get_data(as_text=True)
+        assert "no cached close" in page
+        assert "429 rate limited" in page
+        assert "yfinance:history" in page
+
+    def test_symbol_path_cannot_carry_markup(self, monkeypatch):
+        client = self._client(monkeypatch, close=10.0)
+        page = client.get("/inspect/%3Cimg%20src=x%3E").get_data(as_text=True)
+        assert "<img" not in page
+
+    def test_route_is_rate_limited(self, monkeypatch):
+        import app as app_mod
+        import time as _time
+        client = self._client(monkeypatch, close=10.0)
+        app_mod.request_counts["127.0.0.1"] = [
+            _time.time()] * app_mod.MAX_REQUESTS_PER_MINUTE
+        try:
+            resp = client.get("/inspect/ZZI4")
+            assert resp.status_code == 429
+        finally:
+            app_mod.request_counts.clear()

@@ -1298,8 +1298,9 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
                 else:
                     fallback_reasons.append(f"alpaca: {fallback.reason}")
             except Exception as e:
-                fallback_reasons.append(f"alpaca: {type(e).__name__}")
-                logger.info(f"alpaca bars fallback failed for {symbol}: {type(e).__name__}")
+                detail = f"{type(e).__name__}: {e}"
+                fallback_reasons.append(f"alpaca: {detail}")
+                logger.info(f"alpaca bars fallback failed for {symbol}: {detail}")
             if hist is None or hist.empty or len(hist) < 30:
                 # Third string runs after EVERY Alpaca exit -- refusal or
                 # exception alike (doctrine: fallbacks at every exit).
@@ -1314,8 +1315,9 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
                     else:
                         fallback_reasons.append(f"fmp: {third.reason}")
                 except Exception as e:
-                    fallback_reasons.append(f"fmp: {type(e).__name__}")
-                    logger.info(f"fmp eod fallback failed for {symbol}: {type(e).__name__}")
+                    detail = f"{type(e).__name__}: {e}"
+                    fallback_reasons.append(f"fmp: {detail}")
+                    logger.info(f"fmp eod fallback failed for {symbol}: {detail}")
         if hist is None or hist.empty or len(hist) < 30:
             chain = "; ".join(fallback_reasons) if fallback_reasons else "no fallback attempted"
             if yahoo_error is not None:

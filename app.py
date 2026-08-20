@@ -1,6 +1,7 @@
 from flask import Flask, render_template_string, render_template, request, jsonify, g, make_response
 from flask_compress import Compress
 from flask_cors import CORS
+import re
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -4055,8 +4056,9 @@ def _graduation_section():
         r = tracking.live_readiness()
     except Exception as e:
         logger.warning(f"live_readiness failed: {type(e).__name__}: {e}")
+        from html import escape as _esc
         return (f"<p>Graduation status unavailable "
-                f"({type(e).__name__}: recorded in server logs).</p>")
+                f"({_esc(f'{type(e).__name__}: {e}')}).</p>")
     rows = ""
     for c in r["criteria"]:
         mark = "✅" if c["met"] else "⏳"
@@ -4069,7 +4071,10 @@ def _graduation_section():
             f"— these thresholds are code (tracking.live_readiness), not judgment. "
             f"Arming additionally requires live keys and an explicit human-set flag.</p>"
             f"<table><thead><tr><th>Criterion</th><th>Actual</th><th>Required</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table>")
+            f"<tbody>{rows}</tbody></table>"
+            f"<p style='color:#8b949e;font-size:13px;'>Sources: resolved predictions and "
+            f"Brier from the calibration record (committed snapshots scored against realized "
+            f"closes); graded fills and continuity from the snapshot files in data/snapshots/.</p>")
 
 
 def _calibration_section():
@@ -4126,13 +4131,17 @@ TRACK_RECORD_CACHE_SECONDS = 600
 
 
 @app.route('/inspect/<symbol>')
+@rate_limit(MAX_REQUESTS_PER_MINUTE)
 def inspect_position(symbol):
     """The pick-investigation viewport: recorded claims for a symbol, the
     windows still open, current cached state, and what the rules would do
     for a given basis. Everything shown is recorded or cached -- this page
     fetches nothing and recommends nothing."""
     import sources as _src
-    symbol = symbol.upper()[:6]
+    from html import escape as _hesc
+    # Path segment goes into raw HTML below -- constrain to ticker
+    # characters so no markup can ride in on the URL.
+    symbol = re.sub(r"[^A-Z0-9.\-]", "", symbol.upper())[:6]
     try:
         basis = float(request.args.get("basis", 0) or 0)
     except ValueError:
@@ -4166,6 +4175,9 @@ def inspect_position(symbol):
         if close:
             if close >= tp:
                 state = f"take-profit level reached (close {close} ≥ {tp})"
+            elif close <= cat:
+                state = (f"catastrophe floor breached (close {close} ≤ {cat}) — "
+                         f"the broker-resident GTC stop would already have fired intraday")
             elif close <= stop:
                 state = f"close-basis stop breached (close {close} ≤ {stop}) — rules would exit at next open"
             elif sessions >= _src.PAPER_MAX_SESSIONS:
@@ -4183,7 +4195,7 @@ def inspect_position(symbol):
     <h1>🔎 {symbol}</h1>
     <p>Recorded entry-day: <strong>{entry_day or 'not found in the snapshot record'}</strong>
     {f'· {sessions} sessions ago' if entry_day else ''}
-    {f'· current close {close} <span style="color:#8b949e;">[{tech.source}]</span>' if close else '· no cached close'}</p>
+    {f'· current close {close} <span style="color:#8b949e;">[{tech.source}]</span>' if close else f'· no cached close <span style="color:#8b949e;">({_hesc(tech.source)}: {_hesc(tech.reason or "cold cache — not yet fetched this session")})</span>'}</p>
     {rails_html}
     <h2>Recorded claims <span style="font-size:13px;color:#8b949e;">[source: snapshot {entry_day or "—"}, committed to data/snapshots/]</span></h2>
     {'<table><thead><tr><th>Claim</th><th>Odds</th><th>Target</th><th>Window</th></tr></thead><tbody>' + claims_html + '</tbody></table>' if claims_html else '<p>No recorded predictions for this symbol in the snapshot record.</p>'}

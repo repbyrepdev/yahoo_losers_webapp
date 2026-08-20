@@ -1549,9 +1549,14 @@ def fmp_eod_bars(symbol: str, days: int = 180) -> Sourced:
         answer_key = f"src:eod:answer:{symbol.upper()}:{day}"
         if not market_data._cache.claim_once(
                 f"src:eod:{symbol.upper()}:{day}", 24 * 60 * 60):
-            replay = market_data._cache.get(answer_key)
-            if replay is not None:
-                return replay
+            # Same bounded replay wait as the other day-stamped FMP
+            # producers: the winner is probably mid-request, so poll for
+            # its stored answer before conceding unavailable.
+            for _ in range(6):
+                replay = market_data._cache.get(answer_key)
+                if replay is not None:
+                    return replay
+                time.sleep(0.5)
             return {"ok": False, "reason": "fmp eod request in flight"}
         def _remember(result):
             market_data._cache.set(answer_key, result, 24 * 60 * 60)
@@ -1561,28 +1566,44 @@ def fmp_eod_bars(symbol: str, days: int = 180) -> Sourced:
                                     {"symbol": symbol.upper()})
             if err:
                 return _remember({"ok": False, "reason": err})
-            rows, skipped = [], 0
+            rows, skip_reasons = [], {}
+            def _skip(why):
+                skip_reasons[why] = skip_reasons.get(why, 0) + 1
             for r in (payload if isinstance(payload, list) else []):
-                if r.get("date") and r.get("price") is not None:
-                    rows.append(r)
-                else:
-                    skipped += 1
+                if not r.get("date") or r.get("price") is None:
+                    _skip("missing field")
+                    continue
+                # Convert inside the loop: one malformed value skips ONE
+                # row instead of raising and rejecting the whole response.
+                try:
+                    close = float(r["price"])
+                    vol = float(r.get("volume") or 0)
+                except (TypeError, ValueError):
+                    _skip("non-numeric")
+                    continue
+                if not (math.isfinite(close) and math.isfinite(vol)):
+                    _skip("non-finite")
+                    continue
+                rows.append({"t": r["date"], "c": close, "v": vol})
+            skipped = sum(skip_reasons.values())
             if skipped:
-                logger.info(f"fmp eod skipped {skipped} malformed row(s) for {symbol}")
+                logger.info(f"fmp eod skipped {skipped} malformed row(s) "
+                            f"for {symbol}: {skip_reasons}")
             if len(rows) < 30:
                 return _remember({"ok": False,
                                   "reason": f"insufficient history ({len(rows)} rows, "
-                                            f"{skipped} malformed)"})
-            rows.sort(key=lambda r: r["date"])
+                                            f"skipped {skip_reasons or 0})"})
+            rows.sort(key=lambda r: r["t"])
             return _remember({"ok": True, "skipped_rows": skipped,
-                              "bars": [{"t": r["date"], "c": float(r["price"]),
-                                        "v": float(r.get("volume") or 0)}
-                                       for r in rows[-days:]]})
+                              "bars": rows[-days:]})
         except Exception as e:
             return _remember({"ok": False, "reason": type(e).__name__,
                               "detail": f"fmp eod failed: {type(e).__name__}: {e}"})
 
     payload = market_data._cached(key, 24 * 60 * 60, produce)
     if not payload.get("ok"):
-        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+        # detail (full text) beats reason (exception name) when present --
+        # the UI and the fallback chain should see the real cause.
+        return Sourced.unavailable(
+            source, payload.get("detail") or payload.get("reason", "unavailable"))
     return Sourced.live(payload["bars"], source)
