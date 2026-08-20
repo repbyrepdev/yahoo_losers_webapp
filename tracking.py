@@ -551,6 +551,26 @@ def live_readiness(directory=None):
         for f in (snap.get("paper_fills") or []):
             if f.get("filled_at"):
                 fills += 1
+    # Continuity means a STREAK: consecutive snapshot dates ending at the
+    # newest, allowing gaps of up to 4 calendar days (weekends + holidays).
+    # A count of scattered files must never arm live trading.
+    dates = sorted(d for d in ((snap.get("date") or "")[:10]
+                               for snap in (snaps if isinstance(snaps, list)
+                                            else snaps.values())) if d)
+    streak = 0
+    if dates:
+        from datetime import date as _date
+        streak = 1
+        for i in range(len(dates) - 1, 0, -1):
+            try:
+                gap = (_date.fromisoformat(dates[i])
+                       - _date.fromisoformat(dates[i - 1])).days
+            except ValueError:
+                break
+            if 0 < gap <= 4:
+                streak += 1
+            else:
+                break
     criteria = [
         {"name": "resolved predictions", "required": LIVE_MIN_RESOLVED,
          "actual": calib.get("n_resolved", 0),
@@ -563,6 +583,6 @@ def live_readiness(directory=None):
         {"name": "graded paper fills", "required": LIVE_MIN_GRADED_FILLS,
          "actual": fills, "met": fills >= LIVE_MIN_GRADED_FILLS},
         {"name": "days of continuous record", "required": LIVE_MIN_SNAPSHOT_DAYS,
-         "actual": len(snaps), "met": len(snaps) >= LIVE_MIN_SNAPSHOT_DAYS},
+         "actual": streak, "met": streak >= LIVE_MIN_SNAPSHOT_DAYS},
     ]
     return {"ready": all(c["met"] for c in criteria), "criteria": criteria}

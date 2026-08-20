@@ -4054,7 +4054,9 @@ def _graduation_section():
     try:
         r = tracking.live_readiness()
     except Exception as e:
-        return f"<p>Graduation status unavailable ({type(e).__name__}).</p>"
+        logger.warning(f"live_readiness failed: {type(e).__name__}: {e}")
+        return (f"<p>Graduation status unavailable "
+                f"({type(e).__name__}: recorded in server logs).</p>")
     rows = ""
     for c in r["criteria"]:
         mark = "✅" if c["met"] else "⏳"
@@ -4180,9 +4182,10 @@ def inspect_position(symbol):
     a{{color:#58a6ff;}}</style></head><body>
     <h1>🔎 {symbol}</h1>
     <p>Recorded entry-day: <strong>{entry_day or 'not found in the snapshot record'}</strong>
-    {f'· {sessions} sessions ago' if entry_day else ''}</p>
+    {f'· {sessions} sessions ago' if entry_day else ''}
+    {f'· current close {close} <span style="color:#8b949e;">[{tech.source}]</span>' if close else '· no cached close'}</p>
     {rails_html}
-    <h2>Recorded claims{f' ({entry_day})' if entry_day else ''}</h2>
+    <h2>Recorded claims <span style="font-size:13px;color:#8b949e;">[source: snapshot {entry_day or "—"}, committed to data/snapshots/]</span></h2>
     {'<table><thead><tr><th>Claim</th><th>Odds</th><th>Target</th><th>Window</th></tr></thead><tbody>' + claims_html + '</tbody></table>' if claims_html else '<p>No recorded predictions for this symbol in the snapshot record.</p>'}
     <p style="color:#8b949e;">Everything above is recorded history or cached state — nothing fetched, nothing advised.
     Add <code>?basis=YOUR_PRICE</code> to see the rules applied to your entry.

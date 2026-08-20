@@ -94,6 +94,20 @@ def _alpaca_trading_base(account: str = "paper") -> str:
     return ALPACA_PAPER_BASE
 
 
+def _alpaca_trading_context(account: str = "paper"):
+    """(base, headers) for the requested account -- the ONLY correct way to
+    make an authenticated trading call. The live branch runs the full
+    arming gate AND uses the LIVE credentials it verified; pairing the
+    live base with paper headers (or vice versa) is impossible through
+    this helper (local review, security).
+    """
+    base = _alpaca_trading_base(account)
+    if account == "live":
+        return base, {"APCA-API-KEY-ID": get_secret("LIVE_ALPACA_API_KEY"),
+                      "APCA-API-SECRET-KEY": get_secret("LIVE_ALPACA_API_SECRET")}
+    return base, _alpaca_headers()
+
+
 def _fmp_budget_ok() -> bool:
     """In-code daily budget, atomic where it can be.
 
@@ -1547,18 +1561,26 @@ def fmp_eod_bars(symbol: str, days: int = 180) -> Sourced:
                                     {"symbol": symbol.upper()})
             if err:
                 return _remember({"ok": False, "reason": err})
-            rows = payload if isinstance(payload, list) else []
-            rows = [r for r in rows if r.get("date") and r.get("price") is not None]
+            rows, skipped = [], 0
+            for r in (payload if isinstance(payload, list) else []):
+                if r.get("date") and r.get("price") is not None:
+                    rows.append(r)
+                else:
+                    skipped += 1
+            if skipped:
+                logger.info(f"fmp eod skipped {skipped} malformed row(s) for {symbol}")
             if len(rows) < 30:
                 return _remember({"ok": False,
-                                  "reason": f"insufficient history ({len(rows)} rows)"})
+                                  "reason": f"insufficient history ({len(rows)} rows, "
+                                            f"{skipped} malformed)"})
             rows.sort(key=lambda r: r["date"])
-            return _remember({"ok": True,
+            return _remember({"ok": True, "skipped_rows": skipped,
                               "bars": [{"t": r["date"], "c": float(r["price"]),
                                         "v": float(r.get("volume") or 0)}
                                        for r in rows[-days:]]})
         except Exception as e:
-            return _remember({"ok": False, "reason": f"fmp eod failed ({type(e).__name__})"})
+            return _remember({"ok": False, "reason": type(e).__name__,
+                              "detail": f"fmp eod failed: {type(e).__name__}: {e}"})
 
     payload = market_data._cached(key, 24 * 60 * 60, produce)
     if not payload.get("ok"):
