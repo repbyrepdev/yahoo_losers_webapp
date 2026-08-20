@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Install: cp tools/pre-push.hook .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# The doctrine's local layer, mechanically: green suite before any push,
+# and a reminder that non-trivial diffs deserve a local review first.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+PY=../venv/bin/python; [ -x "$PY" ] || PY=python3
+echo "[pre-push] running test suite..."
+if ! "$PY" -m pytest tests/ -q >/tmp/prepush_pytest.out 2>&1; then
+  tail -5 /tmp/prepush_pytest.out
+  echo "[pre-push] BLOCKED: suite is red."
+  exit 1
+fi
+tail -1 /tmp/prepush_pytest.out
+CHANGED=$(git diff --stat @{push}.. 2>/dev/null | tail -1 || true)
+echo "[pre-push] ${CHANGED:-new branch}"
+echo "[pre-push] reminder: 'coderabbit review --committed --base main -c CLAUDE.md' before big pushes."

@@ -60,13 +60,32 @@ def _alpaca_headers():
     return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 
 
-def _alpaca_trading_base() -> str:
-    """The trading endpoint, guarded: never anything but paper.
+def _alpaca_trading_base(account: str = "paper") -> str:
+    """The trading endpoint. Paper is the default and only self-serve path.
 
-    Real money must be impossible by construction, not by configuration
-    discipline. A live URL in the environment is treated as a
-    misconfiguration and refused.
+    Real money stays impossible by construction: the LIVE branch exists so
+    the same rules engine can one day run both books, but it cannot arm
+    itself. Arming requires ALL of, deliberately:
+    1. LIVE_TRADING_ARMED set to the exact phrase "yes-i-accept-losses" --
+       a human typed it; no code path sets it;
+    2. LIVE_ALPACA_API_KEY / LIVE_ALPACA_API_SECRET configured;
+    3. tracking.live_readiness() passing -- the recorded track record is
+       the only authority that can promote this system to real dollars,
+       and its thresholds are code, not midnight judgment.
     """
+    if account == "live":
+        if os.environ.get("LIVE_TRADING_ARMED") != "yes-i-accept-losses":
+            raise RuntimeError("live trading is not armed (LIVE_TRADING_ARMED)")
+        if not (get_secret("LIVE_ALPACA_API_KEY") and get_secret("LIVE_ALPACA_API_SECRET")):
+            raise RuntimeError("live trading keys are not configured")
+        import tracking as _tracking
+        readiness = _tracking.live_readiness()
+        if not readiness["ready"]:
+            unmet = ", ".join(f"{c['name']} {c['actual']}/{c['required']}"
+                              for c in readiness["criteria"] if not c["met"])
+            raise RuntimeError(
+                f"track record has not earned live money yet: {unmet}")
+        return "https://api.alpaca.markets"
     configured = os.environ.get("ALPACA_PAPER_BASE", ALPACA_PAPER_BASE)
     if configured.rstrip("/") != ALPACA_PAPER_BASE:
         raise RuntimeError(
@@ -1496,6 +1515,52 @@ def daily_bars(symbol: str, days: int = 180) -> Sourced:
                                      for b in bars]}
 
     payload = market_data._cached(f"src:bars:{symbol.upper()}", 15 * 60, produce)
+    if not payload.get("ok"):
+        return Sourced.unavailable(source, payload.get("reason", "unavailable"))
+    return Sourced.live(payload["bars"], source)
+
+
+def fmp_eod_bars(symbol: str, days: int = 180) -> Sourced:
+    """Close+volume EOD history from FMP -- third string for technicals.
+
+    The light endpoint carries consolidated closes and volume (no
+    high/low), which is exactly what the technicals computation consumes.
+    Day-stamped like every scarce-budget call.
+    """
+    source = "fmp:eod-history"
+    key = f"src:eod:{symbol.upper()}"
+
+    def produce():
+        day = date.today().isoformat()
+        answer_key = f"src:eod:answer:{symbol.upper()}:{day}"
+        if not market_data._cache.claim_once(
+                f"src:eod:{symbol.upper()}:{day}", 24 * 60 * 60):
+            replay = market_data._cache.get(answer_key)
+            if replay is not None:
+                return replay
+            return {"ok": False, "reason": "fmp eod request in flight"}
+        def _remember(result):
+            market_data._cache.set(answer_key, result, 24 * 60 * 60)
+            return result
+        try:
+            payload, err = _fmp_get("historical-price-eod/light",
+                                    {"symbol": symbol.upper()})
+            if err:
+                return _remember({"ok": False, "reason": err})
+            rows = payload if isinstance(payload, list) else []
+            rows = [r for r in rows if r.get("date") and r.get("price") is not None]
+            if len(rows) < 30:
+                return _remember({"ok": False,
+                                  "reason": f"insufficient history ({len(rows)} rows)"})
+            rows.sort(key=lambda r: r["date"])
+            return _remember({"ok": True,
+                              "bars": [{"t": r["date"], "c": float(r["price"]),
+                                        "v": float(r.get("volume") or 0)}
+                                       for r in rows[-days:]]})
+        except Exception as e:
+            return _remember({"ok": False, "reason": f"fmp eod failed ({type(e).__name__})"})
+
+    payload = market_data._cached(key, 24 * 60 * 60, produce)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
     return Sourced.live(payload["bars"], source)

@@ -1294,6 +1294,16 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
                     frame.index = _pd.to_datetime(frame["t"])
                     hist = frame
                     provider = "alpaca"
+                else:
+                    # Third string: FMP EOD (consolidated closes+volume --
+                    # all the technicals computation consumes).
+                    third = sources.fmp_eod_bars(symbol)
+                    if third.ok:
+                        frame = _pd.DataFrame(third.value)
+                        frame = frame.rename(columns={"c": "Close", "v": "Volume"})
+                        frame.index = _pd.to_datetime(frame["t"])
+                        hist = frame
+                        provider = "fmp"
             except Exception as e:
                 logger.info(f"bars fallback failed for {symbol}: {type(e).__name__}")
         if hist is None or hist.empty or len(hist) < 30:
@@ -1351,7 +1361,8 @@ def technicals(symbol: str, allow_fetch: bool = True) -> Sourced:
     payload = _cached(f"tech:{symbol.upper()}", TTL_TECHNICALS, produce, allow_fetch)
     if not payload.get("ok"):
         return Sourced.unavailable(source, payload.get("reason", "unavailable"))
-    actual = "alpaca:bars(iex)" if payload.get("provider") == "alpaca" else source
+    actual = {"alpaca": "alpaca:bars(iex)", "fmp": "fmp:eod-history"}.get(
+        payload.get("provider"), source)
     return Sourced.live(payload, actual)
 
 

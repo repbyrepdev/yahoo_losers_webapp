@@ -523,3 +523,46 @@ def compute_calibration(directory=None, highs_lookup=_default_highs_lookup):
             bucket["realized_rate"] = round(sum(h for _, h in rows) / len(rows) * 100, 1)
         result["buckets"].append(bucket)
     return result
+
+
+# --- Graduation to live money -----------------------------------------------
+
+LIVE_MIN_RESOLVED = 100          # graded predictions before live means anything
+LIVE_MAX_BRIER = 0.20            # materially better than 0.25 coin-flip guessing
+LIVE_MIN_GRADED_FILLS = 20       # real (paper) executions with measured slippage
+LIVE_MIN_SNAPSHOT_DAYS = 28      # four weeks of continuous record
+
+
+def live_readiness(directory=None):
+    """Has the recorded evidence earned real money? Computed, never asserted.
+
+    The live trading path refuses to arm unless every criterion here is met
+    -- the system's own track record is the only authority that can promote
+    it, and these thresholds are code, not judgment calls made at midnight.
+    """
+    calib = compute_calibration(directory)
+    snaps = _load_snapshots(directory)
+    fills = 0
+    for snap in (snaps if isinstance(snaps, list) else snaps.values()):
+        orders = (snap.get("paper_orders") or {})
+        for o in (orders.get("submitted") or []):
+            if o.get("status") in ("filled",):
+                fills += 1
+        for f in (snap.get("paper_fills") or []):
+            if f.get("filled_at"):
+                fills += 1
+    criteria = [
+        {"name": "resolved predictions", "required": LIVE_MIN_RESOLVED,
+         "actual": calib.get("n_resolved", 0),
+         "met": calib.get("n_resolved", 0) >= LIVE_MIN_RESOLVED},
+        {"name": "Brier score (lower is better)", "required": LIVE_MAX_BRIER,
+         "actual": calib.get("brier"),
+         "met": (calib.get("ready", False)
+                 and calib.get("brier") is not None
+                 and calib["brier"] <= LIVE_MAX_BRIER)},
+        {"name": "graded paper fills", "required": LIVE_MIN_GRADED_FILLS,
+         "actual": fills, "met": fills >= LIVE_MIN_GRADED_FILLS},
+        {"name": "days of continuous record", "required": LIVE_MIN_SNAPSHOT_DAYS,
+         "actual": len(snaps), "met": len(snaps) >= LIVE_MIN_SNAPSHOT_DAYS},
+    ]
+    return {"ready": all(c["met"] for c in criteria), "criteria": criteria}

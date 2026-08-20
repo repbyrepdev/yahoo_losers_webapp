@@ -1587,3 +1587,40 @@ class TestTechnicalsFailover:
         act = result.value["actions"][0]
         assert act["action"] == "unexpected-short" and act["qty"] == -5
         assert "manual attention" in act["reason"]
+
+
+class TestHistoryThirdString:
+    def test_fmp_eod_serves_when_alpaca_dead(self, monkeypatch):
+        class YahooDies:
+            def history(self, period=None, interval=None):
+                raise RuntimeError("429 Too Many Requests")
+        monkeypatch.setattr(market_data, "_ticker", lambda s: YahooDies())
+        monkeypatch.setattr(sources, "daily_bars",
+                            lambda sym, days=180: market_data.Sourced.unavailable(
+                                "alpaca:bars(iex)", "down"))
+        import datetime as _dt
+        rows = []
+        d, px = _dt.date(2026, 2, 2), 50.0
+        while len(rows) < 60:
+            if d.weekday() < 5:
+                rows.append({"t": d.isoformat(), "c": px, "v": 90000})
+                px *= 1.004 if len(rows) % 2 else 0.998
+            d += _dt.timedelta(days=1)
+        monkeypatch.setattr(sources, "fmp_eod_bars",
+                            lambda sym, days=180: market_data.Sourced.live(
+                                rows, "fmp:eod-history"))
+        market_data._cache._local.pop("tech:ZZE3", None)
+        result = market_data.technicals("ZZE3")
+        assert result.ok
+        assert result.source == "fmp:eod-history"
+        assert 0 <= result.value["rsi14"] <= 100
+
+    def test_fmp_eod_shapes_light_rows(self, monkeypatch):
+        payload = [{"symbol": "ZZE4", "date": f"2026-0{m}-{d:02d}", "price": 10 + d * 0.1,
+                    "volume": 1000} for m in (3, 4, 5) for d in range(1, 25)]
+        monkeypatch.setattr(sources.requests, "get", _fake_get({
+            "historical-price-eod/light": payload}))
+        result = sources.fmp_eod_bars("ZZE4")
+        assert result.ok
+        assert len(result.value) >= 30
+        assert result.value[0]["t"] < result.value[-1]["t"]

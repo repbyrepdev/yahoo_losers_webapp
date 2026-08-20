@@ -39,7 +39,11 @@ same doctrine is mirrored for reviewers in `.coderabbit.yaml` and
    --plain` and/or `copilot -p "review …"` on the diff. Evaluate findings —
    reviewers err; fix what is real; post the local summary as a PR comment
    for the audit trail.
-5. PR with a clear body. **The server gate**: CI green AND at least one
+5. PR with a clear body. Merges into `main` are MECHANICALLY gated by a
+   repo ruleset: the `pytest` check must be green and every review thread
+   resolved (ruleset "Merge gate", id 21115000 — if the CI job is ever
+   renamed, update the ruleset's required check or every merge blocks).
+   **The server gate**: CI green AND at least one
    server-side review (CodeRabbit primary; request Copilot
    `copilot-pull-request-reviewer[bot]` when CR is rate-limited or silent
    15+ min past CI-green) — read COMPLETELY: review bodies (outside-diff
