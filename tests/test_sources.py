@@ -658,6 +658,44 @@ class TestTargetFallback:
         assert not second.ok and "already spent today" in second.reason
 
 
+class TestPaperWindowFix:
+    def test_failure_reason_carries_provider_body(self, monkeypatch):
+        """The 2026-08-19 incident report said only 'HTTPError'; Alpaca's body
+        named the opg window rule. Refusals must keep the provider's words."""
+        class Resp:
+            status_code = 403
+            text = '{"code":40310000,"message":"opg orders must be submitted after 7:00pm"}'
+            def raise_for_status(self):
+                import requests as rq
+                err = rq.HTTPError("403")
+                err.response = self
+                raise err
+            def json(self):
+                return {}
+        monkeypatch.setattr(sources.requests, "post", lambda *a, **k: Resp())
+        result = sources.paper_execute_picks(["ZZPW1"])
+        assert not result.ok
+        assert "40310000" in result.reason or "opg" in result.reason
+
+    def test_order_id_uses_eastern_trading_day(self, monkeypatch):
+        from datetime import date as _date
+        monkeypatch.setattr(sources, "_eastern_today", lambda: _date(2026, 8, 19))
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "{}"
+            def raise_for_status(self): pass
+            def json(self): return {"id": "x", "status": "accepted"}
+
+        def post(url, headers=None, timeout=None, json=None, **kw):
+            captured.update(json or {})
+            return Resp()
+        monkeypatch.setattr(sources.requests, "post", post)
+        result = sources.paper_execute_picks(["ZZPW2"])
+        assert result.ok
+        assert captured["client_order_id"] == "snap-2026-08-19-ZZPW2"
+
 class TestShortFloatBackup:
     def test_composes_finra_short_over_fmp_float(self, monkeypatch):
         def fake(url, params=None, headers=None, timeout=None, json=None, **kw):

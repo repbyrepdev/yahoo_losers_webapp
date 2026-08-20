@@ -459,6 +459,13 @@ PAPER_NOTIONAL_PER_PICK = 1000.0
 PAPER_MAX_PICKS = 3
 
 
+def _eastern_today() -> date:
+    """The trading-day date. Render's clock is UTC: at the 8 PM ET submission
+    window that is already tomorrow, which would mislabel order ids."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
 def paper_execute_picks(symbols: List[str]) -> Sourced:
     """Submit market-on-open PAPER orders for the day's top picks.
 
@@ -475,7 +482,7 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
         return Sourced.unavailable(source, "Alpaca keys not configured")
     submitted, failed = [], []
     for symbol in [s.upper() for s in symbols][:PAPER_MAX_PICKS]:
-        client_order_id = f"snap-{date.today().isoformat()}-{symbol}"
+        client_order_id = f"snap-{_eastern_today().isoformat()}-{symbol}"
         try:
             market_data._throttle()
             response = requests.post(
@@ -495,8 +502,12 @@ def paper_execute_picks(symbols: List[str]) -> Sourced:
             submitted.append({"symbol": symbol, "order_id": order.get("id"),
                               "status": order.get("status")})
         except Exception as e:
-            failed.append({"symbol": symbol, "reason": type(e).__name__})
-            logger.warning(f"paper order failed for {symbol}: {type(e).__name__}")
+            # Keep the provider's words: "HTTPError" alone cost a debugging
+            # round trip when every order bounced off the opg window rule.
+            body = getattr(getattr(e, "response", None), "text", "") or str(e)
+            failed.append({"symbol": symbol,
+                           "reason": f"{type(e).__name__}: {body[:160]}"})
+            logger.warning(f"paper order failed for {symbol}: {type(e).__name__}: {body[:160]}")
     if not submitted and failed:
         return Sourced.unavailable(source, f"all paper orders failed: {failed}")
     return Sourced.live({"submitted": submitted, "failed": failed,
