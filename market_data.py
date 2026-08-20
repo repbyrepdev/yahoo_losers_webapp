@@ -253,7 +253,12 @@ def _effective_ttl(base_ttl: int, spread: float = 0.1) -> int:
     all expiring in the same second and stampeding the provider.
     """
     stretch = PHASE_TTL_STRETCH.get(market_phase()["phase"], 8)
-    ttl = base_ttl if stretch == 1 else min(base_ttl * stretch, 12 * 60 * 60)
+    # The 12h ceiling exists to bound STRETCHED short TTLs; it must never
+    # shorten a long-lived entry below what the producer asked for, or every
+    # daily+ cache (targets, ratings, FINRA settlement) silently expires at
+    # 12h off-market and re-spends provider budget (CR, PR 66).
+    ttl = (base_ttl if stretch == 1
+           else min(base_ttl * stretch, max(base_ttl, 12 * 60 * 60)))
     return max(30, int(ttl * random.uniform(1.0 - spread, 1.0 + spread)))
 
 # An analyst "consensus" drawn from one or two estimates is noise, not consensus.
@@ -317,6 +322,29 @@ class TTLCache:
             with self._lock:
                 self._local.pop(key, None)
         return None
+
+    def claim_once(self, key: str, ttl: int) -> bool:
+        """Atomically claim a marker key. True exactly once per ttl window.
+
+        Redis path uses SET NX (multi-worker atomic); the local path holds
+        the cache lock, which is atomic within a process -- and the lanes
+        that spend provider budget are lease-gated to one worker anyway.
+        """
+        if self._redis is not None:
+            try:
+                claimed = bool(self._redis.set(self._key(f"claim:{key}"), "1",
+                                               nx=True, ex=ttl))
+                self._redis_failures = 0
+                return claimed
+            except Exception as e:
+                self._redis_failed(e)
+        with self._lock:
+            now = time.time()
+            entry = self._local.get(f"claim:{key}")
+            if entry is not None and entry[0] > now:
+                return False
+            self._local[f"claim:{key}"] = (now + ttl, "1")
+            return True
 
     def set(self, key: str, value, ttl: int):
         if self._redis is not None:

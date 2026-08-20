@@ -641,8 +641,9 @@ class TestTargetFallback:
         # simulate the 5-minute first-strike expiry: response cache gone
         market_data._cache._local.pop("src:targets:ZZTF10", None)
         second = sources.price_targets("ZZTF10")
+        # the day's answer replays -- same refusal, no second HTTP spend
         assert not second.ok
-        assert "already spent today" in second.reason
+        assert "no analyst coverage" in second.reason
         assert len(hits) == 1
 
     def test_day_stamp_set_even_on_transport_failure(self, monkeypatch):
@@ -655,7 +656,7 @@ class TestTargetFallback:
         monkeypatch.setattr(sources.requests, "get",
                             lambda *a, **k: (_ for _ in ()).throw(AssertionError("second HTTP")))
         second = sources.price_targets("ZZTF11")
-        assert not second.ok and "already spent today" in second.reason
+        assert not second.ok and "fmp targets failed" in second.reason
 
 
 class TestPaperWindowFix:
@@ -715,6 +716,7 @@ class TestShortFloatBackup:
         result = sources.short_percent_float("AAPL")
         assert result.ok
         assert result.value == 0.0097
+        assert result.source.startswith("derived:")
         assert "settlement 2026-07-31" in result.source
 
     def test_refuses_implausible_ratio(self, monkeypatch):
@@ -780,5 +782,38 @@ class TestShortFloatBackup:
         assert not first.ok and "no short interest" in first.reason
         market_data._cache._local.pop("src:shortfloat:ZZSF10", None)
         second = sources.short_percent_float("ZZSF10")
-        assert not second.ok and "already spent today" in second.reason
+        assert not second.ok and "no short interest" in second.reason
         assert len([h for h in hits if "data/group" in h]) == 1
+
+
+    def test_exact_150_percent_is_accepted(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, json=None, **kw):
+            if "partitions" in url:
+                return FakeResponse({"availablePartitions": [{"partitions": ["2026-07-31"]}]})
+            if "consolidatedShortInterest" in url:
+                return FakeResponse([{"currentShortPositionQuantity": 150}])
+            if "shares-float" in url:
+                return FakeResponse([{"floatShares": 100, "date": "2026-08-19"}])
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        monkeypatch.setattr(sources.requests, "post", fake)
+        result = sources.short_percent_float("ZZSF11")
+        assert result.ok
+        assert result.value == 1.5
+
+
+class TestCacheContracts:
+    def test_effective_ttl_never_shrinks_long_entries(self, monkeypatch):
+        """CR PR66: the 12h stretch ceiling was shortening every daily+ cache
+        off-market, silently re-spending provider budget."""
+        monkeypatch.setattr(market_data, "market_phase", lambda: {"phase": "closed"})
+        day = 24 * 60 * 60
+        assert market_data._effective_ttl(day, spread=0) == day
+        assert market_data._effective_ttl(7 * day, spread=0) == 7 * day
+        # short TTLs still stretch, bounded by the 12h ceiling
+        assert market_data._effective_ttl(15 * 60, spread=0) == 8 * 15 * 60
+
+    def test_claim_once_is_single_winner(self):
+        key = "test:claim:zz1"
+        results = [market_data._cache.claim_once(key, 60) for _ in range(3)]
+        assert results == [True, False, False]
