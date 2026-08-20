@@ -238,3 +238,26 @@ class TestEarningsChip:
         from datetime import date as _date
         monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
         assert app_mod._earnings_in_window("ZZEC2", 7) is None
+
+    def test_far_confirmed_date_gets_calm_chip_payload(self, monkeypatch):
+        import app as app_mod
+        import market_data
+        import sources as _src
+        import tracking
+        from datetime import date as _date
+        market_data._cache.set(_src.earnings_cache_key("ZZEC3"),
+                               {"ok": True, "date": "2026-10-19"}, 60)
+        monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
+        nxt = app_mod._next_confirmed_earnings("ZZEC3")
+        assert nxt == ("2026-10-19", 60)
+
+    def test_past_date_yields_nothing(self, monkeypatch):
+        import app as app_mod
+        import market_data
+        import sources as _src
+        import tracking
+        from datetime import date as _date
+        market_data._cache.set(_src.earnings_cache_key("ZZEC4"),
+                               {"ok": True, "date": "2026-08-01"}, 60)
+        monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
+        assert app_mod._next_confirmed_earnings("ZZEC4") is None
