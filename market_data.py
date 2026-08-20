@@ -2364,7 +2364,7 @@ def _info_loop():
                               if _cache.get(f"src:grades:{s.upper()}:"
                                             f"{_src.GRADES_WINDOW_DAYS}") is None]
             earnings_missing = [s for s in universe
-                                if _cache.get(f"src:earnings:{s.upper()}") is None]
+                                if _cache.get(_src.earnings_cache_key(s)) is None]
             recs_missing, options_missing = _symbols_missing_factor_keys(universe)
             targets_missing = _symbols_needing_target_fallback(universe)
             short_missing = _symbols_needing_short_fallback(universe)

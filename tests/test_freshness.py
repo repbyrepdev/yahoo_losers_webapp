@@ -222,7 +222,8 @@ class TestEarningsChip:
     def test_confirmed_date_in_window_flags(self, monkeypatch):
         import app as app_mod
         import market_data
-        market_data._cache.set("src:earnings:ZZEC1", {"ok": True, "date": "2026-08-25"}, 60)
+        import sources as _src
+        market_data._cache.set(_src.earnings_cache_key("ZZEC1"), {"ok": True, "date": "2026-08-25"}, 60)
         import tracking
         from datetime import date as _date
         monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))
@@ -231,7 +232,8 @@ class TestEarningsChip:
     def test_far_date_does_not_flag(self, monkeypatch):
         import app as app_mod
         import market_data
-        market_data._cache.set("src:earnings:ZZEC2", {"ok": True, "date": "2026-11-03"}, 60)
+        import sources as _src
+        market_data._cache.set(_src.earnings_cache_key("ZZEC2"), {"ok": True, "date": "2026-11-03"}, 60)
         import tracking
         from datetime import date as _date
         monkeypatch.setattr(tracking, "trading_date_today", lambda: _date(2026, 8, 20))

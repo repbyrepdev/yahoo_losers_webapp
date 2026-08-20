@@ -1059,3 +1059,34 @@ class TestLastTwoBackups:
         result = market_data.implied_move("ZZIM4")
         assert not result.ok
         assert len(calls) == 1
+
+
+class TestEarningsIntegrity:
+    def test_finnhub_rows_filtered_by_symbol(self, monkeypatch):
+        """Live 2026-08-20: the free-tier calendar ignored the symbol param
+        and STLD/MTSI wore SMTC's Aug 25. Foreign rows must never count."""
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            if "earnings-calendar" in url:   # FMP branch: force the fallback
+                return FakeResponse(None, status=402)
+            if "calendar/earnings" in url:
+                return FakeResponse({"earningsCalendar": [
+                    {"symbol": "SMTC", "date": "2026-08-25"},
+                    {"symbol": "ZZEI1", "date": "2026-10-19"}]})
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        result = sources.earnings_confirmed("ZZEI1")
+        assert result.ok
+        assert result.value["date"] == "2026-10-19"
+
+    def test_no_own_rows_refuses_rather_than_borrow(self, monkeypatch):
+        def fake(url, params=None, headers=None, timeout=None, **kw):
+            if "earnings-calendar" in url:
+                return FakeResponse(None, status=402)
+            if "calendar/earnings" in url:
+                return FakeResponse({"earningsCalendar": [
+                    {"symbol": "SMTC", "date": "2026-08-25"}]})
+            raise AssertionError(f"unrouted {url}")
+        monkeypatch.setattr(sources.requests, "get", fake)
+        result = sources.earnings_confirmed("ZZEI2")
+        assert not result.ok
+        assert "no confirmed earnings" in result.reason

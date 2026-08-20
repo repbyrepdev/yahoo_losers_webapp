@@ -1112,6 +1112,16 @@ def format_results_as_html(losers_data, details_data, all_analysis, recommendati
                 grid-column: 1 / -1;
             }
             
+            .chip, td span[style*="border-radius: 999px"], td div[style*="font-size: 10px"] > span { white-space: nowrap; }
+            @media (min-width: 1700px) {
+                .container { max-width: min(2100px, 95vw); }
+                table { font-size: 14px; }
+                td, th { padding: 10px 12px; }
+                .stock-symbol { font-size: 16px; }
+                td span[style*="font-size: 11px"] { font-size: 12px !important; }
+                td div[style*="font-size: 10px"] { font-size: 11px !important; }
+                td div[style*="font-size: 11px"] { font-size: 12px !important; }
+            }
             @media (max-width: 1200px) {
                 .grid-layout {
                     grid-template-columns: 1fr;
@@ -5189,7 +5199,8 @@ def _earnings_in_window(symbol, horizon_days):
     from datetime import date as _date, timedelta as _td
     # A CONFIRMED calendar date (FMP/Finnhub, warmed by the info lane) beats
     # Yahoo's estimated ranges when one is cached.
-    confirmed = market_data._cache.get(f"src:earnings:{symbol.upper()}")
+    import sources as _src
+    confirmed = market_data._cache.get(_src.earnings_cache_key(symbol))
     if confirmed and confirmed.get("ok") and confirmed.get("date"):
         try:
             when = _date.fromisoformat(str(confirmed["date"])[:10])
