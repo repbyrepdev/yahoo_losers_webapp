@@ -1,0 +1,23 @@
+name: gitleaks
+# Secret scanning over the full git history on every PR and push to main.
+# Catches the committed-credential class (a key pasted into code, a .env
+# slipping in). Runtime leak paths are the redaction layer's job
+# (provenance.redact_secrets) -- this gate covers what reaches git.
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  pull-requests: read  # the action lists PR commits; default token lacks this (403)
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
