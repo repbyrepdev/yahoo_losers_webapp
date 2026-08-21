@@ -2,8 +2,8 @@
 
 > **Agent context**: read `wiki/index.md` first — the generated wiki
 > (architecture, data pipeline, paper lifecycle, gate, operations,
-> testing) is the fast path to repo understanding. Kept current by a
-> weekly drift check; corrections go through PRs like code.
+> testing) is the fast path to repo understanding. Kept current by the
+> weekly `wiki-maintenance` workflow; corrections go through PRs like code.
 
 Flask app on Render analyzing Yahoo's daily losers with empirical odds and a
 paper-trading rehearsal account. This file is the canonical process; the
@@ -48,7 +48,8 @@ same doctrine is mirrored for reviewers in `.coderabbit.yaml` and
    repo ruleset: the `pytest` check must be green and every review thread
    resolved (ruleset "Merge gate", id 21115000 — if a CI job is ever
    renamed, update the ruleset's required checks or every merge blocks).
-   Required checks: `pytest` and `gitleaks` (full-history secret scan;
+   Required checks: `pytest`, `gitleaks`, `ruff`, `markdownlint`, and
+   `pip-audit` (gitleaks = full-history secret scan;
    the runtime analogue is `provenance.redact_secrets` at provider
    boundaries — gitleaks covers what reaches git, redaction covers what
    reaches pages and logs).

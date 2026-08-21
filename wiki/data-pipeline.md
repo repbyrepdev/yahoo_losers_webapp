@@ -6,7 +6,7 @@ of sources tried until one answers. Chains follow two principles —
 abundant budgets before scarce ones** (FMP's 200 requests/day is the hard
 stop, so it is last everywhere, with one exception noted below).
 
-## The chains (probe-verified)
+## The chains
 
 | Feed | 1st | 2nd | 3rd |
 |---|---|---|---|
@@ -17,7 +17,8 @@ stop, so it is last everywhere, with one exception noted below).
 | Ratings | Finnhub | Yahoo | — |
 | Options (put/call, straddle) | Yahoo (has OI) | Alpaca indicative | — |
 | Short float | Yahoo | FINRA short volume ÷ FMP float | — |
-| Earnings date | Finnhub (symbol-filtered) | FMP | Yahoo estimate |
+| Earnings (confirmed) — `earnings_confirmed` | Finnhub (symbol-filtered) | FMP | — |
+| Earnings (estimate) — `market_data.earnings_date` | Yahoo | — | — |
 | News | Finnhub | Yahoo | — |
 | Company profile | Yahoo | Finnhub profile2 | — |
 | Calendar / splits | Alpaca | FMP | — |

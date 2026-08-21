@@ -12,7 +12,7 @@ GETs — never refresh loops).
 
 | Workflow | Schedule | Job |
 |---|---|---|
-| `snapshot.yml` | 01:15 UTC Tue–Sat | Nightly snapshot + paper lifecycle + Google Chat digest (entries, fills, exits, holdings) |
+| `snapshot.yml` | 01:15 UTC Tue–Sat (Mon–Fri evenings ET; snapshot ids use the Eastern trading date) | Nightly snapshot + paper lifecycle + Google Chat digest (entries, fills, exits, holdings) |
 | `audit.yml` | Mondays 12:00 UTC + every PR | pip-audit CVE gate |
 | `healthwatch.yml` | periodic | Uptime / health probe |
 | `tests.yml`, `lint.yml`, `gitleaks.yml` | every PR + main | The merge gate |
@@ -32,4 +32,4 @@ gate passes (see [paper-trading](paper-trading.md)).
 - `/health` (open), `/health/sources` (provider probe board)
 - `/metrics` — cache hit rates, provider budgets
 - Morning digest in Google Chat = the daily blotter
-- Weekly pip-audit cron reds the repo when a new CVE publishes
+- The weekly pip-audit cron run fails red when a new CVE publishes

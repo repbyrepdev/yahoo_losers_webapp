@@ -23,9 +23,11 @@ the **cache** (Redis when configured, in-process dict otherwise), and the
 
 ## Layering rule
 
-`app.py` renders what `market_data`/`sources` return; producers return
-dict payloads with `ok/reason/detail`; only the edge converts to
-`Sourced` for display. Nothing in a template invents a number.
+`app.py` renders what `market_data`/`sources` return; producers
+generally return dict payloads with `ok/reason/detail`, converted to
+`Sourced` at the edge for display (`econ_calendar.fomc_meetings` is a
+grandfathered exception that builds `Sourced` in-module). Nothing in a
+template invents a number.
 
 ## Why no database
 

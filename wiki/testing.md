@@ -10,6 +10,8 @@ and before any completion claim (fresh evidence, never stale).
 | `test_sources.py` | Provider chains, fallbacks, paper lifecycle, redaction, FMP hygiene |
 | `test_live_gate.py` | Graduation criteria, live-arming refusal matrix, inspector page states |
 | `test_no_fabrication.py` | The Sourced contract: unavailable never renders as a number |
+| `test_odds_engine.py` | Empirical odds engine: hit rates, regime conditioning |
+| `test_polish.py` | Recency-weighted probabilities, effective sample size |
 | `test_market_context.py`, `test_gold_standard.py`, `test_freshness.py`, `test_rank.py` | Scoring, calibration, cache TTLs, ranking |
 
 ## Doctrine

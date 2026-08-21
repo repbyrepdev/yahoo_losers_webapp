@@ -1,8 +1,9 @@
 # yahoo_losers_webapp — Wiki
 
-Generated and maintained by Claude Code (the repo's standing agent), kept
-current by a weekly drift check. Corrections land as PRs through the same
-gate as code. Authored methodology lives in the app's `/methodology` page;
+Generated and maintained by Claude Code (the repo's standing agent).
+The weekly `wiki-maintenance` workflow re-verifies these pages against
+the code and opens a docs PR when reality drifts; corrections land
+through the same gate as code. Authored methodology lives in the app's `/methodology` page;
 this wiki documents **how the system is built**.
 
 ## Pages

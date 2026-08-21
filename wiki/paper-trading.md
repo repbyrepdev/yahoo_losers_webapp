@@ -4,7 +4,12 @@ The paper account is a **dress rehearsal for live money**, so it mirrors
 how a person actually trades — extended-hours limit entries, broker-
 resident protective exits — and its record is what must EARN the switch.
 
-## Nightly flow (snapshot cron, 01:15 UTC ≈ 9:15 PM ET, Tue–Sat)
+## Nightly flow (snapshot cron, 01:15 UTC Tue–Sat)
+
+01:15 UTC is 9:15 PM EDT / 8:15 PM EST on the preceding Eastern calendar
+day — after the extended session closes in both DST regimes. Snapshot
+dates, `snap-{date}-{SYM}` ids, and session counts all use the Eastern
+trading date.
 
 1. **Entries**: whole-share LIMIT orders at reference × 1.02,
    `extended_hours=true`, day TIF — submitted after the extended session

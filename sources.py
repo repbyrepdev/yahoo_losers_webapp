@@ -504,7 +504,7 @@ def earnings_cache_key(symbol: str) -> str:
 
 
 def earnings_confirmed(symbol: str) -> Sourced:
-    """Confirmed upcoming earnings date: FMP first, Finnhub fallback."""
+    """Confirmed upcoming earnings date: Finnhub first, FMP fallback."""
     symbol = symbol.upper()
     key = earnings_cache_key(symbol)
 

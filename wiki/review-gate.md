@@ -23,8 +23,9 @@ check that never reports blocks the merge forever (the name-match trap).
    non-trivial diffs get `coderabbit review --committed --base main -c
    CLAUDE.md` (doctrine attached).
 2. **Server, per PR**: CodeRabbit auto-review first; when its meter is
-   dry (fair-usage: heavy weeks grind it to 1/hour), request Copilot
-   (`copilot-pull-request-reviewer[bot]`, posts in ~2–5 min). Read
+   dry (fair-usage: heavy weeks grind it to 1/hour) or it stays silent
+   15+ minutes past CI-green, request Copilot
+   (`copilot-pull-request-reviewer[bot]`). Read
    EVERYTHING: review bodies, suppressed/outside-diff sections, inline
    comments. Fix or rebut with evidence; resolve each thread.
 3. **Arm auto-merge only AFTER the review lands.** Arming at PR-open let
@@ -34,8 +35,10 @@ check that never reports blocks the merge forever (the name-match trap).
 
 ## Reviewer track record (why the cascade earns its cost)
 
-Across the hardening arc: 23+ findings; genuinely real catches included a
-live-credentials pairing gap, an API-key-in-error-text leak path, and a
-merge-gate sequencing hole. Reviewers also err — findings are evaluated
-against the code, and wrong ones are rebutted with probe output on the
-thread, not silently ignored.
+The hardening arc's record is in the PRs: a live-credentials pairing
+gap (local review before #77), an API-key-in-error-text leak path
+(Copilot, #78), a merge-gate sequencing hole (#77's own merge — the
+arm-after-review rule exists because of it), and dead-code litter from
+an unsafe lint fix (Copilot, #80). Reviewers also err — findings are
+evaluated against the code, and wrong ones are rebutted with probe
+output on the thread, not silently ignored.

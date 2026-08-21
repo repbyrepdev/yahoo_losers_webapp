@@ -1,0 +1,40 @@
+name: wiki-maintenance
+# Weekly: Claude re-verifies wiki/ against the code and opens a docs PR
+# when reality drifted. Runs on the subscription OAuth token (no API
+# billing); weekly cadence keeps CI usage a rounding error against
+# interactive limits. Manual trigger for testing.
+on:
+  schedule:
+    - cron: "0 13 * * 1"  # Mondays 13:00 UTC = 9 AM ET
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  wiki-drift:
+    name: wiki-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You maintain wiki/ in this repo. Verify every factual claim in
+            wiki/*.md against the code, at minimum: module list vs *.py;
+            provider chain order in data-pipeline.md vs sources.py and
+            market_data.py; rail constants (PAPER_TP_PCT, PAPER_STOP_PCT,
+            PAPER_CATASTROPHE_STOP_PCT, PAPER_MAX_SESSIONS) in sources.py;
+            graduation thresholds (LIVE_MIN_*) in tracking.py; the required
+            checks and schedules in review-gate.md/operations.md vs
+            .github/workflows/.
+            If nothing drifted: print "wiki current" and STOP — no branch,
+            no PR. If drift exists: create branch docs/wiki-drift-<date>,
+            fix ONLY wiki/ pages to match reality, run
+            `npx --yes markdownlint-cli2 "wiki/*.md"` until clean, commit
+            listing each corrected claim, push the branch, and open a PR
+            titled "Wiki drift: <summary>" with old-vs-now per item. Never
+            push to main. Never touch code. Do not enable auto-merge.
+          claude_args: "--allowedTools Bash(git:*),Bash(gh pr create:*),Bash(npx markdownlint-cli2:*),Read,Grep,Glob,Edit,Write"
