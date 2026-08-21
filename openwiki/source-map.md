@@ -13,7 +13,7 @@ Use this page to jump from an engineering intent to the owning code and narrow t
 | --- | --- | --- | --- | --- |
 | Change homepage data flow or cache behavior | `app.py` | `index`, `stable_universe`, `save_cache`, `load_cache`, `page_cache_policy`, `degraded_state` | [Dashboard and Routes](application/dashboard-and-routes.md) | `tests/test_freshness.py`, `tests/test_no_fabrication.py` |
 | Add or adjust Flask routes | `app.py` | route decorators, `rate_limit`, `generate_etag`, `add_cache_headers` | [Dashboard and Routes](application/dashboard-and-routes.md) | Relevant domain test plus Flask client test if new route behavior matters |
-| Change source provenance or unavailable semantics | `provenance.py`, callers in `app.py` and `market_data.py` | `Sourced`, `UNAVAILABLE_DISPLAY`, `safe_ratio`, `redact_secrets` | [Data Provenance and No-Fabrication Contract](data/provenance-and-honesty.md) | `tests/test_no_fabrication.py` |
+| Change source provenance, unavailable semantics, or provider-failure secret redaction | `provenance.py`, callers in `app.py` and `market_data.py` | `Sourced`, `UNAVAILABLE_DISPLAY`, `safe_ratio`, `redact_secrets`, `market_data._cached` | [Data Provenance and No-Fabrication Contract](data/provenance-and-honesty.md) | `tests/test_no_fabrication.py`, `tests/test_sources.py::TestSecretRedaction` |
 | Modify yfinance cache producers | `market_data.py` | `_cached`, `_info`, `analyst_target`, `profile`, `technicals`, `options_flow`, `implied_move` | [Market Data Cache and Warmers](data/market-data-cache-and-warmers.md) | `tests/test_no_fabrication.py`, `tests/test_market_context.py`, `tests/test_freshness.py` |
 | Modify non-Yahoo fallbacks | `sources.py` | `_fmp_get`, `_finnhub_get`, `_alpaca_get`, `price_targets`, `ratings_spread`, `options_putcall`, `short_percent_float`, `daily_bars` | [Provider Failover](data/provider-failover.md) | `tests/test_sources.py` |
 | Change background warming | `app.py`, `market_data.py` | `_ensure_warmer_running`, `_warm_loop`, `_info_loop`, `request_warm`, `_holds_warm_lease`, `batch_history`, `refresh_last_bar` | [Market Data Cache and Warmers](data/market-data-cache-and-warmers.md) | `tests/test_freshness.py`, `tests/test_sources.py` |
@@ -27,7 +27,8 @@ Use this page to jump from an engineering intent to the owning code and narrow t
 | Change snapshots or track record | `app.py`, `tracking.py` | `api_snapshot`, `build_snapshot`, `tracked_symbols`, `compute_track_record`, `compute_calibration` | [Snapshots, Track Record, and Calibration](tracking/snapshots-track-record-and-calibration.md) | `tests/test_polish.py`, `tests/test_gold_standard.py`, `tests/test_live_gate.py` |
 | Change paper trading | `sources.py`, `app.py`, `tracking.py` | `paper_execute_picks`, `paper_manage_positions`, `paper_account_overview`, `_alpaca_trading_base`, `live_readiness` | [Paper Trading and Live Gate](trading/paper-trading-and-live-gate.md) | `tests/test_sources.py`, `tests/test_live_gate.py` |
 | Change evaluation CLI or report-only fitting | `backtest.py`, `walkforward.py` | `run`, `main`, `walk_forward`, `_training_rows` | [Backtesting and Walk-Forward Evaluation](evaluation/backtesting-and-walkforward.md) | `tests/test_gold_standard.py`, CLI smoke for `backtest.py` |
-| Change deployment | `Dockerfile`, `gunicorn.conf.py`, `docker-compose.yml`, `nginx.conf`, `k8s-deployment.yaml` | Gunicorn config, compose services, NGINX routes, HPA | [Deployment and Observability](operations/deployment-and-observability.md) | Container smoke plus `python -m pytest tests/ -q` |
+| Change deployment | `Dockerfile`, `gunicorn.conf.py`, `docker-compose.yml`, `nginx.conf`, `k8s-deployment.yaml` | Gunicorn config, compose services, NGINX routes, HPA | [Deployment and Observability](operations/deployment-and-observability.md) | Detached container smoke plus `python -m pytest tests/ -q` |
+| Change generated-documentation automation | `.github/workflows/openwiki-update.yml`, `.markdownlint-cli2.yaml`, `openwiki/INSTRUCTIONS.md` | weekday cron, `openwiki code --update --print`, watermark-only diff suppression, authored brief linting | [Deployment and Observability](operations/deployment-and-observability.md) | `npx markdownlint-cli2 openwiki/INSTRUCTIONS.md` when the authored brief changes |
 | Change configuration/secrets | `secrets_store.py`, env reads in `app.py`, `market_data.py`, `sources.py`, `tracking.py` | `get`, `status`, env constants, live arming vars | [Configuration and Secrets](operations/configuration-and-secrets.md) | `tests/test_no_fabrication.py`, `tests/test_sources.py`, `tests/test_live_gate.py` |
 
 ## Minimal full validation
@@ -40,6 +41,7 @@ Optional operational validation:
 
 ```bash
 docker build -t yahoo-losers-webapp .
-docker run --rm -p 8080:8080 yahoo-losers-webapp
-curl http://localhost:8080/health
+container_id=$(docker run -d --rm -p 8080:8080 yahoo-losers-webapp)
+trap 'docker stop "$container_id" >/dev/null' EXIT
+curl --fail --retry 10 --retry-delay 1 http://localhost:8080/health
 ```

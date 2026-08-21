@@ -79,14 +79,18 @@ The app reports cache backend and memory in `/health`, so Kubernetes liveness/re
 | `.github/workflows/lint.yml` | Lint/format gate. |
 | `.github/workflows/snapshot.yml` | Calls `/api/snapshot`, validates nonempty scored snapshot, commits `data/snapshots/<date>.json`, and posts a daily digest issue with top scores and paper events. |
 | `.github/workflows/healthwatch.yml` | Probes `/health/sources` every 30 minutes, opens a provider-degraded issue, and closes it when healthy. |
-| `.github/workflows/openwiki-update.yml` | Wiki maintenance automation. |
+| `.github/workflows/openwiki-update.yml` | Generated OpenWiki maintenance automation: runs `openwiki code --update --print` on weekday mornings UTC and by manual dispatch, then opens a gated PR only when generated content or OPENWIKI-managed guidance changed. A `Drop watermark-only churn` step reverts `.last-update.json` when it is the only diff. |
+
+## Documentation automation notes
+
+The generated `openwiki/` tree is maintained by `.github/workflows/openwiki-update.yml`; the hand-authored [Authored Wiki](../../wiki/index.md) is a separate doctrine layer and should be linked rather than duplicated. `openwiki/INSTRUCTIONS.md` is the user-authored standing brief that steers future generated updates, so `.markdownlint-cli2.yaml` keeps generated `openwiki/**` exempt while re-including that brief for markdown linting.
 
 ## Operational failure modes
 
 - Redis unavailable: page cache falls back to file cache, market-data cache falls back to memory, worker coordination is weaker, and provider calls may be duplicated across workers.
 - Provider rate limits: Yahoo `.info` backs off through the adaptive info lane; options endpoint uses a shared cooldown; FMP calls are hard-budgeted.
 - Warmers disabled: tests set `MARKET_DATA_DISABLE_WARMER=1`; production without warmers will serve more cold `—` values and slower detail fetches.
-- Missing provider keys: optional features return unavailable states instead of guessed data.
+- Missing provider keys: optional features return unavailable states instead of guessed data; provider failure details are scrubbed at the `market_data._cached()` boundary with `provenance.redact_secrets()` before they can persist in cache-backed UI or API payloads.
 - Source health degradation: `/health/sources` and the health-watch workflow surface degraded upstreams before the dashboard silently loses factors.
 
 ## Validation commands
@@ -97,6 +101,12 @@ Typical local checks:
 python -m pytest tests/ -q
 python -m pytest tests/test_sources.py tests/test_freshness.py -q
 python -m pytest tests/test_live_gate.py -q
+```
+
+For generated-documentation automation or standing-brief changes, validate the authored brief with:
+
+```bash
+npx markdownlint-cli2 openwiki/INSTRUCTIONS.md
 ```
 
 Container smoke check:
