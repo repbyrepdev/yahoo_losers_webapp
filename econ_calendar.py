@@ -12,10 +12,9 @@ rather than guessed.
 """
 
 import logging
-import os
 import re
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import List
 
 import requests
 

@@ -25,7 +25,7 @@ class TestCompositeRank:
         """Audit 2026-08-19: renormalizing let a row with NO probability
         evidence outrank an identically-scored row with full evidence."""
         import app
-        full = app._composite_rank({"Rebound Score": 60.0,
+        app._composite_rank({"Rebound Score": 60.0,
                                     "P Short": {"sort": 30.0, "miss": -2.0}})
         missing = app._composite_rank({"Rebound Score": 60.0})
         # missing components count as neutral 0.5:
@@ -90,7 +90,7 @@ class TestRankTemplates:
         assert source.count('''onclick="sortCards('cards-recs', 'rank', this)">Rank''') == 1
         assert source.count('''onclick="sortCards('cards-all', 'rank', this)">Rank''') == 1
         for group in ("cards-recs", "cards-all"):
-            active = source.split(f"sortCards('{group}'")[1 if group == "cards-recs" else 0]
+            source.split(f"sortCards('{group}'")[1 if group == "cards-recs" else 0]
         # The active chip in each sorter is the Rank chip.
         import re
         for chunk in re.findall(r'class="sort-chip active"[^>]*onclick="sortCards\([^)]*\)">(\w+)', source):

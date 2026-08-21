@@ -1,0 +1,4 @@
+# Bug-class linting only (undefined names, unused imports/variables,
+# syntax errors) -- the classes that caught real bugs in review (F821 in
+# PR #74). Style classes stay out; reviewers argue style, linters catch bugs.
+lint.select = ["E9", "F"]

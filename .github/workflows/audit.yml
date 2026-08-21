@@ -1,0 +1,24 @@
+name: audit
+# Dependency CVE gate: audits the RESOLVED environment (transitives
+# included), on every PR and weekly (a new CVE should page us via a red
+# scheduled run, not wait for the next code change). Escape hatch for a
+# fix-less CVE: add --ignore-vuln PYSEC-XXXX here, visibly, in a PR.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 12 * * 1"
+permissions:
+  contents: read
+jobs:
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"  # matches production (.python-version)
+      - run: pip install -r requirements.txt pip-audit
+      - run: pip-audit

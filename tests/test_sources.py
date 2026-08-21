@@ -1447,7 +1447,6 @@ class TestPaperLifecycle:
         assert n >= sources.PAPER_MAX_SESSIONS
 
     def test_blocked_cancel_defers_exit(self, monkeypatch):
-        posted = []
         def fake_get(url, params=None, headers=None, timeout=None, **kw):
             if "/v2/positions" in url:
                 return FakeResponse([{"symbol": "ZZLC7", "qty": "5"}])

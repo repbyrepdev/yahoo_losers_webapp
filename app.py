@@ -1,14 +1,10 @@
-from flask import Flask, render_template_string, render_template, request, jsonify, g, make_response
+from flask import Flask, render_template_string, request, jsonify, g, make_response
 from flask_compress import Compress
 from flask_cors import CORS
 import re
 import requests
-from bs4 import BeautifulSoup
-import pandas as pd
 import os
 import json
-import ssl
-import logging
 import pickle
 import time
 from collections import deque
@@ -17,15 +13,14 @@ import gc
 import psutil
 import threading
 import numpy as np
-import yfinance as yf
-from datetime import datetime, timedelta, date
+from datetime import datetime, date
 import pytz
 import redis
 import structlog
 from celery import Celery
 import hashlib
 from sophisticated_timeframe import SophisticatedTimeframePredictor
-from provenance import Sourced, safe_ratio, UNAVAILABLE_DISPLAY
+from provenance import safe_ratio, UNAVAILABLE_DISPLAY
 import market_data
 import recommendation
 import econ_calendar
@@ -4666,7 +4661,7 @@ def get_market_status():
             return {
                 "status": "closed", 
                 "message": "🔴 Markets Closed (Pre-Market)",
-                "next_open": f"Opens today at 9:30 AM EST"
+                "next_open": "Opens today at 9:30 AM EST"
             }
         elif now_est > market_close:
             return {
@@ -4693,7 +4688,7 @@ def get_market_status():
             
             return {
                 "status": "open",
-                "message": f"🟢 Markets Open",
+                "message": "🟢 Markets Open",
                 "time_to_close": time_display
             }
     except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -5064,7 +5059,7 @@ def get_sophisticated_timeframe(symbol):
                 
                 # Try to get analyst price target from the stock details
                 try:
-                    symbols = [symbol.upper()]
+                    [symbol.upper()]
                     # Real analyst figures: the consensus mean and the actual
                     # published high estimate. The previous "Bull Case Growth
                     # Scenario" was current_price * 1.6 with a hard-coded 35%
@@ -5700,7 +5695,7 @@ def predict_stock_recovery(symbol):
                     break
         
         # Get enhanced market analysis
-        targets = sophisticated_result.get('targets', {})
+        sophisticated_result.get('targets', {})
         market_conditions = sophisticated_result.get('market_conditions', {})
         technical_momentum = sophisticated_result.get('technical_momentum', {})
         
@@ -5808,11 +5803,11 @@ def predict_stock_recovery(symbol):
         sector_context = sophisticated_result.get('sector_context', {})
         sector_performance = sector_context.get('sector_performance', 'neutral')
         if sector_performance in ['strong', 'positive']:
-            fundamental_factors.append(f"🏗️ Strong sector performance")
+            fundamental_factors.append("🏗️ Strong sector performance")
         elif sector_performance in ['negative', 'weak']:
-            fundamental_factors.append(f"⚠️ Weak sector performance")
+            fundamental_factors.append("⚠️ Weak sector performance")
         else:
-            fundamental_factors.append(f"📊 Mixed sector signals")
+            fundamental_factors.append("📊 Mixed sector signals")
             
         # Catalyst factors
         catalysts = sophisticated_result.get('catalysts', {})

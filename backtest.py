@@ -31,7 +31,6 @@ import argparse
 import logging
 import sys
 import warnings
-from datetime import timedelta
 from typing import Dict, List, Optional
 
 warnings.filterwarnings("ignore")
@@ -224,7 +223,7 @@ def main():
 
     print(f"\nObservations: {results['observations']}  "
           f"Symbols: {results['symbols_used']}  Period: {results['period_years']}y")
-    print(f"Baseline mean forward return: "
+    print("Baseline mean forward return: "
           + ", ".join(f"{h}d {v:+.2f}%" for h, v in results["baseline"].items()))
     print(f"\n{'Bucket':24}{'n':>7}" + "".join(f"{h}d excess".rjust(13) for h in results["horizons"])
           + "".join(f"{h}d win".rjust(11) for h in results["horizons"]))
