@@ -86,7 +86,6 @@ class SophisticatedTimeframePredictor:
                 return self._fallback_prediction(symbol)
                 
             current_price = hist['Close'].iloc[-1]
-            hist['Close'].iloc[-2] if len(hist) > 1 else current_price
             
             # 1. DEFINE SHORT-TERM RECOVERY TARGETS (1-5 days)
             targets = self._calculate_recovery_targets(stock, hist, info, current_price)
@@ -204,7 +203,6 @@ class SophisticatedTimeframePredictor:
         # Look for recent price gaps in the last 5 days that could fill quickly
         if len(hist) >= 5:
             for i in range(1, min(5, len(hist))):
-                hist['Low'].iloc[-i] > hist['High'].iloc[-i-1]  # Gap up
                 gap_down = hist['High'].iloc[-i] < hist['Low'].iloc[-i-1]  # Gap down
                 
                 if gap_down and current_price < hist['Low'].iloc[-i-1]:
@@ -1355,7 +1353,6 @@ class SophisticatedTimeframePredictor:
             current_histogram = histogram.iloc[-1]
             prev_histogram = histogram.iloc[-2]
             current_macd = macd_line.iloc[-1]
-            signal_line.iloc[-1]
             
             # Check for bullish divergence (price declining, MACD improving)
             price_trend = (close_prices.iloc[-1] - close_prices.iloc[-5]) / close_prices.iloc[-5]
@@ -1431,9 +1428,6 @@ class SophisticatedTimeframePredictor:
             
             current_bandwidth = band_width.iloc[-1]
             current_percent_b = percent_b.iloc[-1]
-            close_prices.iloc[-1]
-            lower_band.iloc[-1]
-            upper_band.iloc[-1]
             
             # Squeeze detection (bandwidth below average)
             squeeze_ratio = current_bandwidth / avg_bandwidth.iloc[-1] if avg_bandwidth.iloc[-1] > 0 else 1

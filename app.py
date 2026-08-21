@@ -5059,7 +5059,6 @@ def get_sophisticated_timeframe(symbol):
                 
                 # Try to get analyst price target from the stock details
                 try:
-                    [symbol.upper()]
                     # Real analyst figures: the consensus mean and the actual
                     # published high estimate. The previous "Bull Case Growth
                     # Scenario" was current_price * 1.6 with a hard-coded 35%
@@ -5695,7 +5694,6 @@ def predict_stock_recovery(symbol):
                     break
         
         # Get enhanced market analysis
-        sophisticated_result.get('targets', {})
         market_conditions = sophisticated_result.get('market_conditions', {})
         technical_momentum = sophisticated_result.get('technical_momentum', {})
         
