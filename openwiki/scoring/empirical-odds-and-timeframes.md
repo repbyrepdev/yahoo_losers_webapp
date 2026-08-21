@@ -54,6 +54,7 @@ The function returns raw `hits` and `windows`, a recency-weighted `probability`,
 The first adequate rung wins. Its label is included in the evidence string so users know whether a displayed probability is based on “post-drop”, “sector also down”, “all windows”, or another condition.
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
     Target["target percent"] --> Magnitude["magnitude matched post-drop"]
     Magnitude -->|enough windows| Use1["use rung"]

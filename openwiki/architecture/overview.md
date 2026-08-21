@@ -12,21 +12,42 @@ This repository is a single-service Python web application for a Yahoo Finance d
 ## Runtime component map
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
-    Browser["Browser dashboard and API clients"] --> Flask["app.py Flask app"]
-    Flask --> PageCache["Rendered page cache Redis or file"]
-    Flask --> MD["market_data.py data plane"]
-    Flask --> Rec["recommendation.py rebound score"]
-    Flask --> Odds["timeframes.py empirical odds"]
-    Flask --> STF["sophisticated_timeframe.py target builder"]
-    Flask --> Social["social.py sentiment"]
-    Flask --> Econ["econ_calendar.py macro calendar"]
-    Flask --> Track["tracking.py snapshots and track record"]
-    MD --> Sources["sources.py failover and paper trading"]
-    Sources --> Providers["Yahoo, Alpaca, Finnhub, FMP, FINRA, SEC EDGAR, FRED, Reddit, StockTwits"]
-    Track --> Snapshots["data/snapshots/*.json"]
-    Actions["GitHub Actions"] --> Flask
-    Actions --> Snapshots
+  subgraph Web["Web layer"]
+    Flask["app.py Flask app"]
+    PageCache["Rendered page cache Redis or file"]
+  end
+  subgraph Analysis["Analysis modules"]
+    Rec["recommendation.py rebound score"]
+    Odds["timeframes.py empirical odds"]
+    STF["sophisticated_timeframe.py target builder"]
+    Social["social.py sentiment"]
+    Econ["econ_calendar.py macro calendar"]
+  end
+  subgraph DataPlane["Data plane"]
+    MD["market_data.py data plane"]
+    Sources["sources.py failover and paper trading"]
+    Providers["Yahoo, Alpaca, Finnhub, FMP, FINRA, SEC EDGAR, FRED, Reddit, StockTwits"]
+  end
+  subgraph Record["Record"]
+    Track["tracking.py snapshots and track record"]
+    Snapshots["data/snapshots/*.json"]
+  end
+  Browser["Browser dashboard and API clients"] --> Flask
+  Actions["GitHub Actions"] --> Flask
+  Actions --> Snapshots
+  Flask --> PageCache
+  Flask --> MD
+  Flask --> Rec
+  Flask --> Odds
+  Flask --> STF
+  Flask --> Social
+  Flask --> Econ
+  Flask --> Track
+  MD --> Sources
+  Sources --> Providers
+  Track --> Snapshots
 ```
 
 This diagram shows the runtime ownership boundaries and the major data flows inspected in `app.py`, `market_data.py`, `sources.py`, and `.github/workflows/snapshot.yml`.

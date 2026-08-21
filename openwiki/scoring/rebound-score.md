@@ -27,21 +27,29 @@ It is intentionally **not** a return forecast and not investment advice. Its mai
 ## Scoring lifecycle
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
-    Symbol["symbol"] --> Inputs["app.score_stock"]
-    Inputs --> Target["analyst_target"]
-    Inputs --> Profile["profile"]
-    Inputs --> Tech["technicals"]
-    Inputs --> Ratings["analyst_recommendations"]
-    Inputs --> Options["options_flow"]
-    Target --> Rebound["recommendation.score_rebound"]
-    Profile --> Rebound
-    Tech --> Rebound
-    Ratings --> Rebound
-    Options --> Rebound
-    Rebound -->|at least 3 factors| Score["score, factors, confidence, missing"]
-    Rebound -->|fewer than 3 factors| NoScore["Insufficient data"]
-    Score --> Composite["app._composite_rank"]
+  Symbol["symbol"] --> Inputs["app.score_stock"]
+  subgraph Factors["Factor inputs"]
+    Target["analyst_target"]
+    Profile["profile"]
+    Tech["technicals"]
+    Ratings["analyst_recommendations"]
+    Options["options_flow"]
+  end
+  Inputs --> Target
+  Inputs --> Profile
+  Inputs --> Tech
+  Inputs --> Ratings
+  Inputs --> Options
+  Target --> Rebound["recommendation.score_rebound"]
+  Profile --> Rebound
+  Tech --> Rebound
+  Ratings --> Rebound
+  Options --> Rebound
+  Rebound -->|at least 3 factors| Score["score, factors, confidence, missing"]
+  Rebound -->|fewer than 3 factors| NoScore["Insufficient data"]
+  Score --> Composite["app._composite_rank"]
 ```
 
 The flow is cache-aware: normal board scoring calls `score_stock(..., full=False)`, so ratings/options and expensive providers are read from warmed caches where possible. Detail or snapshot paths can call with `full=True` to allow fuller network-backed factor collection.

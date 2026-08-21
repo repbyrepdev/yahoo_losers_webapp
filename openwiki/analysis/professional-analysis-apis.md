@@ -90,6 +90,7 @@ The `not_reported` list explicitly excludes intraday institutional-vs-retail spl
 It then derives `overall_sentiment` from nested availability-safe fields and concatenates alerts/signals/considerations into `trading_signals`. Each child subsystem may be unavailable independently.
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
     API["/api/professional-analysis"] --> Options["analyze_options_flow"]
     API --> Inst["track_institutional_flow"]

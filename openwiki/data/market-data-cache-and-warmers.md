@@ -68,19 +68,37 @@ Important public producers and their outputs:
 ## Warmers
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
-    FirstRequest["first Flask request"] --> Ensure["app._ensure_warmer_running"]
-    Ensure --> Fast["market_data._warm_loop fast lane"]
-    Ensure --> Slow["market_data._info_loop slow lane"]
-    Ensure --> Page["app._page_prebuild_loop"]
-    Ensure --> Timeframe["app._stf_prewarm_loop"]
-    Fast --> Batch["batch_history universe plus SPY VIX sector ETFs"]
-    Fast --> LastBar["refresh_last_bar during sessions"]
-    Fast --> FRED["fred_latest macro series"]
-    Slow --> Info["_info profiles"]
-    Slow --> Expensive["SEC, grades, earnings, ratings, options, target, short fallbacks"]
-    Page --> Home["internal GET / rebuilds rendered cache"]
-    Timeframe --> STF["internal GET /api/sophisticated-timeframe"]
+  FirstRequest["first Flask request"] --> Ensure["app._ensure_warmer_running"]
+  subgraph FastLane["Fast lane"]
+    Fast["market_data._warm_loop fast lane"]
+    Batch["batch_history universe plus SPY VIX sector ETFs"]
+    LastBar["refresh_last_bar during sessions"]
+    FRED["fred_latest macro series"]
+  end
+  subgraph SlowLane["Slow lane"]
+    Slow["market_data._info_loop slow lane"]
+    Info["_info profiles"]
+    Expensive["SEC, grades, earnings, ratings, options, target, short fallbacks"]
+  end
+  subgraph PageLoops["Page prebuild loops"]
+    Page["app._page_prebuild_loop"]
+    Home["internal GET / rebuilds rendered cache"]
+    Timeframe["app._stf_prewarm_loop"]
+    STF["internal GET /api/sophisticated-timeframe"]
+  end
+  Ensure --> Fast
+  Ensure --> Slow
+  Ensure --> Page
+  Ensure --> Timeframe
+  Fast --> Batch
+  Fast --> LastBar
+  Fast --> FRED
+  Slow --> Info
+  Slow --> Expensive
+  Page --> Home
+  Timeframe --> STF
 ```
 
 This diagram shows all background threads and their main responsibilities.
