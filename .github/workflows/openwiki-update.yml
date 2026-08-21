@@ -53,8 +53,11 @@ jobs:
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
           token: ${{ secrets.OPENWIKI_PUSH_TOKEN }}
+          # .last-update.json stays OUT: metadata-only refreshes must not
+          # open noise PRs (it rides along whenever real content changes).
           add-paths: |
-            openwiki
+            openwiki/**/*.md
+            openwiki/.claims
             AGENTS.md
             CLAUDE.md
           branch: openwiki/update

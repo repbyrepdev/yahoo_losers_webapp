@@ -16,3 +16,14 @@ hand-edit generated OpenWiki pages unless explicitly asked; prefer
 updating source code/docs and letting OpenWiki regenerate.
 
 <!-- OPENWIKI:END -->
+
+## Documentation layers (repo-owned note, outside the OpenWiki block)
+
+`openwiki-update.yml` (weekday cron) refreshes the generated `openwiki/`
+tree and the OPENWIKI-marked blocks in `AGENTS.md`/`CLAUDE.md` via gated
+PRs, guided by the standing brief in `openwiki/INSTRUCTIONS.md`. The
+hand-authored `wiki/` pages are the doctrine layer, guarded by the
+deterministic `wiki-facts` CI check. Never hand-edit generated pages —
+put standing corrections in `openwiki/INSTRUCTIONS.md` instead (hand
+edits get reverted by the generator's claims reconciliation; PR #84
+proved it).
