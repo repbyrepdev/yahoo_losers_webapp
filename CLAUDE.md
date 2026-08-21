@@ -1,12 +1,14 @@
 # yahoo_losers_webapp — build doctrine (SSOT)
 
-> **Agent context**: two documentation layers. `openwiki/quickstart.md`
-> is the generated evidence index (per-module behavior grounded in
-> source; maintained by the `openwiki-update.yml` weekday workflow —
-> exempt from markdownlint per `.markdownlint-cli2.yaml`, the generator
-> owns its formatting). `wiki/index.md` is the authored doctrine layer
-> (review gate, graduation rationale, design judgment; guarded by the
-> deterministic `wiki-facts` check). Corrections go through PRs like code.
+> **Agent context**: one home per fact. `openwiki/quickstart.md` is the
+> generated evidence index (per-module behavior pinned to source;
+> maintained by the `openwiki-update.yml` weekday workflow — exempt from
+> markdownlint, the generator owns its formatting). `docs/doctrine.md` +
+> `docs/review-gate.md` are the authored judgment layer. `README.md` is
+> the public front door (it renders as the app's /methodology page —
+> keep it small and stable). The deterministic `wiki-facts` check gates
+> rails/threshold facts across ALL three homes on every PR. Corrections
+> to generated pages go in `openwiki/INSTRUCTIONS.md`, never hand-edits.
 
 Flask app on Render analyzing Yahoo's daily losers with empirical odds and a
 paper-trading rehearsal account. This file is the canonical process; the

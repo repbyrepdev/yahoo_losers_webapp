@@ -1,8 +1,10 @@
 # Review and merge gate
 
-Nothing reaches `main` except a squash-merged PR with five green checks
+Nothing reaches `main` except a squash-merged PR with six green checks
 and every review thread resolved (ruleset "Merge gate", id 21115000).
-CLAUDE.md is the doctrine SSOT; this page is the map.
+CLAUDE.md is the operational SSOT; this page is the judgment record.
+Mechanical facts about CI live in the generated
+[`openwiki/`](../openwiki/quickstart.md) tree.
 
 ## The five required checks
 

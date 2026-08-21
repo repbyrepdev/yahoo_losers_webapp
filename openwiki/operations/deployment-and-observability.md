@@ -83,7 +83,7 @@ The app reports cache backend and memory in `/health`, so Kubernetes liveness/re
 
 ## Documentation automation notes
 
-The generated `openwiki/` tree is maintained by `.github/workflows/openwiki-update.yml`; the hand-authored [Authored Wiki](../../wiki/index.md) is a separate doctrine layer and should be linked rather than duplicated. `openwiki/INSTRUCTIONS.md` is the user-authored standing brief that steers future generated updates, so `.markdownlint-cli2.yaml` keeps generated `openwiki/**` exempt while re-including that brief for markdown linting.
+The generated `openwiki/` tree is maintained by `.github/workflows/openwiki-update.yml`; the hand-authored [Authored docs](../../docs/doctrine.md) are a separate doctrine layer and should be linked rather than duplicated. `openwiki/INSTRUCTIONS.md` is the user-authored standing brief that steers future generated updates, so `.markdownlint-cli2.yaml` keeps generated `openwiki/**` exempt while re-including that brief for markdown linting.
 
 ## Operational failure modes
 

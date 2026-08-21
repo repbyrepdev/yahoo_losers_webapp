@@ -16,8 +16,9 @@ The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do
 `openwiki-update.yml` (weekday cron) refreshes the generated `openwiki/`
 tree and the OPENWIKI-marked blocks in `AGENTS.md`/`CLAUDE.md` via gated
 PRs, guided by the standing brief in `openwiki/INSTRUCTIONS.md`. The
-hand-authored `wiki/` pages are the doctrine layer, guarded by the
-deterministic `wiki-facts` CI check. Never hand-edit generated pages —
+hand-authored `docs/` pages (doctrine.md, review-gate.md) are the
+judgment layer; the deterministic `wiki-facts` check gates factual
+claims across openwiki/, docs/, and README. Never hand-edit generated pages —
 put standing corrections in `openwiki/INSTRUCTIONS.md` instead (hand
 edits get reverted by the generator's claims reconciliation; PR #84
 proved it).
