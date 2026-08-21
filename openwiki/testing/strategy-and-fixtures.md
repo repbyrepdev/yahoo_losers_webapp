@@ -31,6 +31,7 @@ The file also sets `MARKET_DATA_DISABLE_WARMER=1` before importing `market_data`
 | `tests/test_polish.py` | Recency weighting, calibration touch grading, liquidity chips, README methodology disclosures, audit regressions. |
 | `tests/test_gold_standard.py` | SEC Form 4 parsing, XBRL fundamentals, solvency source choice, calibration unresolved states, broader gold-standard regressions. |
 | `tests/test_live_gate.py` | Live-readiness criteria, live arming refusal paths, inspector page safety and rate limiting. |
+| `tests/test_wiki_crosslink.py` | Deterministic PR-to-wiki reverse lookup: exact root-file matching, deep-path collision avoidance, unmatched-file reporting, and focused-test column behavior. |
 
 ## Running tests
 
@@ -52,6 +53,7 @@ Focused commands by change area:
 | SEC, solvency, implied move, sector context | `python -m pytest tests/test_market_context.py tests/test_gold_standard.py -q` |
 | Paper trading and live gate | `python -m pytest tests/test_sources.py tests/test_live_gate.py -q` |
 | Snapshot, calibration, walk-forward | `python -m pytest tests/test_polish.py tests/test_gold_standard.py tests/test_live_gate.py -q` |
+| PR-to-wiki cross-linker | `python -m pytest tests/test_wiki_crosslink.py -q` |
 
 CI uses `.github/workflows/tests.yml`, which runs the full suite under Python 3.13 and then performs grep guards for specific fabricated fallback patterns and bare `except:` in `app.py`.
 
@@ -66,11 +68,16 @@ CI uses `.github/workflows/tests.yml`, which runs the full suite under Python 3.
 ## CI and audit gates
 
 - `tests.yml`: offline pytest plus grep guards for known fabricated fallback patterns.
-- `audit.yml`: `pip-audit` against resolved dependencies.
-- `gitleaks.yml`: secret scanning.
-- `lint.yml`: lint/format enforcement.
+- `audit.yml`: `pip-audit` against resolved dependencies on PRs, pushes, and weekly schedule.
+- `gitleaks.yml`: full-history secret scan using a pinned, checksum-verified `gitleaks` binary.
+- `lint.yml`: `ruff`, `markdownlint`, and `wiki-facts`. `wiki-facts` is deterministic: `tools/check_wiki_facts.py` checks generated OpenWiki, authored docs, README discipline, source constants, and required workflow job IDs.
+- `wiki-crosslink.yml`: reviewer aid, not a merge gate; same-repository PRs call `tools/wiki_crosslink.py` so changed files point reviewers to the relevant OpenWiki pages. Its focused regression suite is `tests/test_wiki_crosslink.py`.
+- `openwiki-update.yml`: generated-docs lane, not a unit test; Monday/manual runs create scoped OpenWiki PRs and arm auto-merge only after required checks pass.
+- `notify-wiki-hub.yml`: post-merge docs-delivery hook, not a unit test; it dispatches a docs-updated event when documentation-layer files change on `main`.
 - `healthwatch.yml`: production source-health monitor, not a unit test.
 - `snapshot.yml`: production data-recording workflow, not part of PR tests.
+
+[Deployment and Observability](../operations/deployment-and-observability.md) owns the runtime purpose of those workflows; this page owns the focused tests and local validation routes.
 
 ## Debugging flaky tests
 

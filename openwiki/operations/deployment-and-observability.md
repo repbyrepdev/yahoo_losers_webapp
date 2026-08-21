@@ -75,15 +75,40 @@ The app reports cache backend and memory in `/health`, so Kubernetes liveness/re
 | --- | --- |
 | `.github/workflows/tests.yml` | Installs runtime and dev requirements, runs `python -m pytest tests/ -q`, and greps for known fabricated fallback patterns and bare `except:` in `app.py`. |
 | `.github/workflows/audit.yml` | Runs `pip-audit` on the resolved runtime environment on PRs, pushes to main, and weekly. |
-| `.github/workflows/gitleaks.yml` | Secret scanning gate over full git history; checkout uses `fetch-depth: 0`, and gitleaks uses the GitHub token. |
-| `.github/workflows/lint.yml` | Lint/format gate. |
+| `.github/workflows/gitleaks.yml` | Required secret-scanning gate over full git history. The workflow downloads the pinned `gitleaks` v8.30.1 Linux binary, verifies the tarball SHA-256, and runs `/tmp/gitleaks git . --no-banner --redact`; it complements runtime payload scrubbing in [Data Provenance and No-Fabrication Contract](../data/provenance-and-honesty.md). |
+| `.github/workflows/lint.yml` | Required `ruff`, `markdownlint`, and `wiki-facts` gates. `wiki-facts` runs `tools/check_wiki_facts.py`, which compares source constants, workflow job IDs, README discipline, and generated or authored documentation claims. |
 | `.github/workflows/snapshot.yml` | Calls `/api/snapshot`, validates nonempty scored snapshot, commits `data/snapshots/<date>.json`, and posts a daily digest issue with top scores and paper events. |
 | `.github/workflows/healthwatch.yml` | Probes `/health/sources` every 30 minutes, opens a provider-degraded issue, and closes it when healthy. |
-| `.github/workflows/openwiki-update.yml` | Generated OpenWiki maintenance automation: runs `openwiki code --update --print` on weekday mornings UTC and by manual dispatch, then opens a gated PR only when generated content or OPENWIKI-managed guidance changed. A `Drop watermark-only churn` step reverts `.last-update.json` when it is the only diff. |
+| `.github/workflows/openwiki-update.yml` | Generated OpenWiki maintenance automation: runs `openwiki code --update --print` on Monday mornings UTC and by manual dispatch using the pinned `.github/openwiki-toolchain` package, suppresses watermark-only diffs, opens a scoped PR with `OPENWIKI_PUSH_TOKEN`, and arms auto-merge for the generated-docs lane. |
+| `.github/workflows/wiki-crosslink.yml` | On same-repository PR open, runs `tools/wiki_crosslink.py` to comment which `openwiki/` pages cover the changed files by reverse-mapping `openwiki/source-map.md`. Fork PRs are skipped to avoid a write-token path. |
+| `.github/workflows/notify-wiki-hub.yml` | On pushes to `main` that touch `openwiki/**`, `docs/**`, legacy `wiki/**`, README, AGENTS, or CLAUDE, dispatches `docs-updated` to `repbyrep-wiki` so the external hub can rebuild before its nightly backstop. |
 
 ## Documentation automation notes
 
-The generated `openwiki/` tree is maintained by `.github/workflows/openwiki-update.yml`; the hand-authored [Authored docs](../../docs/doctrine.md) are a separate doctrine layer and should be linked rather than duplicated. `openwiki/INSTRUCTIONS.md` is the user-authored standing brief that steers future generated updates, so `.markdownlint-cli2.yaml` keeps generated `openwiki/**` exempt while re-including that brief for markdown linting.
+The generated `openwiki/` tree is maintained by `.github/workflows/openwiki-update.yml`; the hand-authored [Authored docs](../../docs/doctrine.md) are a separate doctrine layer and should be linked rather than duplicated. `openwiki/INSTRUCTIONS.md` is the user-authored standing brief that steers future generated updates, while `.github/openwiki-toolchain/package.json` pins `openwiki`, `mermaid`, and `jsdom` for reproducible documentation and diagram validation. `.markdownlint-cli2.yaml` keeps generated `openwiki/**` exempt while re-including the authored standing brief for markdown linting.
+
+```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
+flowchart TD
+    subgraph DriftCheck["Generated OpenWiki drift check"]
+        Cron["Monday cron or manual dispatch"] --> Toolchain["npm ci in .github/openwiki-toolchain"]
+        Toolchain --> Generator["openwiki code --update --print"]
+        Generator --> DiffGuard["drop watermark-only diff"]
+        DiffGuard --> DocsPR["scoped OpenWiki PR"]
+        DocsPR --> AutoMerge["auto-merge waits for required checks"]
+    end
+    subgraph ReviewerAid["PR reviewer aid"]
+        PullRequest["same-repo PR opened"] --> Crosslink["tools/wiki_crosslink.py"]
+        Crosslink --> SourceMap["openwiki/source-map.md"]
+        SourceMap --> Comment["wiki page comment"]
+    end
+    subgraph HubSync["External wiki sync"]
+        MainDocs["docs change on main"] --> Dispatch["notify-wiki-hub.yml"]
+        Dispatch --> Hub["repbyrep-wiki docs-updated event"]
+    end
+```
+
+This diagram shows the three documentation-delivery workflows: generated OpenWiki drift repair, deterministic PR cross-linking, and post-merge hub notification.
 
 ## Operational failure modes
 
@@ -103,11 +128,15 @@ python -m pytest tests/test_sources.py tests/test_freshness.py -q
 python -m pytest tests/test_live_gate.py -q
 ```
 
-For generated-documentation automation or standing-brief changes, validate the authored brief with:
+For generated-documentation automation changes, choose the narrowest check for the touched boundary:
 
 ```bash
+python -m pytest tests/test_wiki_crosslink.py -q
+python3 tools/check_wiki_facts.py
 npx markdownlint-cli2 openwiki/INSTRUCTIONS.md
 ```
+
+Use `tests/test_wiki_crosslink.py` when changing `tools/wiki_crosslink.py` or `.github/workflows/wiki-crosslink.yml`; use `tools/check_wiki_facts.py` when changing documented constants, required-check naming, README discipline, or the generated-docs gate; use markdownlint when the authored standing brief changes.
 
 Container smoke check:
 
