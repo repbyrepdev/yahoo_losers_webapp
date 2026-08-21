@@ -35,4 +35,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npx --yes markdownlint-cli2 "**/*.md" "!node_modules"
+      - run: npx --yes markdownlint-cli2 "**/*.md"  # policy + exemptions live in .markdownlint-cli2.yaml

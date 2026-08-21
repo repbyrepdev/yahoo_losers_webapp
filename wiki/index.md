@@ -1,10 +1,16 @@
 # yahoo_losers_webapp — Wiki
 
-Generated and maintained by Claude Code (the repo's standing agent).
-The weekly `wiki-maintenance` workflow re-verifies these pages against
-the code and opens a docs PR when reality drifts; corrections land
+The authored doctrine layer, written by Claude Code (the repo's
+standing agent) and review-hardened. The deterministic `wiki-facts` CI
+check guards these pages' factual claims on every PR; corrections land
 through the same gate as code. Authored methodology lives in the app's `/methodology` page;
 this wiki documents **how the system is built**.
+
+**Two documentation layers, one source per fact**: these `wiki/` pages
+are the authored layer — doctrine, design rationale, the why. The
+generated [`openwiki/`](../openwiki/quickstart.md) tree is the evidence
+index — per-module behavior grounded in source, maintained by the
+weekday `openwiki-update.yml` workflow. Code facts live there; judgment lives here.
 
 ## Pages
 
