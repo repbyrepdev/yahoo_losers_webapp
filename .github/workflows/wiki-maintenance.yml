@@ -18,6 +18,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write  # claude-code-action exchanges an OIDC token for its GitHub auth
 jobs:
   wiki-drift:
     name: wiki-drift
