@@ -14,7 +14,7 @@ Start with the map below, then use the routing table to jump from a change inten
 ## Main concepts
 
 - [Architecture Overview](architecture/overview.md): whole-system map and request/data/trading flows.
-- [Authored Wiki](../wiki/index.md): separate hand-authored doctrine and design-rationale layer; link to it when explaining product judgment rather than duplicating it here.
+- [Authored docs](../docs/doctrine.md): separate hand-authored doctrine and design-rationale layer; link to it when explaining product judgment rather than duplicating it here.
 - [Dashboard and Routes](application/dashboard-and-routes.md): Flask routes, homepage orchestration, page cache, task endpoints, client-error telemetry, health, exports, and PWA assets.
 - [Data Provenance and No-Fabrication Contract](data/provenance-and-honesty.md): `Sourced`, unavailable values, derived labels, secret redaction, and “never invent a number”.
 - [Market Data Cache and Warmers](data/market-data-cache-and-warmers.md): Redis/local/disk cache, TTL policy, `_cached()`, yfinance producers, background warm lanes, and latest-bar refresh.

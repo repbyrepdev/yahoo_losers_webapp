@@ -22,7 +22,14 @@ keep these true in every regeneration):
    reaches the curl.
 5. The retired `wiki-maintenance.yml` workflow must not be mentioned;
    the docs automation is `openwiki-update.yml` (weekday cron).
-6. Security posture: `/inspect/<symbol>` sanitizes its path segment to
+6. Trading-rail constants must state their VALUES alongside their names
+   in the paper-trading page (a deterministic CI gate,
+   `tools/check_wiki_facts.py`, asserts name AND value presence — a
+   formula reference alone fails the gate).
+7. The authored judgment layer moved to `docs/` (doctrine.md,
+   review-gate.md) — the old `wiki/` tree is gone. Link the authored
+   layer as `[Authored docs](../docs/doctrine.md)`.
+8. Security posture: `/inspect/<symbol>` sanitizes its path segment to
    ticker characters. Provider failure payloads are scrubbed by
    `provenance.redact_secrets` at the cache boundary
    (`market_data._cached` redacts `reason`/`detail` on every not-ok

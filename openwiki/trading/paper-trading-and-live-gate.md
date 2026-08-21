@@ -61,9 +61,9 @@ Entry workflow:
 - It fetches current positions, open orders, and recent closed orders.
 - It reconstructs the reference entry price from the entry order's limit price via `_entry_ref_price()`.
 - It computes sessions held with `_sessions_between()`, using the cached Alpaca trading calendar when available and weekday fallback otherwise.
-- It exits when `sessions >= PAPER_MAX_SESSIONS` or latest close is below `ref * (1 - PAPER_STOP_PCT / 100)`.
+- It exits when `sessions >= PAPER_MAX_SESSIONS` (`PAPER_MAX_SESSIONS` = 7 trading sessions) or the latest close is below `ref * (1 - PAPER_STOP_PCT / 100)` (`PAPER_STOP_PCT` = 8, a close-basis stop 8% under reference).
 - Before market exits, it confirms cancellation of resting sell orders so a failed cancel plus new sell cannot double-fill into a short.
-- If no protective sell exists, it creates an OCO-style protective pair: take-profit at `ref * (1 + PAPER_TP_PCT / 100)` and catastrophe stop at `ref * (1 - PAPER_CATASTROPHE_STOP_PCT / 100)`.
+- If no protective sell exists, it creates an OCO-style protective pair: take-profit at `ref * (1 + PAPER_TP_PCT / 100)` and catastrophe stop at `ref * (1 - PAPER_CATASTROPHE_STOP_PCT / 100)` (`PAPER_CATASTROPHE_STOP_PCT` = 15, so the broker-resident floor sits 15% under reference).
 - Short positions are marked `unexpected-short` and left for manual attention rather than auto-managed.
 
 ```mermaid

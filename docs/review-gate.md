@@ -1,10 +1,12 @@
 # Review and merge gate
 
-Nothing reaches `main` except a squash-merged PR with five green checks
+Nothing reaches `main` except a squash-merged PR with six green checks
 and every review thread resolved (ruleset "Merge gate", id 21115000).
-CLAUDE.md is the doctrine SSOT; this page is the map.
+CLAUDE.md is the operational SSOT; this page is the judgment record.
+Mechanical facts about CI live in the generated
+[`openwiki/`](../openwiki/quickstart.md) tree.
 
-## The five required checks
+## The six required checks
 
 | Check | What it stops |
 |---|---|
@@ -13,6 +15,7 @@ CLAUDE.md is the doctrine SSOT; this page is the map.
 | `ruff` | Bug-class lint: E9, F, B015, B018 — undefined names, unused code, useless expressions |
 | `markdownlint` | Markdown rot (gold config, whole repo) |
 | `pip-audit` | Known CVEs in the resolved dependency tree (also weekly cron) |
+| `wiki-facts` | Documented constants that disagree with the code (deterministic, no LLM) |
 
 All jobs are **unconditional** — no `paths:` filters — because a required
 check that never reports blocks the merge forever (the name-match trap).
