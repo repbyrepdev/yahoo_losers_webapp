@@ -22,3 +22,18 @@ claims across openwiki/, docs/, and README. Never hand-edit generated pages —
 put standing corrections in `openwiki/INSTRUCTIONS.md` instead (hand
 edits get reverted by the generator's claims reconciliation; PR #84
 proved it).
+### Chat-lane runbook (in-session OpenWiki runs)
+
+When running the OpenWiki lifecycle in a session, the wiki work is only
+half the job. After `openwiki_finish` returns `complete`, ALWAYS:
+
+1. Branch, commit ONLY `openwiki/` + `AGENTS.md`/`CLAUDE.md` marked
+   blocks (never `git add -A`), push, open the PR.
+2. Arm it: `gh pr merge --auto --squash` (the generated-docs lane; the
+   ruleset still blocks on red checks or open threads).
+3. Confirm the hub dispatch after merge: the `notify-wiki-hub` run goes
+   green and repbyrep-wiki's deploy fires within ~2 minutes.
+
+Skipping any step is non-destructive (gates stall, cron self-heals next
+weekday) — but do not rely on that; follow the list.
+
