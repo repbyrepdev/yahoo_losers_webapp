@@ -62,6 +62,7 @@ jobs:
           fi
 
       - name: Create OpenWiki update pull request
+        id: docs_pr
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
           token: ${{ secrets.OPENWIKI_PUSH_TOKEN }}
@@ -75,5 +76,21 @@ jobs:
           body: |
             Automated OpenWiki documentation update (weekday drift check).
 
-            Gate: all six required checks + review threads apply to this PR
-            like any other. Merge is manual or auto-armed after review.
+            Zero-touch lane: auto-merge is armed; this PR lands when all
+            six required checks are green. Deterministic gates (facts,
+            links, lint, secrets, tests) are the reviewers here.
+
+      - name: Arm auto-merge (zero-touch docs lane)
+        # Docs-only robot PRs merge themselves once every required check
+        # is green (the generated-docs lane, docs/review-gate.md). Arming
+        # does NOT bypass ruleset 21115000: six required checks AND zero
+        # unresolved review threads are enforced at merge time -- a thread
+        # opened by anyone keeps the PR blocked until resolved. Scope is
+        # mechanically capped at openwiki/ + the marked guidance blocks;
+        # this workflow cannot stage code.
+        if: steps.docs_pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.OPENWIKI_PUSH_TOKEN }}
+        run: |
+          gh pr merge --auto --squash "${{ steps.docs_pr.outputs.pull-request-number }}" \
+            -R "$GITHUB_REPOSITORY"

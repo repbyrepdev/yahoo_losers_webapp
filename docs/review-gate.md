@@ -36,6 +36,20 @@ check that never reports blocks the merge forever (the name-match trap).
    threads counts as zero unresolved. Sequence: review posts → read all
    → fix → resolve → then `gh pr merge --auto --squash`.
 
+## The generated-docs lane (deliberate exception)
+
+Robot-authored docs PRs from `openwiki-update.yml` arm their own
+auto-merge and land on green WITHOUT a summoned reviewer. This is
+review-by-gates, not review-by-eyeballs, and it is safe for exactly this
+lane because: scope is mechanically capped (`openwiki/` + the marked
+guidance blocks -- the workflow cannot stage code), the content already
+passed OpenWiki's claims verification, and all six required checks plus
+markdownlint-of-authored-files still gate the merge. Arming does NOT
+bypass the ruleset: if anyone (human or reviewer bot) opens a thread on
+such a PR, the merge stays blocked until it is resolved -- thread
+resolution is a ruleset requirement, not a courtesy. The summoned-review
+cascade above remains mandatory for every PR that touches code.
+
 ## Reviewer track record (why the cascade earns its cost)
 
 The hardening arc's record is in the PRs: a live-credentials pairing
