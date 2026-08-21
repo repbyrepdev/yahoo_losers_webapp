@@ -1763,6 +1763,20 @@ class TestSecretRedaction:
             type(exc.value), exc.value, exc.value.__traceback__))
         assert "fh-SECRET456" not in rendered
 
+    def test_cache_boundary_scrubs_any_producer_failure(self):
+        """PR #85 review (Critical): the universal guarantee -- ANY producer
+        whose failure text carries a keyed URL gets scrubbed at the cache
+        write, regardless of which helper built the string."""
+        def leaky_producer():
+            return {"ok": False, "reason": "HTTPError",
+                    "detail": "500 for url: https://x.test/q?apikey=sk-LEAK99&s=X"}
+        market_data._cache._local.pop("test:leaky", None)
+        payload = market_data._cached("test:leaky", 60, leaky_producer)
+        assert "sk-LEAK99" not in payload["detail"]
+        assert "apikey=REDACTED" in payload["detail"]
+        cached = market_data._cache.get("test:leaky")
+        assert "sk-LEAK99" not in str(cached)
+
     def test_compose_failure_keeps_both_parts(self):
         msg = sources._compose_failure({"reason": "insufficient history (5 bars)",
                                         "detail": "fallbacks: alpaca: a-down"})
