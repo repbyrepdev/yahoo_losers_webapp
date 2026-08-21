@@ -53,7 +53,25 @@ Focused commands by change area:
 | Paper trading and live gate | `python -m pytest tests/test_sources.py tests/test_live_gate.py -q` |
 | Snapshot, calibration, walk-forward | `python -m pytest tests/test_polish.py tests/test_gold_standard.py tests/test_live_gate.py -q` |
 
-CI uses `.github/workflows/tests.yml`, which runs the full suite under Python 3.13 and then performs grep guards for specific fabricated fallback patterns and bare `except:` in `app.py`.
+CI uses `.github/workflows/tests.yml`, which runs the full suite under Python 3.13 and then performs grep guards for specific fabricated fallback patterns and bare `except:` in `app.py`. Documentation and repository-doctrine checks live in `.github/workflows/lint.yml`: `wiki-facts` runs `python3 tools/check_wiki_facts.py`, while `markdownlint` runs `npx --yes markdownlint-cli2 "**/*.md"` with policy from `.markdownlint-cli2.yaml`.
+
+## Documentation checks
+
+The authored `wiki/` directory and generated `openwiki/` directory have different validation paths:
+
+- `tools/check_wiki_facts.py` is a deterministic, no-network gate for the authored `wiki/` layer. It verifies paper-trading rails from `sources.py`, live-readiness thresholds from `tracking.py`, required workflow check names, top-level Python module inventory, and `tests/test_*.py` coverage in the authored wiki pages.
+- `.github/workflows/openwiki-update.yml` maintains generated `openwiki/` separately. It installs the locked `.github/openwiki-toolchain` dependencies with `npm ci --prefix .github/openwiki-toolchain`, then runs `openwiki code --update --print` and opens a normal PR.
+- `.markdownlint-cli2.yaml` ignores `openwiki/**` because the generator owns those files' formatting. Hand-authored Markdown remains covered by `markdownlint-cli2`.
+
+Focused validation for docs-only changes:
+
+```bash
+python3 tools/check_wiki_facts.py
+npx --yes markdownlint-cli2 "**/*.md"
+npm ci --prefix .github/openwiki-toolchain
+```
+
+Run the OpenWiki workflow or `openwiki code --update --print` only when changing generated-wiki automation or when intentionally refreshing `openwiki/`; it is not a substitute for application tests.
 
 ## What tests imply for implementation changes
 

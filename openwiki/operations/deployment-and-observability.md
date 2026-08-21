@@ -76,10 +76,36 @@ The app reports cache backend and memory in `/health`, so Kubernetes liveness/re
 | `.github/workflows/tests.yml` | Installs runtime and dev requirements, runs `python -m pytest tests/ -q`, and greps for known fabricated fallback patterns and bare `except:` in `app.py`. |
 | `.github/workflows/audit.yml` | Runs `pip-audit` on the resolved runtime environment on PRs, pushes to main, and weekly. |
 | `.github/workflows/gitleaks.yml` | Secret scanning gate over full git history; checkout uses `fetch-depth: 0`, and gitleaks uses the GitHub token. |
-| `.github/workflows/lint.yml` | Lint/format gate. |
+| `.github/workflows/lint.yml` | Runs `ruff`, the deterministic `wiki-facts` job, and `markdownlint` on PRs and pushes to `main`. The Markdown step uses `npx --yes markdownlint-cli2 "**/*.md"` and `.markdownlint-cli2.yaml`. |
 | `.github/workflows/snapshot.yml` | Calls `/api/snapshot`, validates nonempty scored snapshot, commits `data/snapshots/<date>.json`, and posts a daily digest issue with top scores and paper events. |
 | `.github/workflows/healthwatch.yml` | Probes `/health/sources` every 30 minutes, opens a provider-degraded issue, and closes it when healthy. |
-| `.github/workflows/openwiki-update.yml` | Wiki maintenance automation. |
+| `.github/workflows/openwiki-update.yml` | Weekday/manual generated-wiki maintenance. It checks out full history, installs the pinned `.github/openwiki-toolchain` package set with `npm ci`, runs `openwiki code --update --print`, and opens a PR from `openwiki/update` using `OPENWIKI_PUSH_TOKEN` so required PR checks still run. |
+
+## Documentation automation
+
+The repository now has two documentation layers. The generated `openwiki/` tree is the source-evidence index for agents and is maintained by [Testing Strategy and Fixtures](../testing/strategy-and-fixtures.md)'s documented CI path through `.github/workflows/openwiki-update.yml`. The authored `wiki/` tree carries doctrine and design judgment; `tools/check_wiki_facts.py` makes selected checkable claims in that tree match `sources.py`, `tracking.py`, `.github/workflows/*.yml`, top-level Python modules, and `tests/test_*.py`.
+
+```mermaid
+flowchart TD
+    Trigger["Weekday schedule or manual dispatch"] --> Checkout["Full history checkout"]
+    Checkout --> Install["npm ci in .github/openwiki-toolchain"]
+    Install --> Generate["openwiki code --update --print"]
+    Generate --> PR["create-pull-request to openwiki/update"]
+    PR --> Gates["Required PR checks and review"]
+    Lint["lint.yml"] --> WikiFacts["tools/check_wiki_facts.py"]
+    Lint --> Markdown["markdownlint-cli2 policy"]
+    Markdown --> Authored["authored Markdown checked"]
+    Markdown --> Generated["openwiki ignored for formatting"]
+```
+
+This diagram shows the generated-wiki update path and the separate deterministic gates that protect authored Markdown.
+
+Operational invariants for documentation changes:
+
+- Do not hand-edit `.github/openwiki-toolchain/node_modules`; `.github/openwiki-toolchain/package.json` and `package-lock.json` are the canonical pinned toolchain inputs.
+- `openwiki/**` is ignored by markdownlint through `.markdownlint-cli2.yaml` because OpenWiki owns generated formatting, while authored Markdown still runs through `markdownlint-cli2`.
+- The OpenWiki workflow uses `contents: read` for checkout and a separate `OPENWIKI_PUSH_TOKEN` only in the create-pull-request step; this avoids creating PRs with `GITHUB_TOKEN` that would not trigger the required checks.
+- Full git history (`fetch-depth: 0`) is required so OpenWiki can diff the current tree against the last documented commit in `openwiki/.last-update.json`.
 
 ## Operational failure modes
 
