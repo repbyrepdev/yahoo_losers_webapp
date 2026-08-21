@@ -36,3 +36,15 @@ keep these true in every regeneration):
    payload before storage), with additional boundary redaction inside
    the FMP/Finnhub helpers. Keep these facts in the routes/operations
    pages.
+
+## Diagram hygiene (standing)
+
+- Sequence diagrams for request/data flows; state diagrams for
+  lifecycles; flowcharts organized with `subgraph` clusters.
+- Prefer the ELK renderer on flowcharts:
+  start fences with `%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%`.
+- Decompose, never truncate: a multi-concern diagram becomes one
+  COMPLETE diagram per concern; every component must appear in at least
+  one diagram; never omit nodes for aesthetics.
+- Full-topology "everything" views: link the project's Interactive
+  graph page instead of drawing a mega-flowchart.

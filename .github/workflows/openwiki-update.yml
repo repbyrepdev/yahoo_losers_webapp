@@ -3,7 +3,7 @@ name: OpenWiki Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 8 * * 1-5"  # weekday mornings UTC
+    - cron: "0 8 * * 1"  # Mondays; coalesced push-trigger arms 2026-09-01 (fresh credit pool)
 
 permissions:
   contents: read  # checkout only reads; the PR step pushes with OPENWIKI_PUSH_TOKEN

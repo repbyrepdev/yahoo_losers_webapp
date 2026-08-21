@@ -22,6 +22,22 @@ claims across openwiki/, docs/, and README. Never hand-edit generated pages —
 put standing corrections in `openwiki/INSTRUCTIONS.md` instead (hand
 edits get reverted by the generator's claims reconciliation; PR #84
 proved it).
+### New agent? Start here
+
+1. Read `openwiki/quickstart.md` — the mapped system, entry point for
+   everything. Then `openwiki/source-map.md`: change intent → files →
+   wiki page → tests. Follow the row for what you are changing.
+2. `docs/doctrine.md` and `docs/review-gate.md` are the judgment layer
+   — obey them; they are short.
+3. The merge is MECHANICALLY gated: six required checks (pytest,
+   gitleaks, ruff, markdownlint, pip-audit, wiki-facts) plus resolved
+   review threads. wiki-facts REDS any PR that changes documented
+   constants without updating the docs in that same PR — update them.
+4. Never hand-edit generated `openwiki/` pages; standing corrections go
+   in `openwiki/INSTRUCTIONS.md`.
+5. The pre-push hook runs the full suite + gitleaks; a red suite cannot
+   be pushed. Do not fight the gates — they are the path.
+
 ### Chat-lane runbook (in-session OpenWiki runs)
 
 When running the OpenWiki lifecycle in a session, the wiki work is only
