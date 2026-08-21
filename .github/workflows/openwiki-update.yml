@@ -6,8 +6,7 @@ on:
     - cron: "0 8 * * 1-5"  # weekday mornings UTC
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read  # checkout only reads; the PR step pushes with OPENWIKI_PUSH_TOKEN
 
 # Review hardening (PR #82's Copilot findings):
 # - concurrency: two overlapping runs raced on the openwiki/update branch
@@ -30,14 +29,17 @@ jobs:
           # Full history so `openwiki code --update` can diff HEAD against the
           # commit it last documented.
           fetch-depth: 0
+          persist-credentials: false  # nothing later may inherit the write token
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
 
-      - name: Install OpenWiki
-        run: npm install --global openwiki@0.3.3 mermaid@11.16.0 jsdom@29.1.1
+      - name: Install OpenWiki (locked)
+        run: |
+          npm ci --prefix .github/openwiki-toolchain
+          echo "$GITHUB_WORKSPACE/.github/openwiki-toolchain/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Run OpenWiki
         run: openwiki code --update --print

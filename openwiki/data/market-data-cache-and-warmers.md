@@ -20,7 +20,7 @@ For provider-specific fallback chains, see [Provider Failover](provider-failover
 
 `_load_cache_from_disk()` restores unexpired local entries from `MARKET_DATA_CACHE_FILE` at import. `save_cache_to_disk()` writes only successful dict payloads and replaces the file atomically through a temporary file.
 
-`claim_once(key, ttl)` is a critical extension: it uses Redis `SET NX` where available and a local lock otherwise. `sources.py` uses it to prevent duplicate same-day FMP/FINRA spending.
+`claim_once(key, ttl)` is a critical extension: with Redis it is atomic across processes via `SET NX`; without Redis the lock and map are process-local, so the single-winner guarantee holds only within one process (multi-worker deployments rely on Redis for the cross-process guarantee). `sources.py` uses it to prevent duplicate same-day FMP/FINRA spending.
 
 ## TTL and failure policy
 

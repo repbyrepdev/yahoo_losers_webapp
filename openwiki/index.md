@@ -4,6 +4,8 @@ okf_version: "0.1"
 
 # Files
 
+- [Authored Wiki](../wiki/index.md) - Design rationale and project doctrine (hand-written layer).
+
 - [OpenWiki Quickstart](quickstart.md) - High-level navigation guide for the Yahoo Finance daily losers Flask app, including architecture, data, scoring, APIs, trading safety, operations, and testing routes.
 - [Source Map](source-map.md) - Compact engineering intent map from changes to owning files, important symbols, focused tests, and minimal validation commands.
 

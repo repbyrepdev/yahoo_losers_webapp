@@ -79,7 +79,7 @@ The app reports cache backend and memory in `/health`, so Kubernetes liveness/re
 | `.github/workflows/lint.yml` | Lint/format gate. |
 | `.github/workflows/snapshot.yml` | Calls `/api/snapshot`, validates nonempty scored snapshot, commits `data/snapshots/<date>.json`, and posts a daily digest issue with top scores and paper events. |
 | `.github/workflows/healthwatch.yml` | Probes `/health/sources` every 30 minutes, opens a provider-degraded issue, and closes it when healthy. |
-| `.github/workflows/openwiki-update.yml` and `wiki-maintenance.yml` | Wiki maintenance automation. |
+| `.github/workflows/openwiki-update.yml` | Wiki maintenance automation. |
 
 ## Operational failure modes
 
@@ -103,6 +103,7 @@ Container smoke check:
 
 ```bash
 docker build -t yahoo-losers-webapp .
-docker run --rm -p 8080:8080 yahoo-losers-webapp
-curl http://localhost:8080/health
+container_id=$(docker run -d --rm -p 8080:8080 yahoo-losers-webapp)
+trap 'docker stop "$container_id" >/dev/null' EXIT
+curl --fail --retry 10 --retry-delay 1 http://localhost:8080/health
 ```

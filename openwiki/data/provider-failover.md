@@ -54,7 +54,7 @@ Provider keys are optional unless a feature depends on that provider:
 
 ## Budget and idempotency controls
 
-FMP-backed calls are guarded by `_fmp_budget_ok()`. With Redis, the counter uses an atomic `INCR` key under the market-data cache schema; without Redis, each process has a local cap of half the global budget so two workers still stay below the plan limit. Day-stamped scarce calls such as `price_targets()`, `shares_float()`, `short_percent_float()`, and `fmp_eod_bars()` use `TTLCache.claim_once()` plus an answer replay key so concurrent workers cannot spend the same per-symbol-per-day request twice.
+FMP-backed calls are guarded by `_fmp_budget_ok()`. With Redis, the counter uses an atomic `INCR` key under the market-data cache schema; without Redis, each process has a local cap of half the global budget so two workers still stay below the plan limit. Day-stamped scarce calls such as `price_targets()`, `shares_float()`, `short_percent_float()`, and `fmp_eod_bars()` use `TTLCache.claim_once()` plus an answer replay key so concurrent callers do not spend the same per-symbol-per-day request twice (cross-process only when Redis backs the cache; the local fallback's claim and replay are per-process).
 
 Alpaca paper trading uses deterministic `client_order_id` values for idempotency. Duplicate order IDs are interpreted as already submitted rather than retried into duplicate positions.
 

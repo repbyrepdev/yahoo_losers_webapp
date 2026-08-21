@@ -1,9 +1,12 @@
 # yahoo_losers_webapp — build doctrine (SSOT)
 
-> **Agent context**: read `wiki/index.md` first — the generated wiki
-> (architecture, data pipeline, paper lifecycle, gate, operations,
-> testing) is the fast path to repo understanding. Kept current by the
-> weekly `wiki-maintenance` workflow; corrections go through PRs like code.
+> **Agent context**: two documentation layers. `openwiki/quickstart.md`
+> is the generated evidence index (per-module behavior grounded in
+> source; maintained by the `openwiki-update.yml` weekday workflow —
+> exempt from markdownlint per `.markdownlint-cli2.yaml`, the generator
+> owns its formatting). `wiki/index.md` is the authored doctrine layer
+> (review gate, graduation rationale, design judgment; guarded by the
+> deterministic `wiki-facts` check). Corrections go through PRs like code.
 
 Flask app on Render analyzing Yahoo's daily losers with empirical odds and a
 paper-trading rehearsal account. This file is the canonical process; the

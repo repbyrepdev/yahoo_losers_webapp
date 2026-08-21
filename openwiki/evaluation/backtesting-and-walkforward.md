@@ -44,7 +44,7 @@ The module excludes factors whose historical point-in-time data is not available
 - Options chains.
 - Short interest.
 
-Using today's values for those factors on past dates would introduce look-ahead bias. The CLI therefore tests the technical subset only and states limitations: survivorship bias, no costs/slippage/borrow costs, close-to-close returns, dividend ignorance, and past-performance limits.
+Using today's values for those factors on past dates would introduce look-ahead bias. The CLI therefore tests the technical subset only and states limitations: survivorship bias, no costs/slippage/borrow costs, close-to-close returns on dividend-adjusted prices (`Ticker.history()` defaults to `auto_adjust=True`, so returns embed dividend adjustments rather than ignoring dividends), and past-performance limits.
 
 Example usage:
 

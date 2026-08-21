@@ -8,7 +8,8 @@ This repository has a generated `openwiki/` evidence index. It is optional just-
 - Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
 
 The scheduled OpenWiki GitHub Actions workflow (`openwiki-update.yml`)
-refreshes only this generated `openwiki/` tree via a gated PR. The
+refreshes this generated `openwiki/` tree plus the OPENWIKI-marked
+guidance blocks in `AGENTS.md` and `CLAUDE.md`, via a gated PR. The
 hand-authored `wiki/` pages are a separate layer (doctrine and design
 rationale), guarded by the deterministic `wiki-facts` CI check. Do not
 hand-edit generated OpenWiki pages unless explicitly asked; prefer

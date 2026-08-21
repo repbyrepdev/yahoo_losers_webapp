@@ -1,0 +1,14 @@
+# Repository-approved markdownlint policy (single source for CI and local):
+# generated trees are exempt (auto-generated precedent -- the generator owns
+# their formatting; hand-fixing them starts a drift war with regeneration).
+config:
+  default: true
+  MD013: false
+  MD024: false
+  MD026: false
+  MD033: false
+  MD041: false
+  MD060: false
+ignores:
+  - "node_modules/**"
+  - "openwiki/**"
