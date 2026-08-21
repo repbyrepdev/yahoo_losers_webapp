@@ -28,6 +28,7 @@ This contract is the foundation for [Provider Failover](provider-failover.md), [
 ## How the contract travels through the app
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
     Provider["External provider"] --> Producer["market_data or sources producer"]
     Producer -->|success| Live["Sourced.live or ok payload"]

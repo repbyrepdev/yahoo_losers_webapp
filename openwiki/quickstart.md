@@ -33,6 +33,7 @@ Start with the map below, then use the routing table to jump from a change inten
 ## System at a glance
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%
 flowchart TD
     User["User or scheduled job"] --> Flask["app.py routes"]
     Flask --> Cache["page cache and market_data TTLCache"]
