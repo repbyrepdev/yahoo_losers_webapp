@@ -14,8 +14,10 @@ fi
 tail -1 /tmp/prepush_pytest.out
 if command -v gitleaks >/dev/null 2>&1; then
   echo "[pre-push] gitleaks history scan..."
-  if ! gitleaks git . --no-banner --redact >/tmp/prepush_gitleaks.out 2>&1; then
-    tail -5 /tmp/prepush_gitleaks.out
+  GL_OUT=$(mktemp)
+  trap 'rm -f "$GL_OUT"' EXIT
+  if ! gitleaks git . --no-banner --redact >"$GL_OUT" 2>&1; then
+    tail -5 "$GL_OUT"
     echo "[pre-push] BLOCKED: gitleaks found a secret in history."
     exit 1
   fi
