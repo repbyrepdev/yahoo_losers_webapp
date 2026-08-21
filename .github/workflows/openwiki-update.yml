@@ -82,11 +82,12 @@ jobs:
 
       - name: Arm auto-merge (zero-touch docs lane)
         # Docs-only robot PRs merge themselves once every required check
-        # is green. Safety comes from the gates, not eyeballs: the
-        # deterministic facts check, strict dead-link build, markdownlint,
-        # gitleaks, pytest, and the claims verification that produced the
-        # content. Scope is mechanically capped at openwiki/ + the marked
-        # guidance blocks.
+        # is green (the generated-docs lane, docs/review-gate.md). Arming
+        # does NOT bypass ruleset 21115000: six required checks AND zero
+        # unresolved review threads are enforced at merge time -- a thread
+        # opened by anyone keeps the PR blocked until resolved. Scope is
+        # mechanically capped at openwiki/ + the marked guidance blocks;
+        # this workflow cannot stage code.
         if: steps.docs_pr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ secrets.OPENWIKI_PUSH_TOKEN }}
