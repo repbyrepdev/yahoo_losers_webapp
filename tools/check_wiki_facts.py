@@ -22,9 +22,23 @@ def check(cond, msg):
         failures.append(msg)
 
 
-def read(rel):
+def read(rel, required=True):
     p = ROOT / rel
-    return p.read_text(encoding="utf-8") if p.exists() else ""
+    if not p.exists():
+        if required:
+            failures.append(f"required file missing: {rel}")
+        return ""
+    return p.read_text(encoding="utf-8")
+
+
+def near(page, name, val, window=250):
+    """True if val appears within `window` chars of any occurrence of name --
+    independent anywhere-matching false-passes on small digits (review)."""
+    for m in re.finditer(re.escape(name), page):
+        lo = max(0, m.start() - window)
+        if val in page[lo:m.end() + window]:
+            return True
+    return False
 
 
 sources = read("sources.py")
@@ -45,10 +59,8 @@ for name in ("PAPER_TP_PCT", "PAPER_STOP_PCT",
     check(m, f"{name} not found in sources.py")
     if m:
         val = m.group(1).rstrip("0").rstrip(".")
-        check(name in trading_page,
-              f"openwiki trading page missing constant name {name}")
-        check(val in trading_page,
-              f"openwiki trading page missing value {val} for {name}")
+        check(near(trading_page, name, val),
+              f"openwiki trading page: value {val} not stated near {name}")
 
 # 2) Graduation thresholds: values present in the generated trading page
 #    AND the authored doctrine rationale.
@@ -63,11 +75,18 @@ for name in ("LIVE_MIN_RESOLVED", "LIVE_MAX_BRIER",
         check(val in doctrine,
               f"docs/doctrine.md missing graduation value {val} ({name})")
 
-# 3) Required checks: every workflow-defined gate job is named in
-#    CLAUDE.md's list (workflows are the ground truth for names).
+# 3) Required checks: workflows are the ground truth -- each expected gate
+#    job must EXIST as a workflow job id, and be named in CLAUDE.md.
 claude_md = read("CLAUDE.md")
+jobs = set()
+for wf in (ROOT / ".github" / "workflows").glob("*.yml"):
+    jobs |= set(re.findall(r"^\s{2}([\w-]+):\s*$",
+                           wf.read_text(encoding="utf-8"), re.M))
 for required in ("pytest", "gitleaks", "ruff", "markdownlint", "pip-audit",
                  "wiki-facts"):
+    check(required in jobs,
+          f"gate job `{required}` no longer exists in any workflow "
+          f"(rename breaks ruleset 21115000)")
     check(f"`{required}`" in claude_md,
           f"CLAUDE.md required-checks list missing `{required}`")
 
