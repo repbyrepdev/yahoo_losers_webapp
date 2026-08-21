@@ -1,0 +1,21 @@
+name: wiki-crosslink
+# On PR open: comment which wiki pages document the changed files
+# (reverse lookup via openwiki/source-map.md). Deterministic, no LLM.
+on:
+  pull_request:
+    types: [opened]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  crosslink:
+    name: crosslink
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Comment documented pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/wiki_crosslink.py "${{ github.event.pull_request.number }}"
