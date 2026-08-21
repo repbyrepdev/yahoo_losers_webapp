@@ -20,6 +20,7 @@ the **cache** (Redis when configured, in-process dict otherwise), and the
 | `backtest.py` / `walkforward.py` | Historical validation of the scoring weights |
 | `econ_calendar.py` / `social.py` | Fed/FRED macro calendar; StockTwits/Reddit sentiment (Reddit user-gated OFF) |
 | `secrets_store.py` | Env-var / Keychain secret access (`get_secret`) |
+| `gunicorn.conf.py` | Production server config (workers, timeouts) |
 
 ## Layering rule
 

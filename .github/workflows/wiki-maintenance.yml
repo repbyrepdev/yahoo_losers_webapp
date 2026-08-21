@@ -5,7 +5,15 @@ name: wiki-maintenance
 # interactive limits. Manual trigger for testing.
 on:
   schedule:
-    - cron: "0 13 * * 1"  # Mondays 13:00 UTC = 9 AM ET
+    - cron: "0 13 * * 1"  # Mondays 13:00 UTC = 9 AM ET: full deep re-verify
+  push:
+    branches: [main]
+    # Event-driven repair: a code merge triggers a drift check within
+    # minutes. Docs-only merges skip (their drift is zero by definition,
+    # and skipping breaks the docs-PR -> push -> check loop).
+    paths-ignore:
+      - "wiki/**"
+      - "**.md"
   workflow_dispatch:
 permissions:
   contents: write

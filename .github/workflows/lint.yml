@@ -18,6 +18,15 @@ jobs:
           python-version: "3.13"  # matches production (.python-version)
       - run: pip install ruff
       - run: ruff check .
+  wiki-facts:
+    name: wiki-facts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"  # matches production (.python-version)
+      - run: python3 tools/check_wiki_facts.py
   markdownlint:
     name: markdownlint
     runs-on: ubuntu-latest
