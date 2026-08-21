@@ -73,6 +73,8 @@ Fallback ordering is Yahoo screener, then `sources.alpaca_losers()` labeled `alp
 
 The PWA manifest in `static/manifest.json` names the app `Daily Losers Analysis`, starts at `/`, uses standalone display, and declares icon assets. `static/sw.js` caches only static icons/manifest and deliberately uses network-first behavior for all live market pages.
 
+`/inspect/<symbol>` sanitizes the path segment with `re.sub(r"[^A-Z0-9.\\-]", "", symbol.upper())[:6]` before embedding it in HTML. Provider failure strings shown through route payloads are also protected at the data boundary: [Market Data Cache and Background Warmers](../data/market-data-cache-and-warmers.md) documents how `_cached()` redacts not-ok `reason` and `detail` fields before cache storage, with FMP/Finnhub helper redaction as defense in depth.
+
 ## JSON APIs
 
 | Route | Function | Backing system |

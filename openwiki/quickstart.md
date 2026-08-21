@@ -14,6 +14,7 @@ Start with the map below, then use the routing table to jump from a change inten
 ## Main concepts
 
 - [Architecture Overview](architecture/overview.md): whole-system map and request/data/trading flows.
+- [Authored Wiki](../wiki/index.md): separate hand-authored doctrine and design-rationale layer; link to it when explaining product judgment rather than duplicating it here.
 - [Dashboard and Routes](application/dashboard-and-routes.md): Flask routes, homepage orchestration, page cache, task endpoints, client-error telemetry, health, exports, and PWA assets.
 - [Data Provenance and No-Fabrication Contract](data/provenance-and-honesty.md): `Sourced`, unavailable values, derived labels, secret redaction, and “never invent a number”.
 - [Market Data Cache and Warmers](data/market-data-cache-and-warmers.md): Redis/local/disk cache, TTL policy, `_cached()`, yfinance producers, background warm lanes, and latest-bar refresh.
@@ -64,6 +65,7 @@ The most important invariant is that all financial facts are either source-label
 | Change paper-trading behavior | [Paper Trading and Live Gate](trading/paper-trading-and-live-gate.md) | `sources.paper_execute_picks`, `paper_manage_positions`, `_alpaca_trading_base`, `_alpaca_trading_context`, `_sessions_between`, `paper_account_overview` | `tests/test_sources.py`, `tests/test_live_gate.py` | `python -m pytest tests/test_sources.py tests/test_live_gate.py -q` |
 | Change CLI evaluation | [Backtesting and Walk-Forward Evaluation](evaluation/backtesting-and-walkforward.md) | `backtest.run`, `backtest.main`, `walkforward.walk_forward`, `walkforward._training_rows` | `tests/test_gold_standard.py`, `tests/test_polish.py` | `python -m pytest tests/test_gold_standard.py tests/test_polish.py -q` |
 | Change deployment/config/secrets | [Deployment and Observability](operations/deployment-and-observability.md), [Configuration and Secrets](operations/configuration-and-secrets.md) | `Dockerfile`, `gunicorn.conf.py`, `docker-compose.yml`, `nginx.conf`, `k8s-deployment.yaml`, `secrets_store.get`, env constants | `tests/test_no_fabrication.py`, `tests/test_sources.py`, `tests/test_live_gate.py` | `python -m pytest tests/ -q` plus container smoke if runtime files changed |
+| Change generated-documentation automation or standing corrections | [Deployment and Observability](operations/deployment-and-observability.md), [Source Map](source-map.md) | `.github/workflows/openwiki-update.yml`, `.markdownlint-cli2.yaml`, `openwiki/INSTRUCTIONS.md`, `AGENTS.md` OPENWIKI block | Workflow review; markdownlint for `openwiki/INSTRUCTIONS.md` | `npx markdownlint-cli2 openwiki/INSTRUCTIONS.md` when the authored brief changes |
 
 ## High-risk invariants before editing
 

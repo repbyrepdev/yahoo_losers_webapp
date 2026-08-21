@@ -23,7 +23,7 @@ This contract is the foundation for [Provider Failover](provider-failover.md), [
 | `Sourced.unavailable(source, reason)` | Marks a failed or unavailable value. | Sets `value=None`, `ok=False`, and preserves a human-readable reason. |
 | `Sourced.format()` | Display renderer. | Returns `—` whenever `ok` is false or value is `None`; only real values are formatted with prefixes/suffixes. |
 | `safe_ratio()` | Division helper for optional denominators. | Returns `None` or the caller's default on zero/missing denominator instead of throwing or inventing. |
-| `redact_secrets()` | Sanitizes provider exception text. | Replaces `apikey=` and `token=` query parameter values with `REDACTED`. |
+| `redact_secrets()` | Sanitizes provider exception text. | Replaces `apikey=` and `token=` query parameter values with `REDACTED`; `market_data._cached()` applies it to every not-ok `reason` and `detail` payload before cache storage. |
 
 ## How the contract travels through the app
 
@@ -54,8 +54,9 @@ Callers must check `ok` before trusting `.value`. Common patterns:
 
 ## Failure classification and caching
 
-`market_data._cached()` classifies failures before choosing a TTL:
+`market_data._cached()` redacts and classifies failures before choosing a TTL:
 
+- Every not-ok dict payload has string `reason` and `detail` values passed through `redact_secrets()` before the payload is stored or reused, so a producer exception containing a keyed URL cannot leak through the cache boundary.
 - Successes use `_effective_ttl()` and the producer's base TTL.
 - Rate-limit failures use `TTL_RATE_LIMITED` so the app backs off instead of retrying every minute.
 - Structural absences such as `no listed options`, `no analyst coverage`, `no 13F holders`, or `not in SEC registry` require repeated confirmation before promotion to the longer structural negative TTL.
@@ -79,6 +80,7 @@ Representative tests:
 - `tests/test_no_fabrication.py::TestProvenance` verifies unavailable values do not render as numbers, live values render normally, derived values are distinguishable, and zero remains a real value.
 - `tests/test_no_fabrication.py::TestMoneyParsing` verifies `parse_money()` returns `None` for `—`, `N/A`, `None`, empty strings, and non-numeric text.
 - `tests/test_no_fabrication.py::TestScoringRefusesToInvent` verifies missing factors are reported, weights renormalize only over available factors, and the methodology is always returned.
+- `tests/test_sources.py::TestSecretRedaction` verifies FMP/Finnhub boundary redaction and the cache-boundary rule that any producer failure payload is scrubbed before storage.
 - `tests/test_sources.py` checks provider failover and paper-trading safety rules without network access.
 - `tests/test_market_context.py` and `tests/test_gold_standard.py` verify implied-move, SEC Form 4, and XBRL computations do not turn missing or malformed inputs into clean readings.
 - `.github/workflows/tests.yml` adds grep guards for previously shipped fabricated patterns and bare `except:` in `app.py`.
