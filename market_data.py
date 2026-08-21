@@ -25,7 +25,7 @@ from typing import Dict, List, Optional
 
 import yfinance as yf
 
-from provenance import Sourced
+from provenance import Sourced, redact_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -528,6 +528,16 @@ def _cached(key: str, ttl: int, producer, allow_fetch: bool = True):
         # Producers must return dicts; a stray None must not AttributeError
         # into the render path.
         value = {"ok": False, "reason": "producer returned no payload"}
+    elif not value.get("ok"):
+        # Universal secret scrubbing at the cache boundary: EVERY provider
+        # failure payload flows through here before storage, so a keyed URL
+        # inside any producer's exception text can never reach the cache,
+        # the UI, or the logs downstream -- regardless of which provider
+        # helper built the string. (Boundary redaction in sources.py remains
+        # as defense in depth.)
+        for _k in ("reason", "detail"):
+            if isinstance(value.get(_k), str):
+                value[_k] = redact_secrets(value[_k])
     classify_on = value.get("detail") or value.get("reason") or ""
     if value.get("ok"):
         lifetime = _effective_ttl(ttl)

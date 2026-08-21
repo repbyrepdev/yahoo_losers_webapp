@@ -23,6 +23,9 @@ keep these true in every regeneration):
 5. The retired `wiki-maintenance.yml` workflow must not be mentioned;
    the docs automation is `openwiki-update.yml` (weekday cron).
 6. Security posture: `/inspect/<symbol>` sanitizes its path segment to
-   ticker characters; provider error text passes through
-   `provenance.redact_secrets` before storage or display. Keep these
-   facts in the routes/operations pages.
+   ticker characters. Provider failure payloads are scrubbed by
+   `provenance.redact_secrets` at the cache boundary
+   (`market_data._cached` redacts `reason`/`detail` on every not-ok
+   payload before storage), with additional boundary redaction inside
+   the FMP/Finnhub helpers. Keep these facts in the routes/operations
+   pages.

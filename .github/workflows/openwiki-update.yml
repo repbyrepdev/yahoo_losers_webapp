@@ -49,15 +49,24 @@ jobs:
           OPENWIKI_MODEL_ID: "gpt-5.5"
           OPENWIKI_TELEMETRY_DISABLED: "1"
 
+      - name: Drop watermark-only churn
+        # The gitHead watermark must commit WITH real content changes (or
+        # later runs rediff the same history), but a watermark-only diff
+        # must not open a PR. Revert it when nothing else changed.
+        run: |
+          if git status --porcelain -- 'openwiki/**/*.md' 'openwiki/.claims' AGENTS.md CLAUDE.md | grep -q .; then
+            echo "content changed; watermark rides along"
+          else
+            git checkout -- openwiki/.last-update.json 2>/dev/null || true
+            echo "watermark-only run; timestamp reverted, no PR"
+          fi
+
       - name: Create OpenWiki update pull request
         uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
           token: ${{ secrets.OPENWIKI_PUSH_TOKEN }}
-          # .last-update.json stays OUT: metadata-only refreshes must not
-          # open noise PRs (it rides along whenever real content changes).
           add-paths: |
-            openwiki/**/*.md
-            openwiki/.claims
+            openwiki
             AGENTS.md
             CLAUDE.md
           branch: openwiki/update

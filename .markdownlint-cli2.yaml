@@ -12,3 +12,4 @@ config:
 ignores:
   - "node_modules/**"
   - "openwiki/**"
+  - "!openwiki/INSTRUCTIONS.md"  # the standing brief is AUTHORED -- it stays linted
