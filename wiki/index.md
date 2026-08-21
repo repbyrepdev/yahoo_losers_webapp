@@ -6,6 +6,12 @@ the code and opens a docs PR when reality drifts; corrections land
 through the same gate as code. Authored methodology lives in the app's `/methodology` page;
 this wiki documents **how the system is built**.
 
+**Two documentation layers, one source per fact**: these `wiki/` pages
+are the authored layer — doctrine, design rationale, the why. The
+generated [`openwiki/`](../openwiki/quickstart.md) tree is the evidence
+index — per-module behavior grounded in source, maintained by the
+scheduled OpenWiki workflow. Code facts live there; judgment lives here.
+
 ## Pages
 
 - [Architecture](architecture.md) — modules, layering, and why the shape is what it is

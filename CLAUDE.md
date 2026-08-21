@@ -101,3 +101,11 @@ same doctrine is mirrored for reviewers in `.coderabbit.yaml` and
 - Snapshots (`data/snapshots/`) are the tamper-evident record; the nightly
   digest issue is the alert channel.
 - Secrets: macOS Keychain locally, Render env in production. Never dotfiles.
+
+<!-- OPENWIKI:START -->
+
+## OpenWiki
+
+See [AGENTS.md](AGENTS.md) for OpenWiki agent instructions.
+
+<!-- OPENWIKI:END -->

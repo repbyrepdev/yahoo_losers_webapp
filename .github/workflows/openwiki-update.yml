@@ -1,0 +1,65 @@
+name: OpenWiki Update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1-5"  # weekday mornings UTC
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Review hardening (PR #82's Copilot findings):
+# - concurrency: two overlapping runs raced on the openwiki/update branch
+# - PR step uses OPENWIKI_PUSH_TOKEN (a user OAuth token), NOT GITHUB_TOKEN:
+#   PRs opened with GITHUB_TOKEN never trigger the six required checks, so
+#   they could never merge under the ruleset
+# - openwiki version stays pinned; mermaid+jsdom give authoritative
+#   diagram validation
+concurrency:
+  group: openwiki-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Full history so `openwiki code --update` can diff HEAD against the
+          # commit it last documented.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenWiki
+        run: npm install --global openwiki@0.3.3 mermaid@11.16.0 jsdom@29.1.1
+
+      - name: Run OpenWiki
+        run: openwiki code --update --print
+        env:
+          OPENWIKI_PROVIDER: copilot
+          COPILOT_API_KEY: ${{ secrets.COPILOT_API_KEY }}
+          OPENWIKI_MODEL_ID: "gpt-5.5"
+          OPENWIKI_TELEMETRY_DISABLED: "1"
+
+      - name: Create OpenWiki update pull request
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          token: ${{ secrets.OPENWIKI_PUSH_TOKEN }}
+          add-paths: |
+            openwiki
+            AGENTS.md
+            CLAUDE.md
+          branch: openwiki/update
+          commit-message: "docs: update OpenWiki"
+          title: "docs: update OpenWiki"
+          body: |
+            Automated OpenWiki documentation update (weekday drift check).
+
+            Gate: all six required checks + review threads apply to this PR
+            like any other. Merge is manual or auto-armed after review.
