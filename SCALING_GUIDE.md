@@ -1,11 +1,12 @@
 # 🚀 Auto-Scaling Deployment Guide
+
 ## Yahoo Finance Losers WebApp
 
 This guide shows you how to deploy your app with horizontal auto-scaling using Docker + Load Balancer or Kubernetes.
 
 ## 📊 **Scaling Architecture Overview**
 
-```
+```text
 Internet → Load Balancer (NGINX) → App Instance 1 (30MB)
                                  → App Instance 2 (30MB)  
                                  → App Instance N (30MB)
@@ -14,6 +15,7 @@ Internet → Load Balancer (NGINX) → App Instance 1 (30MB)
 ```
 
 ### **Scaling Triggers:**
+
 - **Scale UP**: CPU > 70% or Memory > 80%
 - **Scale DOWN**: CPU < 30% and Memory < 50%
 - **Min Replicas**: 1 (development) / 2 (production)
@@ -24,6 +26,7 @@ Internet → Load Balancer (NGINX) → App Instance 1 (30MB)
 ## 🐳 **Option 1: Docker Compose Auto-Scaling**
 
 ### **Quick Start:**
+
 ```bash
 # Build the application
 docker build -t yahoo-losers-webapp .
@@ -40,6 +43,7 @@ chmod +x scale.sh
 ```
 
 ### **Manual Scaling Commands:**
+
 ```bash
 ./scale.sh up      # Scale up by 1
 ./scale.sh down    # Scale down by 1  
@@ -48,6 +52,7 @@ chmod +x scale.sh
 ```
 
 ### **Architecture Components:**
+
 - **Load Balancer**: NGINX with least_conn balancing
 - **App Instances**: Your Flask app (30MB each)
 - **Redis Cache**: Shared across all instances
@@ -59,6 +64,7 @@ chmod +x scale.sh
 ## ☸️ **Option 2: Kubernetes Auto-Scaling (Recommended for Production)**
 
 ### **Deploy to Kubernetes:**
+
 ```bash
 # Build and push image to registry
 docker build -t your-registry/yahoo-losers-webapp:latest .
@@ -73,6 +79,7 @@ kubectl get pods
 ```
 
 ### **Kubernetes Features:**
+
 - **Horizontal Pod Autoscaler (HPA)**: Automatic scaling based on CPU/Memory
 - **LoadBalancer Service**: Cloud provider integration
 - **Health Checks**: Readiness and liveness probes
@@ -80,6 +87,7 @@ kubectl get pods
 - **Rolling Updates**: Zero-downtime deployments
 
 ### **Scaling Behavior:**
+
 ```yaml
 # Scale UP: 100% increase per minute when needed
 # Scale DOWN: 50% decrease after 5-minute stabilization
@@ -91,6 +99,7 @@ kubectl get pods
 ## 🌩️ **Cloud Platform Deployment**
 
 ### **AWS (Elastic Container Service)**
+
 ```bash
 # Use AWS Fargate for serverless scaling
 # ECS Task Definition with auto-scaling policies
@@ -98,18 +107,21 @@ kubectl get pods
 ```
 
 ### **Google Cloud (Cloud Run)**
+
 ```bash
 # Serverless with automatic scaling 0→1000 instances
 gcloud run deploy yahoo-losers-webapp --source .
 ```
 
 ### **Azure (Container Instances)**
+
 ```bash
 # Azure Container Apps with KEDA autoscaling
 az containerapp create --name yahoo-losers-webapp
 ```
 
 ### **Render (Current Platform)**
+
 ```bash
 # Render automatically handles scaling within service limits
 # Uses your Dockerfile + gunicorn.conf.py
@@ -121,18 +133,21 @@ az containerapp create --name yahoo-losers-webapp
 ## 📊 **Performance Benchmarks**
 
 ### **Single Instance Performance:**
+
 - **Memory Usage**: 30MB RSS
 - **Response Time**: 46ms (dashboard), 2ms (API)
 - **Concurrent Requests**: 8 (2 workers × 4 threads)
 - **Rate Limiting**: 30/min general, 10/min AI
 
 ### **Scaled Performance (3 instances):**
+
 - **Memory Usage**: 90MB total (30MB × 3)
 - **Response Time**: 15ms average (load balanced)
 - **Concurrent Requests**: 24 (8 × 3 instances)
 - **Throughput**: 90 requests/minute sustained
 
 ### **Auto-Scaling Response:**
+
 - **Scale Up Time**: 30-60 seconds
 - **Scale Down Time**: 5 minutes (stabilization)
 - **Health Check**: 30s intervals
@@ -143,6 +158,7 @@ az containerapp create --name yahoo-losers-webapp
 ## 🔧 **Configuration Options**
 
 ### **Environment Variables:**
+
 ```bash
 # App Configuration
 PORT=8080
@@ -158,6 +174,7 @@ SCALE_DOWN_THRESHOLD=30
 ```
 
 ### **Resource Limits (per instance):**
+
 ```yaml
 resources:
   requests:
@@ -173,17 +190,20 @@ resources:
 ## 🚀 **Getting Started (Choose Your Path):**
 
 ### **For Development/Testing:**
+
 ```bash
 docker-compose up -d
 ```
 
 ### **For Production (Simple):**
+
 ```bash
 docker-compose -f docker-compose.yml -f docker-compose.scale.yml up -d
 ./scale.sh auto
 ```
 
 ### **For Enterprise/High-Scale:**
+
 ```bash
 kubectl apply -f k8s-deployment.yaml
 ```
@@ -193,17 +213,20 @@ kubectl apply -f k8s-deployment.yaml
 ## 📈 **Monitoring & Alerts**
 
 ### **Built-in Metrics:**
+
 - `/metrics` - Application metrics (memory, cache, rate limiting)
 - `/health` - Health check endpoint
 - `/lb-health` - Load balancer health
 
 ### **External Monitoring:**
+
 - **Prometheus**: Metrics collection (included in docker-compose)
 - **cAdvisor**: Container metrics  
 - **Grafana**: Visualization dashboards
 - **AlertManager**: Auto-scaling alerts
 
 ### **Key Metrics to Monitor:**
+
 - Response time percentiles (p50, p95, p99)
 - Error rates and status codes
 - Memory usage per instance
@@ -217,6 +240,7 @@ kubectl apply -f k8s-deployment.yaml
 ### **Common Issues:**
 
 1. **Slow scaling response**
+
    ```bash
    # Check health check status
    curl http://localhost/health
@@ -226,12 +250,14 @@ kubectl apply -f k8s-deployment.yaml
    ```
 
 2. **Load balancer not distributing evenly**
+
    ```bash
    # Check NGINX upstream status
    docker-compose exec nginx nginx -T
    ```
 
 3. **Redis connection issues**
+
    ```bash
    # Test Redis connectivity
    docker-compose exec app curl http://localhost:8080/metrics

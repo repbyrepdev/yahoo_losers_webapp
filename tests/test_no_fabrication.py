@@ -1205,7 +1205,6 @@ class TestInfoLane:
         """Entries written together must not expire together next morning."""
         import market_data
         seen = set()
-        real_cached = market_data._cached
         def spy(key, ttl, producer, allow_fetch=True):
             if key.startswith("info:"):
                 seen.add(ttl)

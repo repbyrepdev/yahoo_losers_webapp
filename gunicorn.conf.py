@@ -1,5 +1,4 @@
 # Gunicorn configuration for production deployment
-import multiprocessing
 import os
 
 # Server socket

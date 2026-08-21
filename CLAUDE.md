@@ -62,6 +62,20 @@ same doctrine is mirrored for reviewers in `.coderabbit.yaml` and
    Sequence: open PR → review posts → read all → fix/rebut → resolve →
    then arm. If it ever slips, run the local reviewer over the exact
    unreviewed commit range and ship real findings as a follow-up PR.
+**The whole machine, end to end** (what actually stops a bad change):
+   local pre-push hook (full pytest + gitleaks history scan) → PR (CI:
+   `pytest`, `gitleaks`, `ruff` bug-classes, `markdownlint`, `pip-audit`
+   on the resolved environment; all unconditional so required checks
+   always report) → server review cascade (CodeRabbit → Copilot when CR
+   is metered) read completely → threads resolved → auto-merge armed
+   LAST → squash to `main` → Render deploys (Python pinned in
+   `.python-version`; CI matches) → deploy watched by SHA → live pages
+   spot-verified → nightly snapshot cron exercises the paper lifecycle.
+   Repo settings: auto-delete merged branches; squash-only. A weekly
+   `pip-audit` cron reds the repo when a new CVE lands with no code
+   change. Local venv note: the Mac venv runs 3.9, so security floors
+   that need ≥3.10 resolve in CI/prod but not locally — trust the CI
+   audit, not a local one.
 6. **Reviewer budgets**: ≤1 CodeRabbit summon per PR per hour, silent
    polling otherwise; batch related changes (30 PRs/week ground CR's meter
    to ~1/hour once). `bash tools/review_budget_status.sh` shows live

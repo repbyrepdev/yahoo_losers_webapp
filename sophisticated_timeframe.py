@@ -1,12 +1,9 @@
 import yfinance as yf
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta, date
-import requests
-from bs4 import BeautifulSoup
-from typing import Dict, List, Tuple, Optional
+from datetime import datetime, date
+from typing import Dict, Tuple
 import warnings
-import json
 import time
 import logging
 warnings.filterwarnings('ignore')
@@ -89,7 +86,6 @@ class SophisticatedTimeframePredictor:
                 return self._fallback_prediction(symbol)
                 
             current_price = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
             
             # 1. DEFINE SHORT-TERM RECOVERY TARGETS (1-5 days)
             targets = self._calculate_recovery_targets(stock, hist, info, current_price)
@@ -207,7 +203,6 @@ class SophisticatedTimeframePredictor:
         # Look for recent price gaps in the last 5 days that could fill quickly
         if len(hist) >= 5:
             for i in range(1, min(5, len(hist))):
-                gap_up = hist['Low'].iloc[-i] > hist['High'].iloc[-i-1]  # Gap up
                 gap_down = hist['High'].iloc[-i] < hist['Low'].iloc[-i-1]  # Gap down
                 
                 if gap_down and current_price < hist['Low'].iloc[-i-1]:
@@ -314,7 +309,7 @@ class SophisticatedTimeframePredictor:
                 'spy_trend': spy_trend,
                 'recovery_multiplier': self._get_recovery_multiplier(volatility_regime, spy_trend)
             }
-        except Exception as e:
+        except Exception:
             # Fallback market conditions
             return {
                 'vix_level': 20.0,
@@ -390,7 +385,7 @@ class SophisticatedTimeframePredictor:
             
             return patterns
             
-        except Exception as e:
+        except Exception:
             return {'avg_recovery_days': 0, 'median_recovery_days': 0, 'fastest_recovery': 0, 'historical_success_rate': 0, 'similar_drawdowns': []}
     
     def _calculate_current_drawdown(self, hist: pd.DataFrame) -> float:
@@ -454,7 +449,7 @@ class SophisticatedTimeframePredictor:
                         else:
                             catalysts['catalyst_impact'] = 'low'
                             
-                except Exception as e:
+                except Exception:
                     pass
             
             # Check for dividend dates (simplified - would need more data in production)
@@ -463,7 +458,7 @@ class SophisticatedTimeframePredictor:
             
             return catalysts
             
-        except Exception as e:
+        except Exception:
             return catalysts
     
     def _analyze_technical_momentum(self, hist: pd.DataFrame) -> Dict:
@@ -516,7 +511,7 @@ class SophisticatedTimeframePredictor:
             momentum['momentum_score'] = score
             return momentum
             
-        except Exception as e:
+        except Exception:
             return {'rsi': 50, 'volume_surge': False, 'trend_strength': 'weak', 'momentum_score': 0}
     
     def _analyze_sector_performance(self, info: Dict) -> Dict:
@@ -573,7 +568,7 @@ class SophisticatedTimeframePredictor:
                 'recovery_context': self._get_sector_recovery_context(sector_performance)
             }
             
-        except Exception as e:
+        except Exception:
             return {
                 'sector': 'Unknown',
                 'industry': 'Unknown', 
@@ -631,7 +626,7 @@ class SophisticatedTimeframePredictor:
                 'volume_percentile': round(volume_percentile, 1),
                 'signal_strength': 'strong' if volume_ratio >= 2.5 else 'moderate' if volume_ratio >= 1.8 else 'weak'
             }
-        except Exception as e:
+        except Exception:
             return {'surge_detected': False, 'surge_multiplier': 1.0, 'volume_percentile': 50}
     
     def _calculate_rsi_mean_reversion_signal(self, hist: pd.DataFrame) -> Dict:
@@ -656,7 +651,6 @@ class SophisticatedTimeframePredictor:
             
             # Mean reversion thresholds
             oversold = False
-            reversion_multiplier = 1.0
             timeframe_multipliers = {'short': 1.0, 'medium': 1.0, 'long': 1.0}
             
             if rsi <= 25:  # Extremely oversold
@@ -680,7 +674,7 @@ class SophisticatedTimeframePredictor:
                 'timeframe_multipliers': timeframe_multipliers,
                 'signal_strength': 'strong' if rsi <= 25 else 'moderate' if rsi <= 30 else 'weak'
             }
-        except Exception as e:
+        except Exception:
             return {'oversold': False, 'rsi': 50, 'reversion_multiplier': 1.0}
     
     def _calculate_economic_regime_filter(self, market_conditions: Dict) -> Dict:
@@ -727,7 +721,7 @@ class SophisticatedTimeframePredictor:
                 'recovery_environment': recovery_environment,
                 'regime_impact': regime_impact
             }
-        except Exception as e:
+        except Exception:
             return {
                 'regime': 'normal_vol',
                 'regime_multipliers': {'short': 1.0, 'medium': 1.0, 'long': 1.0},
@@ -1359,7 +1353,6 @@ class SophisticatedTimeframePredictor:
             current_histogram = histogram.iloc[-1]
             prev_histogram = histogram.iloc[-2]
             current_macd = macd_line.iloc[-1]
-            current_signal = signal_line.iloc[-1]
             
             # Check for bullish divergence (price declining, MACD improving)
             price_trend = (close_prices.iloc[-1] - close_prices.iloc[-5]) / close_prices.iloc[-5]
@@ -1435,9 +1428,6 @@ class SophisticatedTimeframePredictor:
             
             current_bandwidth = band_width.iloc[-1]
             current_percent_b = percent_b.iloc[-1]
-            current_price = close_prices.iloc[-1]
-            current_lower = lower_band.iloc[-1]
-            current_upper = upper_band.iloc[-1]
             
             # Squeeze detection (bandwidth below average)
             squeeze_ratio = current_bandwidth / avg_bandwidth.iloc[-1] if avg_bandwidth.iloc[-1] > 0 else 1
@@ -1569,7 +1559,6 @@ class SophisticatedTimeframePredictor:
         High short interest with low volume = potential short squeeze
         """
         try:
-            import yfinance as yf
             
             # Get short interest data from Yahoo Finance info
             short_percent = info.get('shortPercentOfFloat')

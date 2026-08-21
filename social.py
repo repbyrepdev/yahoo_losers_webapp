@@ -19,7 +19,6 @@ signal, and it comes with a denominator, so the result can be stated as
 """
 
 import logging
-import os
 import re
 import time
 from collections import Counter

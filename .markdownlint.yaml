@@ -1,6 +1,8 @@
-MD013: false
-MD024: false
-MD026: false
-MD033: false
-MD041: false
-MD060: false
+# Gold-standard config (mirrors pricing-docs): all rules except the ones
+# that fight prose reality.
+default: true
+MD013: false  # line length
+MD024: false  # duplicate headings (changelogs)
+MD026: false  # trailing punctuation in headings
+MD033: false  # inline HTML
+MD041: false  # first line heading
