@@ -7,9 +7,15 @@ on:
 permissions:
   contents: read
   pull-requests: write
+concurrency:
+  group: wiki-crosslink-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 jobs:
   crosslink:
     name: crosslink
+    # Same-repo PRs only: fork PRs get a read-only token (commenting would
+    # fail anyway) and skipping them outright removes any fork-code path.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

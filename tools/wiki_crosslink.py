@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """PR -> wiki cross-linker: map the PR's changed files to the wiki pages
 that document them, using openwiki/source-map.md as the reverse index.
-Deterministic; posts/updates ONE marker-tagged comment; silent when no
-pages match."""
+Deterministic; posts ONE marker-tagged comment; silent when no pages
+match; logs matched AND unmatched files (no silent skips)."""
 import json
 import re
 import subprocess
@@ -15,19 +15,37 @@ def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
 
 
-def main(pr):
-    changed = run(["gh", "pr", "diff", pr, "--name-only"]).split()
-    smap = open("openwiki/source-map.md", encoding="utf-8").read()
-    pages = {}
-    for line in smap.splitlines():
-        for f in changed:
-            base = f.split("/")[-1]
-            if base and f"`{base}`" in line or f"`{f}`" in line:
-                for title, target in re.findall(r"\[([^\]]+)\]\(([^)]+\.md)\)",
-                                                line):
+def pages_for(changed, smap_text):
+    """(pages, unmatched): full repo-relative path matches anywhere in a
+    row; basename fallback ONLY for root-level files (a deep path's
+    basename could collide with Focused-tests entries or same-named
+    files elsewhere -- review finding)."""
+    pages, unmatched = {}, []
+    lines = smap_text.splitlines()
+    for f in changed:
+        is_root = "/" not in f
+        hit = False
+        for line in lines:
+            if f"`{f}`" in line or (is_root and f"`{f.split('/')[-1]}`" in line):
+                for title, target in re.findall(
+                        r"\[([^\]]+)\]\(([^)]+\.md)\)", line):
                     pages.setdefault(title, target.lstrip("./"))
+                hit = True
+        if not hit:
+            unmatched.append(f)
+    return pages, unmatched
+
+
+def main(pr):
+    # splitlines, not split(): filenames may contain spaces (review finding)
+    changed = [ln for ln in run(["gh", "pr", "diff", pr,
+                                 "--name-only"]).splitlines() if ln.strip()]
+    smap = open("openwiki/source-map.md", encoding="utf-8").read()
+    pages, unmatched = pages_for(changed, smap)
+    for f in unmatched:
+        print(f"unmatched (not in source-map): {f}")
     if not pages:
-        print("no documented pages touched")
+        print(f"no documented pages touched ({len(unmatched)} files unmatched)")
         return 0
     repo = json.loads(run(["gh", "repo", "view", "--json",
                            "nameWithOwner"]))["nameWithOwner"]
@@ -44,7 +62,7 @@ def main(pr):
             print("marker comment already present; leaving as-is")
             return 0
     run(["gh", "pr", "comment", pr, "--body", body])
-    print(f"linked {len(pages)} pages")
+    print(f"linked {len(pages)} pages; {len(unmatched)} files unmatched")
     return 0
 
 
